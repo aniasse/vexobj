@@ -1,0 +1,19 @@
+[server]
+bind = "0.0.0.0:8000"
+
+[storage]
+data_dir = "./data"
+max_file_size = "5GB"
+deduplication = true
+
+[cache]
+memory_size = "256MB"
+disk_size = "2GB"
+# disk_path = "/var/lib/vaultfs/cache"
+
+[images]
+default_quality = 85
+max_transform_size = "50MB"
+
+[auth]
+enabled = true

@@ -1,0 +1,63 @@
+[workspace]
+members = [
+    "crates/vaultfs-server",
+    "crates/vaultfs-storage",
+    "crates/vaultfs-processing",
+    "crates/vaultfs-s3-compat",
+    "crates/vaultfs-cache",
+    "crates/vaultfs-auth",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/aniasse/vaultfs"
+description = "High-performance self-hosted object storage with built-in image processing"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP
+axum = { version = "0.8", features = ["multipart"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace", "limit", "compression-gzip"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Database
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Image processing
+image = "0.25"
+
+# Hashing / crypto
+sha2 = "0.10"
+hex = "0.4"
+hmac = "0.12"
+rand = "0.8"
+base64 = "0.22"
+
+# Utilities
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+thiserror = "2"
+anyhow = "1"
+mime_guess = "2"
+bytes = "1"
+futures = "0.3"
+tokio-util = { version = "0.7", features = ["io"] }
+
+# Internal crates
+vaultfs-storage = { path = "crates/vaultfs-storage" }
+vaultfs-processing = { path = "crates/vaultfs-processing" }
+vaultfs-s3-compat = { path = "crates/vaultfs-s3-compat" }
+vaultfs-cache = { path = "crates/vaultfs-cache" }
+vaultfs-auth = { path = "crates/vaultfs-auth" }

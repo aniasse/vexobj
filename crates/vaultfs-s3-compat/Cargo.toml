@@ -1,0 +1,19 @@
+[package]
+name = "vaultfs-s3-compat"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "S3-compatible API layer for VaultFS"
+
+[dependencies]
+axum = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+vaultfs-storage = { workspace = true }
+vaultfs-auth = { workspace = true }
