@@ -44,6 +44,52 @@ class Bucket:
         return cls(**{k: d.get(k) for k in cls.__dataclass_fields__})
 
 
+@dataclass
+class ObjectVersion:
+    id: str
+    bucket: str
+    key: str
+    version_id: str
+    size: int
+    content_type: str
+    sha256: str
+    created_at: str
+    is_latest: bool
+    is_delete_marker: bool
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "ObjectVersion":
+        return cls(**{k: d.get(k) for k in cls.__dataclass_fields__})
+
+
+@dataclass
+class ObjectLock:
+    """Retention timestamp and legal-hold flag on a live object."""
+
+    retain_until: Optional[str]
+    legal_hold: bool
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "ObjectLock":
+        return cls(
+            retain_until=d.get("retain_until"),
+            legal_hold=bool(d.get("legal_hold", False)),
+        )
+
+
+@dataclass
+class LifecycleRule:
+    id: str
+    bucket: str
+    prefix: str
+    expire_days: int
+    created_at: str
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "LifecycleRule":
+        return cls(**{k: d.get(k) for k in cls.__dataclass_fields__})
+
+
 class VaultFS:
     """VaultFS API client.
 
@@ -126,9 +172,19 @@ class VaultFS:
         )
         return ObjectMeta.from_dict(resp.json())
 
-    def get_object(self, bucket: str, key: str) -> bytes:
+    def get_object(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        version_id: Optional[str] = None,
+    ) -> bytes:
+        params = {"version_id": version_id} if version_id else None
         resp = self._check(
-            self._client.get(f"/v1/objects/{quote(bucket)}/{key}")
+            self._client.get(
+                f"/v1/objects/{quote(bucket)}/{key}",
+                params=params,
+            )
         )
         return resp.content
 
@@ -192,9 +248,19 @@ class VaultFS:
         )
         return dict(resp.headers)
 
-    def delete_object(self, bucket: str, key: str) -> None:
+    def delete_object(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        version_id: Optional[str] = None,
+    ) -> None:
+        params = {"version_id": version_id} if version_id else None
         self._check(
-            self._client.delete(f"/v1/objects/{quote(bucket)}/{key}")
+            self._client.delete(
+                f"/v1/objects/{quote(bucket)}/{key}",
+                params=params,
+            )
         )
 
     def list_objects(
@@ -300,4 +366,92 @@ class VaultFS:
 
     def gc(self) -> dict:
         resp = self._check(self._client.post("/v1/admin/gc"))
+        return resp.json()
+
+    # ─── Versioning ───────────────────────────────────────
+
+    def enable_versioning(self, bucket: str) -> None:
+        """Enable versioning on a bucket. Once on, cannot be turned off."""
+        self._check(self._client.post(f"/v1/admin/versioning/{quote(bucket)}"))
+
+    def list_versions(self, bucket: str, key: str) -> list[ObjectVersion]:
+        resp = self._check(
+            self._client.get(f"/v1/versions/{quote(bucket)}/{key}")
+        )
+        return [ObjectVersion.from_dict(v) for v in resp.json()["versions"]]
+
+    def purge_versions(self, bucket: str, key: str) -> dict:
+        """Hard-delete every version and the live object for a key."""
+        resp = self._check(
+            self._client.delete(f"/v1/versions/{quote(bucket)}/{key}")
+        )
+        return resp.json()
+
+    # ─── Object lock ──────────────────────────────────────
+
+    def get_lock(self, bucket: str, key: str) -> ObjectLock:
+        resp = self._check(
+            self._client.get(f"/v1/admin/lock/{quote(bucket)}/{key}")
+        )
+        return ObjectLock.from_dict(resp.json())
+
+    def set_lock(
+        self,
+        bucket: str,
+        key: str,
+        *,
+        retain_until: Optional[str] = None,
+        legal_hold: bool = False,
+    ) -> ObjectLock:
+        """Set retention and/or legal hold.
+
+        `retain_until` can only be extended once set — shortening while
+        still active returns HTTP 409.
+        """
+        body: dict[str, Any] = {"legal_hold": legal_hold}
+        if retain_until is not None:
+            body["retain_until"] = retain_until
+        resp = self._check(
+            self._client.put(
+                f"/v1/admin/lock/{quote(bucket)}/{key}",
+                json=body,
+            )
+        )
+        return ObjectLock.from_dict(resp.json())
+
+    def release_legal_hold(self, bucket: str, key: str) -> None:
+        """Clear the legal-hold flag. Retention (if any) stays in effect."""
+        self._check(
+            self._client.delete(f"/v1/admin/lock/{quote(bucket)}/{key}")
+        )
+
+    # ─── Lifecycle ────────────────────────────────────────
+
+    def create_lifecycle_rule(
+        self,
+        bucket: str,
+        expire_days: int,
+        *,
+        prefix: str = "",
+    ) -> LifecycleRule:
+        resp = self._check(
+            self._client.post(
+                f"/v1/admin/lifecycle/{quote(bucket)}",
+                json={"prefix": prefix, "expire_days": expire_days},
+            )
+        )
+        return LifecycleRule.from_dict(resp.json())
+
+    def list_lifecycle_rules(self, bucket: str) -> list[LifecycleRule]:
+        resp = self._check(
+            self._client.get(f"/v1/admin/lifecycle/{quote(bucket)}")
+        )
+        return [LifecycleRule.from_dict(r) for r in resp.json()["rules"]]
+
+    def delete_lifecycle_rule(self, rule_id: str) -> None:
+        self._check(self._client.delete(f"/v1/admin/lifecycle/rule/{rule_id}"))
+
+    def run_lifecycle(self) -> dict:
+        """Run all lifecycle rules now (expire eligible objects)."""
+        resp = self._check(self._client.post("/v1/admin/lifecycle/run"))
         return resp.json()

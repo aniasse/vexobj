@@ -105,6 +105,35 @@ type GCResult struct {
 	BytesFreed     int64 `json:"bytes_freed"`
 }
 
+type ObjectVersion struct {
+	ID             string `json:"id"`
+	Bucket         string `json:"bucket"`
+	Key            string `json:"key"`
+	VersionID      string `json:"version_id"`
+	Size           int64  `json:"size"`
+	ContentType    string `json:"content_type"`
+	SHA256         string `json:"sha256"`
+	CreatedAt      string `json:"created_at"`
+	IsLatest       bool   `json:"is_latest"`
+	IsDeleteMarker bool   `json:"is_delete_marker"`
+}
+
+// ObjectLock describes the retention and legal-hold state of a live
+// object. RetainUntil is an RFC-3339 timestamp (UTC); nil means no
+// retention.
+type ObjectLock struct {
+	RetainUntil *string `json:"retain_until"`
+	LegalHold   bool    `json:"legal_hold"`
+}
+
+type LifecycleRule struct {
+	ID         string `json:"id"`
+	Bucket     string `json:"bucket"`
+	Prefix     string `json:"prefix"`
+	ExpireDays int64  `json:"expire_days"`
+	CreatedAt  string `json:"created_at"`
+}
+
 // Error is returned by the VaultFS API on failure.
 type Error struct {
 	StatusCode int
@@ -516,4 +545,185 @@ func (c *Client) GC() (*GCResult, error) {
 		return nil, err
 	}
 	return &result, nil
+}
+
+// ── Versioning ──────────────────────────────────────────
+
+// EnableVersioning enables versioning on a bucket. Once enabled, it
+// cannot be turned off.
+func (c *Client) EnableVersioning(bucket string) error {
+	req, _ := http.NewRequest("POST", c.BaseURL+"/v1/admin/versioning/"+url.PathEscape(bucket), nil)
+	return c.doJSON(req, nil)
+}
+
+// ListVersions returns every version (and delete-marker) for a key,
+// newest first.
+func (c *Client) ListVersions(bucket, key string) ([]ObjectVersion, error) {
+	u := fmt.Sprintf("%s/v1/versions/%s/%s", c.BaseURL, url.PathEscape(bucket), key)
+	req, _ := http.NewRequest("GET", u, nil)
+
+	var resp struct {
+		Versions []ObjectVersion `json:"versions"`
+	}
+	if err := c.doJSON(req, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Versions, nil
+}
+
+// GetObjectVersion downloads a specific historical version of an object.
+func (c *Client) GetObjectVersion(bucket, key, versionID string) (io.ReadCloser, error) {
+	u := fmt.Sprintf(
+		"%s/v1/objects/%s/%s?version_id=%s",
+		c.BaseURL, url.PathEscape(bucket), key, url.QueryEscape(versionID),
+	)
+	req, _ := http.NewRequest("GET", u, nil)
+
+	resp, err := c.do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		resp.Body.Close()
+		return nil, parseError(resp)
+	}
+	return resp.Body, nil
+}
+
+// DeleteObjectVersion removes a specific version of an object. If the
+// live version is locked, the server returns 409.
+func (c *Client) DeleteObjectVersion(bucket, key, versionID string) error {
+	u := fmt.Sprintf(
+		"%s/v1/objects/%s/%s?version_id=%s",
+		c.BaseURL, url.PathEscape(bucket), key, url.QueryEscape(versionID),
+	)
+	req, _ := http.NewRequest("DELETE", u, nil)
+	return c.doJSON(req, nil)
+}
+
+// PurgeVersions hard-deletes every version and the live object for a key.
+// Returns the number of blobs removed from disk.
+func (c *Client) PurgeVersions(bucket, key string) (int64, error) {
+	u := fmt.Sprintf("%s/v1/versions/%s/%s", c.BaseURL, url.PathEscape(bucket), key)
+	req, _ := http.NewRequest("DELETE", u, nil)
+
+	var resp struct {
+		BlobsRemoved int64 `json:"blobs_removed"`
+	}
+	if err := c.doJSON(req, &resp); err != nil {
+		return 0, err
+	}
+	return resp.BlobsRemoved, nil
+}
+
+// ── Object lock ─────────────────────────────────────────
+
+// GetLock reads the object-lock state for a live object.
+func (c *Client) GetLock(bucket, key string) (*ObjectLock, error) {
+	u := fmt.Sprintf("%s/v1/admin/lock/%s/%s", c.BaseURL, url.PathEscape(bucket), key)
+	req, _ := http.NewRequest("GET", u, nil)
+
+	var lock ObjectLock
+	if err := c.doJSON(req, &lock); err != nil {
+		return nil, err
+	}
+	return &lock, nil
+}
+
+// SetLock applies retention and/or a legal hold to a live object.
+// RetainUntil can only be extended once set — shortening it while still
+// in the future returns 409.
+func (c *Client) SetLock(bucket, key string, lock ObjectLock) (*ObjectLock, error) {
+	body, _ := json.Marshal(lock)
+	u := fmt.Sprintf("%s/v1/admin/lock/%s/%s", c.BaseURL, url.PathEscape(bucket), key)
+	req, _ := http.NewRequest("PUT", u, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	var result ObjectLock
+	if err := c.doJSON(req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ReleaseLegalHold clears the legal-hold flag. Retention, if any, remains
+// in effect.
+func (c *Client) ReleaseLegalHold(bucket, key string) error {
+	u := fmt.Sprintf("%s/v1/admin/lock/%s/%s", c.BaseURL, url.PathEscape(bucket), key)
+	req, _ := http.NewRequest("DELETE", u, nil)
+
+	resp, err := c.do(req)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return parseError(resp)
+	}
+	return nil
+}
+
+// ── Lifecycle ───────────────────────────────────────────
+
+// CreateLifecycleRule configures automatic expiration for objects under
+// `prefix` (leave empty for the whole bucket) after `expireDays`.
+func (c *Client) CreateLifecycleRule(bucket, prefix string, expireDays int64) (*LifecycleRule, error) {
+	body, _ := json.Marshal(map[string]interface{}{
+		"prefix":      prefix,
+		"expire_days": expireDays,
+	})
+	u := fmt.Sprintf("%s/v1/admin/lifecycle/%s", c.BaseURL, url.PathEscape(bucket))
+	req, _ := http.NewRequest("POST", u, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	var rule LifecycleRule
+	if err := c.doJSON(req, &rule); err != nil {
+		return nil, err
+	}
+	return &rule, nil
+}
+
+// ListLifecycleRules returns every rule configured on a bucket.
+func (c *Client) ListLifecycleRules(bucket string) ([]LifecycleRule, error) {
+	u := fmt.Sprintf("%s/v1/admin/lifecycle/%s", c.BaseURL, url.PathEscape(bucket))
+	req, _ := http.NewRequest("GET", u, nil)
+
+	var resp struct {
+		Rules []LifecycleRule `json:"rules"`
+	}
+	if err := c.doJSON(req, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Rules, nil
+}
+
+// DeleteLifecycleRule removes a single rule by id.
+func (c *Client) DeleteLifecycleRule(id string) error {
+	u := fmt.Sprintf("%s/v1/admin/lifecycle/rule/%s", c.BaseURL, url.PathEscape(id))
+	req, _ := http.NewRequest("DELETE", u, nil)
+
+	resp, err := c.do(req)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return parseError(resp)
+	}
+	return nil
+}
+
+// RunLifecycle triggers an immediate sweep — eligible objects are expired
+// right away rather than at the next scheduled run.
+func (c *Client) RunLifecycle() (expired, bytesFreed int64, err error) {
+	req, _ := http.NewRequest("POST", c.BaseURL+"/v1/admin/lifecycle/run", nil)
+
+	var resp struct {
+		ObjectsExpired int64 `json:"objects_expired"`
+		BytesFreed     int64 `json:"bytes_freed"`
+	}
+	if err = c.doJSON(req, &resp); err != nil {
+		return 0, 0, err
+	}
+	return resp.ObjectsExpired, resp.BytesFreed, nil
 }

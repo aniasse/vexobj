@@ -60,6 +60,33 @@ export interface ImageTransform {
   fit?: "cover" | "contain" | "fill";
 }
 
+export interface ObjectVersion {
+  id: string;
+  bucket: string;
+  key: string;
+  version_id: string;
+  size: number;
+  content_type: string;
+  sha256: string;
+  created_at: string;
+  is_latest: boolean;
+  is_delete_marker: boolean;
+}
+
+export interface ObjectLock {
+  /** ISO-8601 timestamp (UTC). Null means no retention. */
+  retain_until: string | null;
+  legal_hold: boolean;
+}
+
+export interface LifecycleRule {
+  id: string;
+  bucket: string;
+  prefix: string;
+  expire_days: number;
+  created_at: string;
+}
+
 export class VaultFS {
   private baseUrl: string;
   private apiKey: string;
@@ -139,10 +166,18 @@ export class VaultFS {
     });
   }
 
-  async getObject(bucket: string, key: string): Promise<Response> {
-    const resp = await fetch(`${this.baseUrl}/v1/objects/${enc(bucket)}/${key}`, {
-      headers: this.headers(),
-    });
+  async getObject(
+    bucket: string,
+    key: string,
+    options?: { versionId?: string }
+  ): Promise<Response> {
+    const qs = options?.versionId
+      ? `?version_id=${encodeURIComponent(options.versionId)}`
+      : "";
+    const resp = await fetch(
+      `${this.baseUrl}/v1/objects/${enc(bucket)}/${key}${qs}`,
+      { headers: this.headers() }
+    );
     if (!resp.ok) throw new VaultFSError(resp.status, "object not found");
     return resp;
   }
@@ -198,11 +233,22 @@ export class VaultFS {
     return this.request(`/v1/objects/${enc(bucket)}/${key}`, { method: "HEAD" }) as any;
   }
 
-  async deleteObject(bucket: string, key: string): Promise<void> {
-    await fetch(`${this.baseUrl}/v1/objects/${enc(bucket)}/${key}`, {
-      method: "DELETE",
-      headers: this.headers(),
-    });
+  async deleteObject(
+    bucket: string,
+    key: string,
+    options?: { versionId?: string }
+  ): Promise<void> {
+    const qs = options?.versionId
+      ? `?version_id=${encodeURIComponent(options.versionId)}`
+      : "";
+    const resp = await fetch(
+      `${this.baseUrl}/v1/objects/${enc(bucket)}/${key}${qs}`,
+      { method: "DELETE", headers: this.headers() }
+    );
+    if (!resp.ok && resp.status !== 404) {
+      const body = await resp.json().catch(() => ({}));
+      throw new VaultFSError(resp.status, (body as any).error || resp.statusText);
+    }
   }
 
   async listObjects(
@@ -296,6 +342,90 @@ export class VaultFS {
 
   async gc(): Promise<{ blobs_scanned: number; orphans_removed: number; bytes_freed: number }> {
     return this.request("/v1/admin/gc", { method: "POST" });
+  }
+
+  // ─── Versioning ───────────────────────────────────────
+
+  /** Enable versioning on a bucket. Once enabled, it cannot be disabled. */
+  async enableVersioning(bucket: string): Promise<void> {
+    await this.request(`/v1/admin/versioning/${enc(bucket)}`, { method: "POST" });
+  }
+
+  async listVersions(bucket: string, key: string): Promise<ObjectVersion[]> {
+    const resp = await this.request<{ versions: ObjectVersion[] }>(
+      `/v1/versions/${enc(bucket)}/${key}`
+    );
+    return resp.versions;
+  }
+
+  /** Hard-delete every version and the live object for a key. */
+  async purgeVersions(
+    bucket: string,
+    key: string
+  ): Promise<{ bucket: string; key: string; blobs_removed: number }> {
+    return this.request(`/v1/versions/${enc(bucket)}/${key}`, { method: "DELETE" });
+  }
+
+  // ─── Object lock ──────────────────────────────────────
+
+  async getLock(bucket: string, key: string): Promise<ObjectLock> {
+    return this.request(`/v1/admin/lock/${enc(bucket)}/${key}`);
+  }
+
+  /**
+   * Set retention and/or legal hold. `retain_until` can only be extended
+   * once set — shortening while still active returns 409.
+   */
+  async setLock(
+    bucket: string,
+    key: string,
+    lock: { retain_until?: string | null; legal_hold?: boolean }
+  ): Promise<ObjectLock> {
+    return this.request(`/v1/admin/lock/${enc(bucket)}/${key}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(lock),
+    });
+  }
+
+  /** Clear the legal hold flag. Retention (if any) stays in effect. */
+  async releaseLegalHold(bucket: string, key: string): Promise<void> {
+    await fetch(`${this.baseUrl}/v1/admin/lock/${enc(bucket)}/${key}`, {
+      method: "DELETE",
+      headers: this.headers(),
+    });
+  }
+
+  // ─── Lifecycle ────────────────────────────────────────
+
+  async createLifecycleRule(
+    bucket: string,
+    expireDays: number,
+    prefix = ""
+  ): Promise<LifecycleRule> {
+    return this.request(`/v1/admin/lifecycle/${enc(bucket)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prefix, expire_days: expireDays }),
+    });
+  }
+
+  async listLifecycleRules(bucket: string): Promise<LifecycleRule[]> {
+    const resp = await this.request<{ rules: LifecycleRule[] }>(
+      `/v1/admin/lifecycle/${enc(bucket)}`
+    );
+    return resp.rules;
+  }
+
+  async deleteLifecycleRule(id: string): Promise<void> {
+    await fetch(`${this.baseUrl}/v1/admin/lifecycle/rule/${enc(id)}`, {
+      method: "DELETE",
+      headers: this.headers(),
+    });
+  }
+
+  async runLifecycle(): Promise<{ objects_expired: number; bytes_freed: number }> {
+    return this.request("/v1/admin/lifecycle/run", { method: "POST" });
   }
 }
 
