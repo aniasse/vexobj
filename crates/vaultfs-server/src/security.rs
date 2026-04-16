@@ -12,8 +12,14 @@ use serde_json::json;
 pub async fn security_middleware(req: Request, next: Next) -> Response {
     let path = req.uri().path().to_string();
 
-    // Path traversal protection
-    if path.contains("..") || path.contains("//") || path.contains('\0') {
+    // Path traversal protection. We also percent-decode to catch encoded
+    // variants like `%2E%2E` and `%00` — a classic WAF/middleware bypass.
+    let decoded = percent_decode(&path);
+    let has_traversal = path.contains("//")
+        || path.contains('\0')
+        || decoded.contains("..")
+        || decoded.contains('\0');
+    if has_traversal {
         return (
             StatusCode::BAD_REQUEST,
             axum::Json(json!({"error": "invalid path: path traversal detected"})),
@@ -53,6 +59,29 @@ pub async fn security_middleware(req: Request, next: Next) -> Response {
     );
 
     response
+}
+
+/// Lossy percent-decoder for ASCII paths. Invalid escapes are kept verbatim;
+/// non-UTF8 decoded bytes are replaced with U+FFFD. Good enough for traversal
+/// detection where we only care about `.` and NUL.
+fn percent_decode(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = (bytes[i + 1] as char).to_digit(16);
+            let lo = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(h), Some(l)) = (hi, lo) {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Validate bucket names: 3-63 chars, lowercase, alphanumeric + hyphens, no leading/trailing hyphen

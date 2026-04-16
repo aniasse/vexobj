@@ -173,6 +173,43 @@ window_secs = 60
     fn auth_header(&self) -> String {
         format!("Bearer {}", self.admin_key)
     }
+
+    /// Send a raw HTTP/1.1 GET with the exact `raw_path` bytes (no client-side
+    /// URL normalization). Returns `(status, body)`. Used to exercise server-side
+    /// path handling for paths reqwest would otherwise collapse (e.g. `..`).
+    fn raw_get(&self, raw_path: &str) -> (u16, String) {
+        use std::io::{Read, Write};
+
+        let host_port = self.url.trim_start_matches("http://");
+        let mut stream =
+            std::net::TcpStream::connect(host_port).expect("connect to test server");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let req = format!(
+            "GET {raw_path} HTTP/1.1\r\n\
+             Host: {host_port}\r\n\
+             Authorization: Bearer {key}\r\n\
+             Connection: close\r\n\r\n",
+            raw_path = raw_path,
+            host_port = host_port,
+            key = self.admin_key,
+        );
+        stream.write_all(req.as_bytes()).unwrap();
+
+        let mut buf = Vec::new();
+        stream.read_to_end(&mut buf).unwrap();
+        let response = String::from_utf8_lossy(&buf).to_string();
+
+        let status_line = response.lines().next().unwrap_or("");
+        let status: u16 = status_line
+            .split_whitespace()
+            .nth(1)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        let body = response.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
+        (status, body)
+    }
 }
 
 impl Drop for TestServer {
@@ -618,43 +655,30 @@ async fn e2e_rate_limit_headers() {
 #[tokio::test]
 async fn e2e_security_path_traversal() {
     let srv = TestServer::start();
-    let client = srv.client();
-    let auth = srv.auth_header();
 
-    // Path traversal attempts should be rejected by the security middleware
-    let resp = client
-        .get(format!(
-            "{}/v1/objects/bucket/../../../etc/passwd",
-            srv.url
-        ))
-        .header("Authorization", &auth)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 400);
-    let body: Value = resp.json().await.unwrap();
-    assert!(body["error"]
-        .as_str()
-        .unwrap()
-        .contains("path traversal"));
+    // Each attack vector is sent as a raw HTTP request so that reqwest/url
+    // don't normalize the path client-side — we want to verify what the
+    // server does with the exact bytes an attacker would send.
 
-    // Double slash
-    let resp = client
-        .get(format!("{}/v1/objects//bucket/key", srv.url))
-        .header("Authorization", &auth)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 400);
+    // 1. Literal `..` segments
+    let (status, body) = srv.raw_get("/v1/objects/bucket/../../../etc/passwd");
+    assert_eq!(status, 400, "literal .. should be rejected");
+    assert!(
+        body.contains("path traversal"),
+        "expected traversal error, got: {body}"
+    );
 
-    // Null byte
-    let resp = client
-        .get(format!("{}/v1/objects/bucket/key%00.txt", srv.url))
-        .header("Authorization", &auth)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 400);
+    // 2. Percent-encoded `..` (%2E%2E) — a classic WAF bypass
+    let (status, _) = srv.raw_get("/v1/objects/bucket/%2E%2E/%2E%2E/etc/passwd");
+    assert_eq!(status, 400, "encoded .. should be rejected");
+
+    // 3. Double slash
+    let (status, _) = srv.raw_get("/v1/objects//bucket/key");
+    assert_eq!(status, 400, "double slash should be rejected");
+
+    // 4. Null byte (percent-encoded; raw \0 would terminate the request line)
+    let (status, _) = srv.raw_get("/v1/objects/bucket/key%00.txt");
+    assert_eq!(status, 400, "null byte should be rejected");
 }
 
 #[tokio::test]
