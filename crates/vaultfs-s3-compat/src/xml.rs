@@ -113,22 +113,6 @@ pub fn copy_object_xml(meta: &ObjectMeta) -> String {
     )
 }
 
-pub fn create_bucket_xml() -> String {
-    String::new()
-}
-
-pub fn delete_result_xml(key: &str) -> String {
-    format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
-<DeleteResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
-  <Deleted>
-    <Key>{}</Key>
-  </Deleted>
-</DeleteResult>"#,
-        xml_escape(key),
-    )
-}
-
 fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")

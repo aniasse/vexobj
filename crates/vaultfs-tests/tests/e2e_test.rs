@@ -858,6 +858,145 @@ async fn e2e_lifecycle_rules() {
 }
 
 #[tokio::test]
+async fn e2e_delete_version_and_purge() {
+    let srv = TestServer::start();
+    let client = srv.client();
+    let auth = srv.auth_header();
+
+    // Create bucket + enable versioning
+    client
+        .post(format!("{}/v1/buckets", srv.url))
+        .header("Authorization", &auth)
+        .json(&serde_json::json!({"name": "purge-bucket", "public": false}))
+        .send()
+        .await
+        .unwrap();
+    let resp = client
+        .post(format!("{}/v1/admin/versioning/purge-bucket", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // Upload three versions of the same key
+    for body in ["v1", "v2", "v3"] {
+        client
+            .put(format!("{}/v1/objects/purge-bucket/note.txt", srv.url))
+            .header("Authorization", &auth)
+            .header("Content-Type", "text/plain")
+            .body(body)
+            .send()
+            .await
+            .unwrap();
+    }
+
+    // List versions — expect 3, latest first
+    let resp = client
+        .get(format!("{}/v1/versions/purge-bucket/note.txt", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    let body: Value = resp.json().await.unwrap();
+    let versions = body["versions"].as_array().unwrap();
+    assert_eq!(versions.len(), 3);
+    let latest_id = versions[0]["version_id"].as_str().unwrap().to_string();
+    let middle_id = versions[1]["version_id"].as_str().unwrap().to_string();
+
+    // Delete a non-latest version via DELETE ?version_id=
+    let resp = client
+        .delete(format!(
+            "{}/v1/objects/purge-bucket/note.txt?version_id={}",
+            srv.url, middle_id
+        ))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 204);
+
+    // That version should be gone; latest still marked
+    let resp = client
+        .get(format!("{}/v1/versions/purge-bucket/note.txt", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    let body: Value = resp.json().await.unwrap();
+    let versions = body["versions"].as_array().unwrap();
+    assert_eq!(versions.len(), 2);
+    assert!(!versions.iter().any(|v| v["version_id"] == middle_id));
+    let latest_row = versions.iter().find(|v| v["version_id"] == latest_id).unwrap();
+    assert_eq!(latest_row["is_latest"], true);
+
+    // Delete the latest version — the remaining one must be promoted
+    let resp = client
+        .delete(format!(
+            "{}/v1/objects/purge-bucket/note.txt?version_id={}",
+            srv.url, latest_id
+        ))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 204);
+
+    let resp = client
+        .get(format!("{}/v1/versions/purge-bucket/note.txt", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    let body: Value = resp.json().await.unwrap();
+    let versions = body["versions"].as_array().unwrap();
+    assert_eq!(versions.len(), 1);
+    assert_eq!(versions[0]["is_latest"], true);
+
+    // Deleting an unknown version returns 404
+    let resp = client
+        .delete(format!(
+            "{}/v1/objects/purge-bucket/note.txt?version_id=does-not-exist",
+            srv.url
+        ))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+
+    // Purge every remaining version + the live object in one shot
+    let resp = client
+        .delete(format!("{}/v1/versions/purge-bucket/note.txt", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["bucket"], "purge-bucket");
+    assert_eq!(body["key"], "note.txt");
+
+    // Versions list is now empty and GET on the live object returns 404
+    let resp = client
+        .get(format!("{}/v1/versions/purge-bucket/note.txt", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["versions"].as_array().unwrap().len(), 0);
+
+    let resp = client
+        .get(format!("{}/v1/objects/purge-bucket/note.txt", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+}
+
+#[tokio::test]
 async fn e2e_migrate_s3_stub() {
     let srv = TestServer::start();
     let client = srv.client();

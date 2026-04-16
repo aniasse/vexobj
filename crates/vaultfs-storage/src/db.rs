@@ -525,6 +525,17 @@ impl Database {
         version_id: &str,
     ) -> Result<(), StorageError> {
         let conn = self.conn.lock().unwrap();
+        let was_latest: i32 = conn
+            .query_row(
+                "SELECT is_latest FROM object_versions WHERE bucket = ?1 AND key = ?2 AND version_id = ?3",
+                params![bucket, key, version_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| StorageError::ObjectNotFound {
+                bucket: bucket.to_string(),
+                key: key.to_string(),
+            })?;
+
         let affected = conn.execute(
             "DELETE FROM object_versions WHERE bucket = ?1 AND key = ?2 AND version_id = ?3",
             params![bucket, key, version_id],
@@ -535,7 +546,53 @@ impl Database {
                 key: key.to_string(),
             });
         }
+
+        // If we removed the latest version, promote the newest remaining one.
+        if was_latest != 0 {
+            conn.execute(
+                "UPDATE object_versions SET is_latest = 1
+                 WHERE id = (
+                     SELECT id FROM object_versions
+                     WHERE bucket = ?1 AND key = ?2
+                     ORDER BY created_at DESC LIMIT 1
+                 )",
+                params![bucket, key],
+            )?;
+        }
         Ok(())
+    }
+
+    /// Hard-delete every version and delete-marker for a key.
+    /// Returns the distinct storage_paths that were referenced by those rows
+    /// (caller decides whether to remove the blobs).
+    pub fn purge_versions(&self, bucket: &str, key: &str) -> Result<Vec<String>, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT storage_path FROM object_versions
+             WHERE bucket = ?1 AND key = ?2 AND storage_path != ''",
+        )?;
+        let paths: Vec<String> = stmt
+            .query_map(params![bucket, key], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(stmt);
+        conn.execute(
+            "DELETE FROM object_versions WHERE bucket = ?1 AND key = ?2",
+            params![bucket, key],
+        )?;
+        Ok(paths)
+    }
+
+    /// True if any row in `objects` or `object_versions` still references this blob.
+    pub fn is_storage_path_referenced(&self, storage_path: &str) -> Result<bool, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM objects WHERE storage_path = ?1)
+              + (SELECT COUNT(*) FROM object_versions WHERE storage_path = ?1)",
+            params![storage_path],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
     }
 
     // ── Lifecycle ───────────────────────────────────────────────────────

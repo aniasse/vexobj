@@ -67,19 +67,3 @@ fn is_valid_bucket_name(name: &str) -> bool {
         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
-/// Validate an object key: no null bytes, no leading slash, max 1024 chars
-pub fn is_valid_object_key(key: &str) -> bool {
-    !key.is_empty()
-        && key.len() <= 1024
-        && !key.contains('\0')
-        && !key.starts_with('/')
-        && !key.contains("..")
-}
-
-/// Sanitize a key by removing dangerous characters
-pub fn sanitize_key(key: &str) -> String {
-    key.replace('\0', "")
-        .replace("..", "")
-        .trim_start_matches('/')
-        .to_string()
-}

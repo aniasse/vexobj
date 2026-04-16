@@ -29,7 +29,10 @@ pub fn routes() -> Router<AppState> {
                 .delete(delete_object)
                 .head(head_object),
         )
-        .route("/v1/versions/{bucket}/{*key}", get(list_versions))
+        .route(
+            "/v1/versions/{bucket}/{*key}",
+            get(list_versions).delete(purge_versions),
+        )
 }
 
 /// PUT now streams to disk by default — constant RAM regardless of file size.
@@ -376,10 +379,16 @@ async fn head_object(
     }
 }
 
+#[derive(Deserialize, Default)]
+struct DeleteObjectQuery {
+    version_id: Option<String>,
+}
+
 async fn delete_object(
     State(state): State<AppState>,
     Extension(caller): Extension<ApiKey>,
     Path((bucket, key)): Path<(String, String)>,
+    Query(query): Query<DeleteObjectQuery>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
     if let Err(resp) = require_permission(&caller, "delete").await {
@@ -390,6 +399,26 @@ async fn delete_object(
     }
 
     let ip = extract_ip(&headers);
+
+    if let Some(ref vid) = query.version_id {
+        return match state.storage.delete_version(&bucket, &key, vid).await {
+            Ok(()) => {
+                state.audit.log(
+                    &key_prefix(&caller),
+                    "object.version.delete",
+                    &format!("{}/{}", bucket, key),
+                    &json!({"version_id": vid}),
+                    &ip,
+                );
+                StatusCode::NO_CONTENT.into_response()
+            }
+            Err(_) => (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "version not found"})),
+            )
+                .into_response(),
+        };
+    }
 
     match state.storage.delete_object(&bucket, &key).await {
         Ok(()) => {
@@ -461,6 +490,41 @@ async fn list_versions(
 
     match state.storage.list_versions(&bucket, &key) {
         Ok(versions) => Json(json!({"versions": versions})).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn purge_versions(
+    State(state): State<AppState>,
+    Extension(caller): Extension<ApiKey>,
+    Path((bucket, key)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(resp) = require_permission(&caller, "delete").await {
+        return resp;
+    }
+    if let Err(e) = state.auth.check_bucket_access(&caller, &bucket) {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()}))).into_response();
+    }
+
+    let ip = extract_ip(&headers);
+
+    match state.storage.purge_versions(&bucket, &key).await {
+        Ok(blobs_removed) => {
+            state.audit.log(
+                &key_prefix(&caller),
+                "object.versions.purge",
+                &format!("{}/{}", bucket, key),
+                &json!({"blobs_removed": blobs_removed}),
+                &ip,
+            );
+            Json(json!({"bucket": bucket, "key": key, "blobs_removed": blobs_removed}))
+                .into_response()
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": e.to_string()})),

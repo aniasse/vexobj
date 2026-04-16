@@ -2,7 +2,7 @@ use axum::body::Body;
 use axum::extract::{Extension, Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
-use axum::routing::{get, put};
+use axum::routing::put;
 use axum::{Json, Router};
 use futures::TryStreamExt;
 use serde_json::json;

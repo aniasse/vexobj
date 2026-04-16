@@ -346,6 +346,58 @@ impl StorageEngine {
         self.db.enable_versioning(bucket)
     }
 
+    /// Delete a specific version of an object. If the version is a delete-marker,
+    /// the row is just removed. Otherwise, the row is deleted and the blob is
+    /// removed when no other object or version still references it.
+    pub async fn delete_version(
+        &self,
+        bucket: &str,
+        key: &str,
+        version_id: &str,
+    ) -> Result<(), StorageError> {
+        let (version, storage_path) = self.db.get_version(bucket, key, version_id)?;
+        self.db.delete_version(bucket, key, version_id)?;
+
+        if version.is_delete_marker || storage_path.is_empty() {
+            return Ok(());
+        }
+        if self.deduplication {
+            return Ok(());
+        }
+        if !self.db.is_storage_path_referenced(&storage_path)? {
+            let full_path = self.data_dir.join(&storage_path);
+            let _ = tokio::fs::remove_file(&full_path).await;
+        }
+        Ok(())
+    }
+
+    /// Hard-delete every version and delete-marker for a key, including the
+    /// live object. Removes any blob that becomes orphaned (when dedup is off).
+    pub async fn purge_versions(&self, bucket: &str, key: &str) -> Result<u64, StorageError> {
+        let live_path = self.db.get_object(bucket, key).ok().map(|(_, p)| p);
+        if live_path.is_some() {
+            let _ = self.db.delete_object(bucket, key);
+        }
+        let paths = self.db.purge_versions(bucket, key)?;
+        let mut all_paths: Vec<String> = paths;
+        if let Some(p) = live_path {
+            all_paths.push(p);
+        }
+
+        let mut removed: u64 = 0;
+        if !self.deduplication {
+            for path in all_paths.iter().collect::<std::collections::HashSet<_>>() {
+                if !self.db.is_storage_path_referenced(path)? {
+                    let full_path = self.data_dir.join(path);
+                    if tokio::fs::remove_file(&full_path).await.is_ok() {
+                        removed += 1;
+                    }
+                }
+            }
+        }
+        Ok(removed)
+    }
+
     // ── Lifecycle ───────────────────────────────────────────────────────
 
     pub fn run_lifecycle(&self) -> Result<LifecycleResult, StorageError> {

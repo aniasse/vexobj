@@ -92,8 +92,6 @@ async fn s3_service(
 
 #[derive(Deserialize, Default)]
 struct BucketQuery {
-    #[serde(rename = "list-type")]
-    list_type: Option<String>,
     prefix: Option<String>,
     delimiter: Option<String>,
     #[serde(rename = "max-keys")]
