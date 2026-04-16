@@ -22,3 +22,10 @@ futures = { workspace = true }
 tokio-util = { workspace = true }
 aes-gcm = { workspace = true }
 hkdf = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "hot_paths"
+harness = false

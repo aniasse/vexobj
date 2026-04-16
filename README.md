@@ -322,6 +322,18 @@ vaultfs/
 └── deploy/helm/              # Kubernetes deployment
 ```
 
+## Performance
+
+Current single-core numbers on an Intel i5-10300H (no SHA-NI):
+
+- AES-256-GCM (SSE encrypt/decrypt): **~1.25 GB/s** at 64 KB and above
+- SHA-256 hashing: **~240 MB/s** (hardware-accelerated on AMD / Ice-Lake+)
+- SigV4 verification: **~100k req/s per core**
+
+Full methodology and per-size numbers in [docs/benchmarks.md](docs/benchmarks.md).
+Reproducible with `cargo bench -p vaultfs-storage` and
+`cargo bench -p vaultfs-s3-compat`.
+
 ## License
 
 MIT

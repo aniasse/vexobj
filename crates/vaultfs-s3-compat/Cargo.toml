@@ -22,3 +22,10 @@ uuid = { workspace = true }
 mime_guess = { workspace = true }
 vaultfs-storage = { workspace = true }
 vaultfs-auth = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "sigv4"
+harness = false
