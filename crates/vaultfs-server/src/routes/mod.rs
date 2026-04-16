@@ -15,6 +15,7 @@ use tower_http::trace::TraceLayer;
 
 use crate::middleware::auth_middleware;
 use crate::ratelimit::rate_limit_middleware;
+use crate::security::security_middleware;
 use crate::state::AppState;
 
 pub fn create_router(state: AppState) -> Router {
@@ -50,7 +51,8 @@ pub fn create_router(state: AppState) -> Router {
         app = app.layer(axum_mw::from_fn_with_state(state, rate_limit_middleware));
     }
 
-    app.layer(CompressionLayer::new())
+    app.layer(axum::middleware::from_fn(security_middleware))
+        .layer(CompressionLayer::new())
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
 }

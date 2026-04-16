@@ -2723,6 +2723,7 @@ name = "vaultfs-tests"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "futures",
  "serde_json",
  "tokio",
  "uuid",

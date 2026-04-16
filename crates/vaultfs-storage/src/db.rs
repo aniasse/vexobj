@@ -306,6 +306,14 @@ impl Database {
         Ok(paths)
     }
 
+    /// Create an atomic backup of the database using VACUUM INTO.
+    pub fn backup_to(&self, dest: &std::path::Path) -> Result<(), StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let dest_str = dest.to_string_lossy();
+        conn.execute_batch(&format!("VACUUM INTO '{}'", dest_str.replace('\'', "''")))?;
+        Ok(())
+    }
+
     pub fn find_by_hash(&self, sha256: &str) -> Result<Option<String>, StorageError> {
         let conn = self.conn.lock().unwrap();
         let result = conn.query_row(

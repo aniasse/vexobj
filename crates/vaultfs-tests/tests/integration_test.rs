@@ -377,6 +377,112 @@ async fn test_garbage_collection() {
     assert!(result.bytes_freed > 0);
 }
 
+#[tokio::test]
+async fn test_backup_and_restore() {
+    let dir = tempdir();
+    let engine = vaultfs_storage::StorageEngine::new(dir.clone(), 1024 * 1024, true).unwrap();
+
+    engine
+        .create_bucket(&vaultfs_storage::CreateBucketRequest {
+            name: "backup-test".to_string(),
+            public: false,
+        })
+        .unwrap();
+
+    engine
+        .put_object("backup-test", "file1.txt", bytes::Bytes::from("data1"), None, None)
+        .await
+        .unwrap();
+    engine
+        .put_object("backup-test", "file2.txt", bytes::Bytes::from("data2"), None, None)
+        .await
+        .unwrap();
+
+    // Create backup
+    let backup_dir = tempdir();
+    let bm = vaultfs_storage::BackupManager::new(dir.clone());
+    let result = bm.create_snapshot(engine.db(), &backup_dir).unwrap();
+    assert!(result.db_size > 0);
+    assert_eq!(result.blobs_copied, 2);
+
+    // Verify backup files exist
+    assert!(backup_dir.join("vaultfs.db").exists());
+    assert!(backup_dir.join("blobs").exists());
+
+    // Restore to a new location
+    let restore_dir = tempdir();
+    let bm2 = vaultfs_storage::BackupManager::new(restore_dir.clone());
+    let restore_result = bm2.restore_snapshot(&backup_dir).unwrap();
+    assert!(restore_result.db_restored);
+    assert_eq!(restore_result.blobs_restored, 2);
+
+    // Verify restored data is usable
+    let engine2 = vaultfs_storage::StorageEngine::new(restore_dir, 1024 * 1024, true).unwrap();
+    let (_, data) = engine2.get_object("backup-test", "file1.txt").await.unwrap();
+    assert_eq!(data, bytes::Bytes::from("data1"));
+}
+
+#[tokio::test]
+async fn test_bucket_export() {
+    let dir = tempdir();
+    let engine = vaultfs_storage::StorageEngine::new(dir.clone(), 1024 * 1024, true).unwrap();
+
+    engine
+        .create_bucket(&vaultfs_storage::CreateBucketRequest {
+            name: "export-test".to_string(),
+            public: false,
+        })
+        .unwrap();
+
+    engine
+        .put_object("export-test", "a.txt", bytes::Bytes::from("aaa"), None, None)
+        .await
+        .unwrap();
+    engine
+        .put_object("export-test", "b.txt", bytes::Bytes::from("bbb"), None, None)
+        .await
+        .unwrap();
+
+    let export_dir = tempdir();
+    let bm = vaultfs_storage::BackupManager::new(dir);
+    let count = bm.export_bucket(engine.db(), "export-test", &export_dir).unwrap();
+    assert_eq!(count, 2);
+    assert!(export_dir.join("a.txt").exists());
+    assert!(export_dir.join("b.txt").exists());
+    assert!(export_dir.join("_manifest.json").exists());
+}
+
+#[tokio::test]
+async fn test_streaming_upload() {
+    let dir = tempdir();
+    let engine = vaultfs_storage::StorageEngine::new(dir.clone(), 1024 * 1024 * 100, true).unwrap();
+
+    engine
+        .create_bucket(&vaultfs_storage::CreateBucketRequest {
+            name: "stream".to_string(),
+            public: false,
+        })
+        .unwrap();
+
+    // Simulate a stream of chunks
+    let chunks: Vec<Result<bytes::Bytes, std::io::Error>> = vec![
+        Ok(bytes::Bytes::from("chunk1")),
+        Ok(bytes::Bytes::from("chunk2")),
+        Ok(bytes::Bytes::from("chunk3")),
+    ];
+    let stream = futures::stream::iter(chunks);
+
+    let meta = engine
+        .put_object_stream("stream", "streamed.txt", stream, Some("text/plain"), None)
+        .await
+        .unwrap();
+    assert_eq!(meta.size, 18); // chunk1 + chunk2 + chunk3
+
+    // Verify content
+    let (_, data) = engine.get_object("stream", "streamed.txt").await.unwrap();
+    assert_eq!(data, bytes::Bytes::from("chunk1chunk2chunk3"));
+}
+
 fn tempdir() -> PathBuf {
     let dir = std::env::temp_dir().join(format!("vaultfs-test-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();

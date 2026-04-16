@@ -2,6 +2,7 @@ mod config;
 mod middleware;
 mod ratelimit;
 mod routes;
+mod security;
 mod state;
 mod webhooks;
 

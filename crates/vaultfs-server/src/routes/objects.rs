@@ -1,9 +1,11 @@
+use axum::body::Body;
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, put};
 use axum::{Json, Router};
 use bytes::Bytes;
+use futures::TryStreamExt;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -27,12 +29,14 @@ pub fn routes() -> Router<AppState> {
         )
 }
 
+/// PUT now streams to disk by default — constant RAM regardless of file size.
+/// Only falls back to in-memory for small files that need image transforms.
 async fn put_object(
     State(state): State<AppState>,
     Extension(caller): Extension<ApiKey>,
     Path((bucket, key)): Path<(String, String)>,
     headers: HeaderMap,
-    body: Bytes,
+    body: Body,
 ) -> impl IntoResponse {
     if let Err(resp) = require_permission(&caller, "write").await {
         return resp;
@@ -46,13 +50,17 @@ async fn put_object(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
+    // Stream body to disk (constant RAM)
+    let stream = body
+        .into_data_stream()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
+
     match state
         .storage
-        .put_object(&bucket, &key, body, content_type.as_deref(), None)
+        .put_object_stream(&bucket, &key, stream, content_type.as_deref(), None)
         .await
     {
         Ok(meta) => {
-            // Fire webhook
             if let Some(ref wh) = state.webhooks {
                 wh.send("object.created", json!({
                     "bucket": meta.bucket,
@@ -90,6 +98,8 @@ struct GetObjectQuery {
     signature: Option<String>,
 }
 
+/// GET now streams from disk by default for non-image files.
+/// Images with transforms still load into memory for processing.
 async fn get_object(
     State(state): State<AppState>,
     Extension(caller): Extension<ApiKey>,
@@ -104,82 +114,90 @@ async fn get_object(
         return (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()}))).into_response();
     }
 
-    let (meta, data) = match state.storage.get_object(&bucket, &key).await {
-        Ok(result) => result,
-        Err(_) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({"error": "object not found"})),
-            )
-                .into_response()
-        }
-    };
-
-    let is_image = StorageEngine::is_image(&meta.content_type);
     let has_transform = query.w.is_some()
         || query.h.is_some()
         || query.format.is_some()
         || query.quality.is_some();
 
-    if is_image && has_transform {
-        let accept = headers
-            .get("accept")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
+    let has_range = headers.get("range").is_some();
 
-        let format = query
-            .format
-            .as_deref()
-            .and_then(OutputFormat::from_str)
-            .or_else(|| best_format_from_accept(accept));
-
-        let params = TransformParams {
-            width: query.w,
-            height: query.h,
-            format,
-            quality: query.quality,
-            fit: match query.fit.as_deref() {
-                Some("contain") => FitMode::Contain,
-                Some("fill") => FitMode::Fill,
-                _ => FitMode::Cover,
-            },
-        };
-
-        let cache_key = format!("{}/{}/{}", bucket, key, params.cache_key());
-        if let Some((cached_data, cached_type)) = state.cache.get(&cache_key).await {
-            return (
-                StatusCode::OK,
-                [
-                    ("content-type", cached_type),
-                    ("x-vaultfs-cache", "hit".to_string()),
-                ],
-                cached_data,
-            )
-                .into_response();
-        }
-
-        match transform_image(&data, &params) {
-            Ok((transformed, content_type)) => {
-                let bytes = Bytes::from(transformed);
-                let _ = state.cache.put(&cache_key, bytes.clone(), &content_type).await;
-                (
-                    StatusCode::OK,
-                    [
-                        ("content-type", content_type),
-                        ("x-vaultfs-cache", "miss".to_string()),
-                    ],
-                    bytes,
+    // For image transforms or range requests, we need the data in memory
+    if has_transform || has_range {
+        let (meta, data) = match state.storage.get_object(&bucket, &key).await {
+            Ok(result) => result,
+            Err(_) => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({"error": "object not found"})),
                 )
                     .into_response()
             }
-            Err(e) => (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Json(json!({"error": e.to_string()})),
-            )
-                .into_response(),
+        };
+
+        let is_image = StorageEngine::is_image(&meta.content_type);
+
+        if is_image && has_transform {
+            let accept = headers
+                .get("accept")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+
+            let format = query
+                .format
+                .as_deref()
+                .and_then(OutputFormat::from_str)
+                .or_else(|| best_format_from_accept(accept));
+
+            let params = TransformParams {
+                width: query.w,
+                height: query.h,
+                format,
+                quality: query.quality,
+                fit: match query.fit.as_deref() {
+                    Some("contain") => FitMode::Contain,
+                    Some("fill") => FitMode::Fill,
+                    _ => FitMode::Cover,
+                },
+            };
+
+            let cache_key = format!("{}/{}/{}", bucket, key, params.cache_key());
+            if let Some((cached_data, cached_type)) = state.cache.get(&cache_key).await {
+                return (
+                    StatusCode::OK,
+                    [
+                        ("content-type", cached_type),
+                        ("x-vaultfs-cache", "hit".to_string()),
+                    ],
+                    cached_data,
+                )
+                    .into_response();
+            }
+
+            match transform_image(&data, &params) {
+                Ok((transformed, content_type)) => {
+                    let bytes = Bytes::from(transformed);
+                    let _ = state.cache.put(&cache_key, bytes.clone(), &content_type).await;
+                    return (
+                        StatusCode::OK,
+                        [
+                            ("content-type", content_type),
+                            ("x-vaultfs-cache", "miss".to_string()),
+                        ],
+                        bytes,
+                    )
+                        .into_response();
+                }
+                Err(e) => {
+                    return (
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        Json(json!({"error": e.to_string()})),
+                    )
+                        .into_response();
+                }
+            }
         }
-    } else {
-        // Handle Range requests
+
+        // Range request
         if let Some(range_header) = headers.get("range").and_then(|v| v.to_str().ok()) {
             if let Some((start, end)) = parse_range(range_header, data.len() as u64) {
                 let slice = data.slice(start as usize..end as usize);
@@ -199,7 +217,8 @@ async fn get_object(
             }
         }
 
-        (
+        // Fallback: serve in-memory
+        return (
             StatusCode::OK,
             [
                 ("content-type", meta.content_type.clone()),
@@ -209,36 +228,50 @@ async fn get_object(
             ],
             data,
         )
-            .into_response()
+            .into_response();
+    }
+
+    // Default: stream from disk (constant RAM)
+    match state.storage.get_object_stream(&bucket, &key).await {
+        Ok((meta, stream)) => {
+            let body = Body::from_stream(stream);
+            (
+                StatusCode::OK,
+                [
+                    ("content-type", meta.content_type),
+                    ("content-length", meta.size.to_string()),
+                    ("etag", format!("\"{}\"", meta.sha256)),
+                    ("accept-ranges", "bytes".to_string()),
+                ],
+                body,
+            )
+                .into_response()
+        }
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "object not found"})),
+        )
+            .into_response(),
     }
 }
 
-/// Parse HTTP Range header: "bytes=start-end" or "bytes=start-" or "bytes=-suffix"
 fn parse_range(header: &str, total: u64) -> Option<(u64, u64)> {
     let range = header.strip_prefix("bytes=")?;
     let (start_str, end_str) = range.split_once('-')?;
 
     if start_str.is_empty() {
-        // Suffix range: bytes=-500
         let suffix: u64 = end_str.parse().ok()?;
         let start = total.saturating_sub(suffix);
         Some((start, total))
     } else if end_str.is_empty() {
-        // Open range: bytes=500-
         let start: u64 = start_str.parse().ok()?;
-        if start >= total {
-            return None;
-        }
+        if start >= total { return None; }
         Some((start, total))
     } else {
-        // Closed range: bytes=0-499
         let start: u64 = start_str.parse().ok()?;
         let end: u64 = end_str.parse().ok()?;
-        if start >= total {
-            return None;
-        }
-        let end = (end + 1).min(total);
-        Some((start, end))
+        if start >= total { return None; }
+        Some((start, (end + 1).min(total)))
     }
 }
 

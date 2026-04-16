@@ -16,6 +16,8 @@ pub fn routes() -> Router<AppState> {
         .route("/v1/admin/keys/{id}", axum::routing::delete(delete_key))
         .route("/v1/presign", axum::routing::post(create_presigned_url))
         .route("/v1/admin/gc", axum::routing::post(run_gc))
+        .route("/v1/admin/backup", axum::routing::post(create_backup))
+        .route("/v1/admin/backup/export/{bucket}", axum::routing::post(export_bucket))
 }
 
 #[derive(Deserialize)]
@@ -148,6 +150,75 @@ async fn run_gc(
                 "blobs_scanned": result.blobs_scanned,
                 "orphans_removed": result.orphans_removed,
                 "bytes_freed": result.bytes_freed,
+            })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn create_backup(
+    State(state): State<AppState>,
+    Extension(caller): Extension<ApiKey>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_permission(&caller, "admin").await {
+        return resp;
+    }
+
+    let data_dir = state.storage.data_dir().to_path_buf();
+    let backup_dir = data_dir.join(format!(
+        "backups/snapshot-{}",
+        chrono::Utc::now().format("%Y%m%d-%H%M%S")
+    ));
+
+    let bm = vaultfs_storage::BackupManager::new(data_dir);
+    match bm.create_snapshot(state.storage.db(), &backup_dir) {
+        Ok(result) => (
+            StatusCode::OK,
+            Json(json!({
+                "path": result.path.to_string_lossy(),
+                "db_size": result.db_size,
+                "blobs_copied": result.blobs_copied,
+                "total_size": result.total_size,
+            })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn export_bucket(
+    State(state): State<AppState>,
+    Extension(caller): Extension<ApiKey>,
+    Path(bucket): Path<String>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_permission(&caller, "admin").await {
+        return resp;
+    }
+
+    let data_dir = state.storage.data_dir().to_path_buf();
+    let export_dir = data_dir.join(format!(
+        "exports/{}-{}",
+        bucket,
+        chrono::Utc::now().format("%Y%m%d-%H%M%S")
+    ));
+
+    let bm = vaultfs_storage::BackupManager::new(data_dir);
+    match bm.export_bucket(state.storage.db(), &bucket, &export_dir) {
+        Ok(count) => (
+            StatusCode::OK,
+            Json(json!({
+                "bucket": bucket,
+                "objects_exported": count,
+                "path": export_dir.to_string_lossy(),
             })),
         )
             .into_response(),
