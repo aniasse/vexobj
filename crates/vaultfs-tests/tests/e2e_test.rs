@@ -94,7 +94,7 @@ window_secs = 60
         let stdout = child.stdout.take().expect("stdout");
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let reader = BufReader::new(stderr);
+            let reader = BufReader::new(stdout);
             for line in reader.lines() {
                 match line {
                     Ok(line) => {
@@ -704,4 +704,174 @@ async fn e2e_metrics_endpoint() {
 
     // The request count should be > 0 since we made requests above
     assert!(body.contains("vaultfs_requests_by_method_total{method=\"GET\"}"));
+}
+
+#[tokio::test]
+async fn e2e_versioning() {
+    let srv = TestServer::start();
+    let client = srv.client();
+    let auth = srv.auth_header();
+
+    // Create bucket
+    client
+        .post(format!("{}/v1/buckets", srv.url))
+        .header("Authorization", &auth)
+        .json(&serde_json::json!({"name": "ver-bucket", "public": false}))
+        .send()
+        .await
+        .unwrap();
+
+    // Enable versioning
+    let resp = client
+        .post(format!("{}/v1/admin/versioning/ver-bucket", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["versioning"], "enabled");
+
+    // Upload version 1
+    client
+        .put(format!("{}/v1/objects/ver-bucket/doc.txt", srv.url))
+        .header("Authorization", &auth)
+        .header("Content-Type", "text/plain")
+        .body("version 1")
+        .send()
+        .await
+        .unwrap();
+
+    // Upload version 2 (overwrite)
+    client
+        .put(format!("{}/v1/objects/ver-bucket/doc.txt", srv.url))
+        .header("Authorization", &auth)
+        .header("Content-Type", "text/plain")
+        .body("version 2")
+        .send()
+        .await
+        .unwrap();
+
+    // List versions
+    let resp = client
+        .get(format!("{}/v1/versions/ver-bucket/doc.txt", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    let versions = body["versions"].as_array().unwrap();
+    assert_eq!(versions.len(), 2);
+    // Latest version should be first (DESC order)
+    assert_eq!(versions[0]["is_latest"], true);
+    assert_eq!(versions[1]["is_latest"], false);
+
+    // Download a specific version
+    let v1_id = versions[1]["version_id"].as_str().unwrap();
+    let resp = client
+        .get(format!(
+            "{}/v1/objects/ver-bucket/doc.txt?version_id={}",
+            srv.url, v1_id
+        ))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let data = resp.text().await.unwrap();
+    assert_eq!(data, "version 1");
+}
+
+#[tokio::test]
+async fn e2e_lifecycle_rules() {
+    let srv = TestServer::start();
+    let client = srv.client();
+    let auth = srv.auth_header();
+
+    // Create bucket
+    client
+        .post(format!("{}/v1/buckets", srv.url))
+        .header("Authorization", &auth)
+        .json(&serde_json::json!({"name": "lc-bucket", "public": false}))
+        .send()
+        .await
+        .unwrap();
+
+    // Create lifecycle rule
+    let resp = client
+        .post(format!("{}/v1/admin/lifecycle/lc-bucket", srv.url))
+        .header("Authorization", &auth)
+        .json(&serde_json::json!({"prefix": "tmp/", "expire_days": 7}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["bucket"], "lc-bucket");
+    assert_eq!(body["prefix"], "tmp/");
+    assert_eq!(body["expire_days"], 7);
+    let rule_id = body["id"].as_str().unwrap().to_string();
+
+    // List lifecycle rules
+    let resp = client
+        .get(format!("{}/v1/admin/lifecycle/lc-bucket", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    let rules = body["rules"].as_array().unwrap();
+    assert_eq!(rules.len(), 1);
+
+    // Run lifecycle (should expire nothing since objects are fresh)
+    let resp = client
+        .post(format!("{}/v1/admin/lifecycle/run", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["objects_expired"], 0);
+
+    // Delete lifecycle rule
+    let resp = client
+        .delete(format!("{}/v1/admin/lifecycle/rule/{}", srv.url, rule_id))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 204);
+
+    // Verify rule deleted
+    let resp = client
+        .get(format!("{}/v1/admin/lifecycle/lc-bucket", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    let body: Value = resp.json().await.unwrap();
+    let rules = body["rules"].as_array().unwrap();
+    assert_eq!(rules.len(), 0);
+}
+
+#[tokio::test]
+async fn e2e_migrate_s3_stub() {
+    let srv = TestServer::start();
+    let client = srv.client();
+    let auth = srv.auth_header();
+
+    // Server-side S3 migration should return 501 with a hint to use CLI
+    let resp = client
+        .post(format!("{}/v1/admin/migrate/s3", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 501);
+    let body: Value = resp.json().await.unwrap();
+    assert!(body["hint"].as_str().unwrap().contains("CLI"));
+    assert!(body["command"].as_str().unwrap().contains("vaultfsctl"));
 }

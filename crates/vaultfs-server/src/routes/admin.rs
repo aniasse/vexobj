@@ -26,6 +26,7 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/v1/admin/lifecycle/run", axum::routing::post(run_lifecycle))
         .route("/v1/admin/lifecycle/rule/{id}", axum::routing::delete(delete_lifecycle_rule))
+        .route("/v1/admin/migrate/s3", axum::routing::post(migrate_s3_stub))
 }
 
 #[derive(Deserialize)]

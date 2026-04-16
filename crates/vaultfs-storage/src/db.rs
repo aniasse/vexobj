@@ -431,6 +431,28 @@ impl Database {
         Ok(())
     }
 
+    pub fn save_delete_marker(
+        &self,
+        bucket: &str,
+        key: &str,
+        version_id: &str,
+    ) -> Result<(), StorageError> {
+        let conn = self.conn.lock().unwrap();
+        // Mark all previous versions as not latest
+        conn.execute(
+            "UPDATE object_versions SET is_latest = 0 WHERE bucket = ?1 AND key = ?2",
+            params![bucket, key],
+        )?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = Utc::now();
+        conn.execute(
+            "INSERT INTO object_versions (id, bucket, key, version_id, size, content_type, sha256, storage_path, created_at, is_latest, is_delete_marker)
+             VALUES (?1, ?2, ?3, ?4, 0, '', '', '', ?5, 1, 1)",
+            params![id, bucket, key, version_id, now.to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
     pub fn list_versions(&self, bucket: &str, key: &str) -> Result<Vec<ObjectVersion>, StorageError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(

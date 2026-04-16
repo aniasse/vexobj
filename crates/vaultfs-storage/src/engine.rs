@@ -131,6 +131,21 @@ impl StorageEngine {
         )?;
 
         info!(bucket, key, size, "object stored");
+
+        // If versioning is enabled, save a version record
+        if self.db.is_versioning_enabled(bucket) {
+            let version_id = uuid::Uuid::new_v4().to_string();
+            let _ = self.db.save_version(
+                bucket,
+                key,
+                &version_id,
+                size,
+                &content_type,
+                &sha256,
+                &storage_path,
+            );
+        }
+
         Ok(meta)
     }
 
@@ -147,6 +162,12 @@ impl StorageEngine {
     }
 
     pub async fn delete_object(&self, bucket: &str, key: &str) -> Result<(), StorageError> {
+        // If versioning is enabled, create a delete marker instead of hard-deleting
+        if self.db.is_versioning_enabled(bucket) {
+            let version_id = uuid::Uuid::new_v4().to_string();
+            self.db.save_delete_marker(bucket, key, &version_id)?;
+        }
+
         let storage_path = self.db.delete_object(bucket, key)?;
         // Note: with dedup, we don't delete the blob as other objects may reference it
         if !self.deduplication {
