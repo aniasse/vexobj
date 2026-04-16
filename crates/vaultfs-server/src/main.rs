@@ -1,7 +1,9 @@
 mod config;
 mod middleware;
+mod ratelimit;
 mod routes;
 mod state;
+mod webhooks;
 
 use anyhow::Result;
 use tracing::info;
@@ -22,6 +24,20 @@ async fn main() -> Result<()> {
         data_dir = %config.storage.data_dir,
         "starting VaultFS"
     );
+
+    if config.tls.enabled {
+        info!("TLS enabled");
+    }
+    if config.rate_limit.enabled {
+        info!(
+            max = config.rate_limit.max_requests,
+            window = config.rate_limit.window_secs,
+            "rate limiting enabled"
+        );
+    }
+    if !config.webhooks.is_empty() {
+        info!(count = config.webhooks.len(), "webhooks configured");
+    }
 
     let state = state::AppState::new(&config)?;
 
@@ -51,11 +67,44 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Rate limiter cleanup task
+    if let Some(ref limiter) = state.rate_limiter {
+        let limiter = limiter.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                limiter.cleanup();
+            }
+        });
+    }
+
     let app = routes::create_router(state);
 
-    let listener = tokio::net::TcpListener::bind(&config.server.bind).await?;
-    info!("VaultFS listening on {}", config.server.bind);
+    if config.tls.enabled {
+        let cert_path = config
+            .tls
+            .cert_path
+            .as_deref()
+            .expect("tls.cert_path required when TLS is enabled");
+        let key_path = config
+            .tls
+            .key_path
+            .as_deref()
+            .expect("tls.key_path required when TLS is enabled");
 
-    axum::serve(listener, app).await?;
+        info!("VaultFS listening on {} (HTTPS)", config.server.bind);
+
+        let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert_path, key_path)
+            .await?;
+
+        axum_server::bind_rustls(config.server.bind.parse()?, tls_config)
+            .serve(app.into_make_service())
+            .await?;
+    } else {
+        let listener = tokio::net::TcpListener::bind(&config.server.bind).await?;
+        info!("VaultFS listening on {}", config.server.bind);
+        axum::serve(listener, app).await?;
+    }
+
     Ok(())
 }

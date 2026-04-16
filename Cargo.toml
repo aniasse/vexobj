@@ -6,6 +6,7 @@ members = [
     "crates/vaultfs-s3-compat",
     "crates/vaultfs-cache",
     "crates/vaultfs-auth",
+    "crates/vaultfs-tests",
 ]
 resolver = "2"
 
@@ -55,7 +56,7 @@ bytes = "1"
 futures = "0.3"
 tokio-util = { version = "0.7", features = ["io"] }
 
-# Internal crates
+# Internal crates (also used in integration tests)
 vaultfs-storage = { path = "crates/vaultfs-storage" }
 vaultfs-processing = { path = "crates/vaultfs-processing" }
 vaultfs-s3-compat = { path = "crates/vaultfs-s3-compat" }

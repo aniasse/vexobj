@@ -26,6 +26,7 @@ pub enum OutputFormat {
     Jpeg,
     Png,
     WebP,
+    Avif,
     Gif,
 }
 
@@ -35,6 +36,7 @@ impl OutputFormat {
             "jpg" | "jpeg" => Some(Self::Jpeg),
             "png" => Some(Self::Png),
             "webp" => Some(Self::WebP),
+            "avif" => Some(Self::Avif),
             "gif" => Some(Self::Gif),
             _ => None,
         }
@@ -45,6 +47,7 @@ impl OutputFormat {
             Self::Jpeg => "image/jpeg",
             Self::Png => "image/png",
             Self::WebP => "image/webp",
+            Self::Avif => "image/avif",
             Self::Gif => "image/gif",
         }
     }
@@ -54,6 +57,7 @@ impl OutputFormat {
             Self::Jpeg => ImageFormat::Jpeg,
             Self::Png => ImageFormat::Png,
             Self::WebP => ImageFormat::WebP,
+            Self::Avif => ImageFormat::Avif,
             Self::Gif => ImageFormat::Gif,
         }
     }
@@ -61,7 +65,10 @@ impl OutputFormat {
 
 /// Detect the best output format from the Accept header
 pub fn best_format_from_accept(accept: &str) -> Option<OutputFormat> {
-    if accept.contains("image/webp") {
+    // Prefer AVIF > WebP if both are accepted
+    if accept.contains("image/avif") {
+        Some(OutputFormat::Avif)
+    } else if accept.contains("image/webp") {
         Some(OutputFormat::WebP)
     } else {
         None
@@ -95,6 +102,9 @@ pub fn transform_image(
         }
         OutputFormat::WebP => {
             img.write_to(&mut cursor, ImageFormat::WebP)?;
+        }
+        OutputFormat::Avif => {
+            img.write_to(&mut cursor, ImageFormat::Avif)?;
         }
         OutputFormat::Gif => {
             img.write_to(&mut cursor, ImageFormat::Gif)?;

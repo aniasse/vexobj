@@ -297,6 +297,15 @@ impl Database {
         })
     }
 
+    pub fn all_storage_paths(&self) -> Result<Vec<String>, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT DISTINCT storage_path FROM objects")?;
+        let paths = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(paths)
+    }
+
     pub fn find_by_hash(&self, sha256: &str) -> Result<Option<String>, StorageError> {
         let conn = self.conn.lock().unwrap();
         let result = conn.query_row(

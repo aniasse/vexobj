@@ -15,6 +15,7 @@ pub fn routes() -> Router<AppState> {
         .route("/v1/admin/keys", get(list_keys).post(create_key))
         .route("/v1/admin/keys/{id}", axum::routing::delete(delete_key))
         .route("/v1/presign", axum::routing::post(create_presigned_url))
+        .route("/v1/admin/gc", axum::routing::post(run_gc))
 }
 
 #[derive(Deserialize)]
@@ -129,4 +130,31 @@ async fn create_presigned_url(
     let presigned = state.presigner.generate(&base_url, &body);
 
     (StatusCode::OK, Json(json!(presigned))).into_response()
+}
+
+async fn run_gc(
+    State(state): State<AppState>,
+    Extension(caller): Extension<ApiKey>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_permission(&caller, "admin").await {
+        return resp;
+    }
+
+    let gc = vaultfs_storage::GarbageCollector::new(state.storage.data_dir().to_path_buf());
+    match gc.collect(state.storage.db()) {
+        Ok(result) => (
+            StatusCode::OK,
+            Json(json!({
+                "blobs_scanned": result.blobs_scanned,
+                "orphans_removed": result.orphans_removed,
+                "bytes_freed": result.bytes_freed,
+            })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
 }

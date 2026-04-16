@@ -173,4 +173,12 @@ impl StorageEngine {
     pub fn is_image(content_type: &str) -> bool {
         content_type.starts_with("image/")
     }
+
+    pub fn db(&self) -> &Database {
+        &self.db
+    }
+
+    pub fn data_dir(&self) -> &std::path::Path {
+        &self.data_dir
+    }
 }

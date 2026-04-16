@@ -2,6 +2,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::config::{self, Config};
+use crate::ratelimit::RateLimiter;
+use crate::webhooks::{WebhookConfig, WebhookSender};
 use vaultfs_auth::{AuthManager, PresignedUrlGenerator};
 use vaultfs_cache::Cache;
 use vaultfs_storage::StorageEngine;
@@ -13,6 +15,8 @@ pub struct AppState {
     pub auth: Arc<AuthManager>,
     pub presigner: Arc<PresignedUrlGenerator>,
     pub config: Arc<Config>,
+    pub rate_limiter: Option<Arc<RateLimiter>>,
+    pub webhooks: Option<Arc<WebhookSender>>,
 }
 
 impl AppState {
@@ -47,6 +51,32 @@ impl AppState {
         };
         let presigner = PresignedUrlGenerator::new(&secret);
 
+        // Rate limiter
+        let rate_limiter = if config.rate_limit.enabled {
+            Some(Arc::new(RateLimiter::new(
+                config.rate_limit.max_requests,
+                config.rate_limit.window_secs,
+            )))
+        } else {
+            None
+        };
+
+        // Webhooks
+        let webhooks = if !config.webhooks.is_empty() {
+            let configs: Vec<WebhookConfig> = config
+                .webhooks
+                .iter()
+                .map(|w| WebhookConfig {
+                    url: w.url.clone(),
+                    events: w.events.clone(),
+                    secret: w.secret.clone(),
+                })
+                .collect();
+            Some(Arc::new(WebhookSender::new(configs)))
+        } else {
+            None
+        };
+
         Ok(Self {
             storage: Arc::new(storage),
             cache: Arc::new(cache),
@@ -73,7 +103,20 @@ impl AppState {
                 auth: config::AuthConfig {
                     enabled: config.auth.enabled,
                 },
+                tls: config::TlsConfig {
+                    enabled: config.tls.enabled,
+                    cert_path: config.tls.cert_path.clone(),
+                    key_path: config.tls.key_path.clone(),
+                },
+                rate_limit: config::RateLimitConfig {
+                    enabled: config.rate_limit.enabled,
+                    max_requests: config.rate_limit.max_requests,
+                    window_secs: config.rate_limit.window_secs,
+                },
+                webhooks: Vec::new(), // Don't store webhook secrets in shared state
             }),
+            rate_limiter,
+            webhooks,
         })
     }
 }

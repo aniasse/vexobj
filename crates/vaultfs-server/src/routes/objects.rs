@@ -51,7 +51,19 @@ async fn put_object(
         .put_object(&bucket, &key, body, content_type.as_deref(), None)
         .await
     {
-        Ok(meta) => (StatusCode::CREATED, Json(json!(meta))).into_response(),
+        Ok(meta) => {
+            // Fire webhook
+            if let Some(ref wh) = state.webhooks {
+                wh.send("object.created", json!({
+                    "bucket": meta.bucket,
+                    "key": meta.key,
+                    "size": meta.size,
+                    "content_type": meta.content_type,
+                    "sha256": meta.sha256,
+                }));
+            }
+            (StatusCode::CREATED, Json(json!(meta))).into_response()
+        }
         Err(e) => {
             let status = match &e {
                 vaultfs_storage::StorageError::BucketNotFound(_) => StatusCode::NOT_FOUND,
@@ -72,7 +84,6 @@ struct GetObjectQuery {
     format: Option<String>,
     quality: Option<u8>,
     fit: Option<String>,
-    // Presigned URL params
     #[allow(dead_code)]
     expires: Option<i64>,
     #[allow(dead_code)]
@@ -168,16 +179,66 @@ async fn get_object(
                 .into_response(),
         }
     } else {
+        // Handle Range requests
+        if let Some(range_header) = headers.get("range").and_then(|v| v.to_str().ok()) {
+            if let Some((start, end)) = parse_range(range_header, data.len() as u64) {
+                let slice = data.slice(start as usize..end as usize);
+                let content_range = format!("bytes {}-{}/{}", start, end - 1, meta.size);
+                return (
+                    StatusCode::PARTIAL_CONTENT,
+                    [
+                        ("content-type", meta.content_type.clone()),
+                        ("content-length", slice.len().to_string()),
+                        ("content-range", content_range),
+                        ("accept-ranges", "bytes".to_string()),
+                        ("etag", format!("\"{}\"", meta.sha256)),
+                    ],
+                    slice,
+                )
+                    .into_response();
+            }
+        }
+
         (
             StatusCode::OK,
             [
                 ("content-type", meta.content_type.clone()),
                 ("content-length", meta.size.to_string()),
                 ("etag", format!("\"{}\"", meta.sha256)),
+                ("accept-ranges", "bytes".to_string()),
             ],
             data,
         )
             .into_response()
+    }
+}
+
+/// Parse HTTP Range header: "bytes=start-end" or "bytes=start-" or "bytes=-suffix"
+fn parse_range(header: &str, total: u64) -> Option<(u64, u64)> {
+    let range = header.strip_prefix("bytes=")?;
+    let (start_str, end_str) = range.split_once('-')?;
+
+    if start_str.is_empty() {
+        // Suffix range: bytes=-500
+        let suffix: u64 = end_str.parse().ok()?;
+        let start = total.saturating_sub(suffix);
+        Some((start, total))
+    } else if end_str.is_empty() {
+        // Open range: bytes=500-
+        let start: u64 = start_str.parse().ok()?;
+        if start >= total {
+            return None;
+        }
+        Some((start, total))
+    } else {
+        // Closed range: bytes=0-499
+        let start: u64 = start_str.parse().ok()?;
+        let end: u64 = end_str.parse().ok()?;
+        if start >= total {
+            return None;
+        }
+        let end = (end + 1).min(total);
+        Some((start, end))
     }
 }
 
@@ -198,6 +259,7 @@ async fn head_object(
                 ("content-length", meta.size.to_string()),
                 ("etag", format!("\"{}\"", meta.sha256)),
                 ("last-modified", meta.updated_at.to_rfc2822()),
+                ("accept-ranges", "bytes".to_string()),
             ],
         )
             .into_response(),
@@ -218,7 +280,12 @@ async fn delete_object(
     }
 
     match state.storage.delete_object(&bucket, &key).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => {
+            if let Some(ref wh) = state.webhooks {
+                wh.send("object.deleted", json!({"bucket": bucket, "key": key}));
+            }
+            StatusCode::NO_CONTENT.into_response()
+        }
         Err(_) => (
             StatusCode::NOT_FOUND,
             Json(json!({"error": "object not found"})),

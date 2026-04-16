@@ -1,0 +1,17 @@
+[package]
+name = "vaultfs-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Integration tests for VaultFS"
+publish = false
+
+[dev-dependencies]
+vaultfs-storage = { workspace = true }
+vaultfs-processing = { workspace = true }
+vaultfs-cache = { workspace = true }
+vaultfs-auth = { workspace = true }
+tokio = { workspace = true }
+bytes = { workspace = true }
+uuid = { workspace = true }
+serde_json = { workspace = true }

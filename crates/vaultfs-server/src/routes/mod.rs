@@ -13,6 +13,7 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::middleware::auth_middleware;
+use crate::ratelimit::rate_limit_middleware;
 use crate::state::AppState;
 
 pub fn create_router(state: AppState) -> Router {
@@ -36,12 +37,18 @@ pub fn create_router(state: AppState) -> Router {
     // S3-compatible API (has its own state and auth)
     let s3 = vaultfs_s3_compat::s3_router(state.storage.clone(), state.auth.clone());
 
-    Router::new()
+    let mut app = Router::new()
         .merge(public)
         .merge(protected)
-        .with_state(state)
-        .merge(s3)
-        .layer(CompressionLayer::new())
+        .with_state(state.clone())
+        .merge(s3);
+
+    // Rate limiting layer (wraps everything)
+    if state.rate_limiter.is_some() {
+        app = app.layer(axum_mw::from_fn_with_state(state, rate_limit_middleware));
+    }
+
+    app.layer(CompressionLayer::new())
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
 }

@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 axum = { workspace = true }
+axum-server = { version = "0.7", features = ["tls-rustls"] }
 tower = { workspace = true }
 tower-http = { workspace = true }
 tokio = { workspace = true }
@@ -25,6 +26,10 @@ uuid = { workspace = true }
 bytes = { workspace = true }
 mime_guess = { workspace = true }
 rand = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 
 vaultfs-storage = { workspace = true }
 vaultfs-processing = { workspace = true }

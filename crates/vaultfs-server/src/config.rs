@@ -13,6 +13,12 @@ pub struct Config {
     pub images: ImageConfig,
     #[serde(default)]
     pub auth: AuthConfig,
+    #[serde(default)]
+    pub tls: TlsConfig,
+    #[serde(default)]
+    pub rate_limit: RateLimitConfig,
+    #[serde(default)]
+    pub webhooks: Vec<WebhookConfigEntry>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -98,6 +104,55 @@ impl Default for AuthConfig {
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct TlsConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub cert_path: Option<String>,
+    #[serde(default)]
+    pub key_path: Option<String>,
+}
+
+impl Default for TlsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            cert_path: None,
+            key_path: None,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RateLimitConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_rate_limit_max")]
+    pub max_requests: u64,
+    #[serde(default = "default_rate_limit_window")]
+    pub window_secs: u64,
+}
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_requests: default_rate_limit_max(),
+            window_secs: default_rate_limit_window(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WebhookConfigEntry {
+    pub url: String,
+    #[serde(default = "default_webhook_events")]
+    pub events: Vec<String>,
+    #[serde(default)]
+    pub secret: Option<String>,
+}
+
 fn default_bind() -> String {
     "0.0.0.0:8000".into()
 }
@@ -122,10 +177,18 @@ fn default_max_transform_size() -> String {
 fn default_true() -> bool {
     true
 }
+fn default_rate_limit_max() -> u64 {
+    1000
+}
+fn default_rate_limit_window() -> u64 {
+    60
+}
+fn default_webhook_events() -> Vec<String> {
+    vec!["*".to_string()]
+}
 
 impl Config {
     pub fn load() -> Result<Self> {
-        // Try loading from config file, fall back to defaults
         let config_path = std::env::var("VAULTFS_CONFIG").unwrap_or_else(|_| "config.toml".into());
 
         if std::path::Path::new(&config_path).exists() {
