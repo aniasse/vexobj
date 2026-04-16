@@ -20,7 +20,6 @@ struct CacheEntry {
 pub struct Cache {
     memory: Mutex<LruMap>,
     disk_path: Option<PathBuf>,
-    memory_max: usize,
     disk_max: u64,
 }
 
@@ -88,6 +87,62 @@ impl LruMap {
     }
 }
 
+/// Evict disk cache entries by mtime (oldest first) until total usage drops
+/// at or below `max_bytes`. Each cache entry is a pair of files (`<hash>` +
+/// `<hash>.meta`); we remove both when evicting to keep them in sync.
+async fn evict_disk(disk_path: &std::path::Path, max_bytes: u64) -> std::io::Result<()> {
+    struct Item {
+        path: PathBuf,
+        size: u64,
+        mtime: std::time::SystemTime,
+    }
+
+    let mut entries = tokio::fs::read_dir(disk_path).await?;
+    let mut items: Vec<Item> = Vec::new();
+    let mut total: u64 = 0;
+    while let Some(entry) = entries.next_entry().await? {
+        // Only track the data files; the `.meta` sibling is evicted alongside.
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) == Some("meta") {
+            continue;
+        }
+        let meta = entry.metadata().await?;
+        let size = meta.len();
+        let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+        total += size;
+        // Also account for the companion .meta file if it exists.
+        let meta_path = path.with_extension("meta");
+        if let Ok(m) = tokio::fs::metadata(&meta_path).await {
+            total += m.len();
+        }
+        items.push(Item { path, size, mtime });
+    }
+
+    if total <= max_bytes {
+        return Ok(());
+    }
+
+    items.sort_by_key(|i| i.mtime);
+
+    for item in items {
+        if total <= max_bytes {
+            break;
+        }
+        let meta_path = item.path.with_extension("meta");
+        let meta_size = tokio::fs::metadata(&meta_path)
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0);
+        if tokio::fs::remove_file(&item.path).await.is_ok() {
+            total = total.saturating_sub(item.size);
+        }
+        if tokio::fs::remove_file(&meta_path).await.is_ok() {
+            total = total.saturating_sub(meta_size);
+        }
+    }
+    Ok(())
+}
+
 impl Cache {
     pub fn new(memory_max: usize, disk_path: Option<PathBuf>, disk_max: u64) -> Self {
         if let Some(ref path) = disk_path {
@@ -97,7 +152,6 @@ impl Cache {
             memory: Mutex::new(LruMap::new(memory_max)),
             disk_path,
             disk_max,
-            memory_max,
         }
     }
 
@@ -155,6 +209,11 @@ impl Cache {
             let meta_path = disk_path.join(format!("{hash}.meta"));
             tokio::fs::write(&data_path, &data).await?;
             tokio::fs::write(&meta_path, content_type).await?;
+
+            // Enforce disk_max: evict oldest entries (by mtime) until under the cap.
+            if self.disk_max > 0 {
+                let _ = evict_disk(disk_path, self.disk_max).await;
+            }
         }
 
         Ok(())
@@ -176,6 +235,23 @@ impl Cache {
         Ok(())
     }
 
+    /// Total bytes currently occupied on disk by the cache.
+    pub async fn disk_usage(&self) -> u64 {
+        let Some(ref disk_path) = self.disk_path else {
+            return 0;
+        };
+        let Ok(mut entries) = tokio::fs::read_dir(disk_path).await else {
+            return 0;
+        };
+        let mut total: u64 = 0;
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            if let Ok(meta) = entry.metadata().await {
+                total += meta.len();
+            }
+        }
+        total
+    }
+
     pub async fn clear(&self) -> Result<(), CacheError> {
         {
             let mut mem = self.memory.lock().unwrap();
@@ -190,5 +266,88 @@ impl Cache {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn memory_cache_evicts_when_over_capacity() {
+        let cache = Cache::new(100, None, 0);
+
+        // Each value is 40 bytes; cap is 100 → 2 fit, 3rd should evict LRU.
+        cache.put("a", Bytes::from(vec![0u8; 40]), "text/plain").await.unwrap();
+        cache.put("b", Bytes::from(vec![0u8; 40]), "text/plain").await.unwrap();
+
+        // Touch "a" so "b" becomes the LRU.
+        assert!(cache.get("a").await.is_some());
+
+        cache.put("c", Bytes::from(vec![0u8; 40]), "text/plain").await.unwrap();
+
+        assert!(cache.get("a").await.is_some(), "a was touched, should survive");
+        assert!(cache.get("b").await.is_none(), "b was LRU, should be evicted");
+        assert!(cache.get("c").await.is_some(), "c was just inserted");
+    }
+
+    #[tokio::test]
+    async fn oversized_entry_is_rejected() {
+        let cache = Cache::new(50, None, 0);
+        cache
+            .put("big", Bytes::from(vec![0u8; 100]), "text/plain")
+            .await
+            .unwrap();
+        assert!(
+            cache.get("big").await.is_none(),
+            "entries larger than max_size must not be cached"
+        );
+    }
+
+    #[tokio::test]
+    async fn disk_cache_enforces_disk_max() {
+        let tmp = std::env::temp_dir().join(format!("vfs-cache-{}", uuid::Uuid::new_v4()));
+        // Cap at 200 bytes. Each entry is data(60) + meta(~10) ≈ 70 bytes → ~2 fit.
+        let cache = Cache::new(10 * 1024 * 1024, Some(tmp.clone()), 200);
+
+        for i in 0..5u8 {
+            cache
+                .put(
+                    &format!("k{}", i),
+                    Bytes::from(vec![i; 60]),
+                    "text/plain",
+                )
+                .await
+                .unwrap();
+            // Force distinguishable mtimes on fast filesystems.
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+
+        let usage = cache.disk_usage().await;
+        assert!(
+            usage <= 200,
+            "disk usage {} should be <= disk_max 200",
+            usage
+        );
+
+        // Newest entry must still be readable from disk.
+        cache.clear().await.unwrap();
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn disk_max_zero_disables_eviction() {
+        let tmp = std::env::temp_dir().join(format!("vfs-cache-{}", uuid::Uuid::new_v4()));
+        let cache = Cache::new(10 * 1024 * 1024, Some(tmp.clone()), 0);
+
+        for i in 0..5u8 {
+            cache
+                .put(&format!("k{}", i), Bytes::from(vec![i; 60]), "text/plain")
+                .await
+                .unwrap();
+        }
+        // Every entry stays — disk_max=0 means unlimited.
+        assert!(cache.disk_usage().await >= 300);
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
