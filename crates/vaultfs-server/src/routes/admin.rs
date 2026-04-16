@@ -1,11 +1,12 @@
 use axum::extract::{Extension, Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::audit::{extract_ip, key_prefix};
 use crate::middleware::require_permission;
 use crate::state::AppState;
 use vaultfs_auth::{ApiKey, BucketAccess, Permissions, PresignRequest};
@@ -32,25 +33,36 @@ struct CreateKeyBody {
 async fn create_key(
     State(state): State<AppState>,
     Extension(caller): Extension<ApiKey>,
+    headers: HeaderMap,
     Json(body): Json<CreateKeyBody>,
 ) -> impl IntoResponse {
     if let Err(resp) = require_permission(&caller, "admin").await {
         return resp;
     }
 
+    let ip = extract_ip(&headers);
     let permissions = body.permissions.unwrap_or_default();
     let bucket_access = body.bucket_access.unwrap_or_default();
 
     match state.auth.create_key(&body.name, permissions, bucket_access) {
-        Ok((key, raw_key)) => (
-            StatusCode::CREATED,
-            Json(json!({
-                "key": key,
-                "secret": raw_key,
-                "warning": "Store this secret securely. It cannot be retrieved again."
-            })),
-        )
-            .into_response(),
+        Ok((key, raw_key)) => {
+            state.audit.log(
+                &key_prefix(&caller),
+                "key.create",
+                &body.name,
+                &json!({"key_id": key.id}),
+                &ip,
+            );
+            (
+                StatusCode::CREATED,
+                Json(json!({
+                    "key": key,
+                    "secret": raw_key,
+                    "warning": "Store this secret securely. It cannot be retrieved again."
+                })),
+            )
+                .into_response()
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": e.to_string()})),
@@ -81,13 +93,25 @@ async fn delete_key(
     State(state): State<AppState>,
     Extension(caller): Extension<ApiKey>,
     Path(id): Path<String>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
     if let Err(resp) = require_permission(&caller, "admin").await {
         return resp;
     }
 
+    let ip = extract_ip(&headers);
+
     match state.auth.delete_key(&id) {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => {
+            state.audit.log(
+                &key_prefix(&caller),
+                "key.delete",
+                &id,
+                &json!({}),
+                &ip,
+            );
+            StatusCode::NO_CONTENT.into_response()
+        }
         Err(_) => (
             StatusCode::NOT_FOUND,
             Json(json!({"error": "key not found"})),
@@ -137,22 +161,38 @@ async fn create_presigned_url(
 async fn run_gc(
     State(state): State<AppState>,
     Extension(caller): Extension<ApiKey>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
     if let Err(resp) = require_permission(&caller, "admin").await {
         return resp;
     }
 
+    let ip = extract_ip(&headers);
+
     let gc = vaultfs_storage::GarbageCollector::new(state.storage.data_dir().to_path_buf());
     match gc.collect(state.storage.db()) {
-        Ok(result) => (
-            StatusCode::OK,
-            Json(json!({
-                "blobs_scanned": result.blobs_scanned,
-                "orphans_removed": result.orphans_removed,
-                "bytes_freed": result.bytes_freed,
-            })),
-        )
-            .into_response(),
+        Ok(result) => {
+            state.audit.log(
+                &key_prefix(&caller),
+                "gc.run",
+                "gc",
+                &json!({
+                    "blobs_scanned": result.blobs_scanned,
+                    "orphans_removed": result.orphans_removed,
+                    "bytes_freed": result.bytes_freed,
+                }),
+                &ip,
+            );
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "blobs_scanned": result.blobs_scanned,
+                    "orphans_removed": result.orphans_removed,
+                    "bytes_freed": result.bytes_freed,
+                })),
+            )
+                .into_response()
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": e.to_string()})),
@@ -164,10 +204,13 @@ async fn run_gc(
 async fn create_backup(
     State(state): State<AppState>,
     Extension(caller): Extension<ApiKey>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
     if let Err(resp) = require_permission(&caller, "admin").await {
         return resp;
     }
+
+    let ip = extract_ip(&headers);
 
     let data_dir = state.storage.data_dir().to_path_buf();
     let backup_dir = data_dir.join(format!(
@@ -177,16 +220,29 @@ async fn create_backup(
 
     let bm = vaultfs_storage::BackupManager::new(data_dir);
     match bm.create_snapshot(state.storage.db(), &backup_dir) {
-        Ok(result) => (
-            StatusCode::OK,
-            Json(json!({
-                "path": result.path.to_string_lossy(),
-                "db_size": result.db_size,
-                "blobs_copied": result.blobs_copied,
-                "total_size": result.total_size,
-            })),
-        )
-            .into_response(),
+        Ok(result) => {
+            state.audit.log(
+                &key_prefix(&caller),
+                "backup.create",
+                &result.path.to_string_lossy(),
+                &json!({
+                    "db_size": result.db_size,
+                    "blobs_copied": result.blobs_copied,
+                    "total_size": result.total_size,
+                }),
+                &ip,
+            );
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "path": result.path.to_string_lossy(),
+                    "db_size": result.db_size,
+                    "blobs_copied": result.blobs_copied,
+                    "total_size": result.total_size,
+                })),
+            )
+                .into_response()
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": e.to_string()})),

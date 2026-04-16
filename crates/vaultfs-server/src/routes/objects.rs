@@ -9,6 +9,8 @@ use futures::TryStreamExt;
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::audit::{extract_ip, key_prefix};
+use crate::config::parse_size;
 use crate::middleware::require_permission;
 use crate::state::AppState;
 use vaultfs_auth::ApiKey;
@@ -45,10 +47,48 @@ async fn put_object(
         return (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()}))).into_response();
     }
 
+    // Quota check before upload
+    if state.config.quotas.enabled {
+        match state.storage.db().bucket_storage_stats(&bucket) {
+            Ok((total_size, object_count)) => {
+                let max_storage = parse_size(&state.config.quotas.default_max_storage);
+                let max_objects = state.config.quotas.default_max_objects;
+
+                if total_size >= max_storage {
+                    return (
+                        StatusCode::INSUFFICIENT_STORAGE,
+                        Json(json!({
+                            "error": "bucket storage quota exceeded",
+                            "current_size": total_size,
+                            "max_size": max_storage,
+                        })),
+                    )
+                        .into_response();
+                }
+                if object_count >= max_objects {
+                    return (
+                        StatusCode::INSUFFICIENT_STORAGE,
+                        Json(json!({
+                            "error": "bucket object count quota exceeded",
+                            "current_objects": object_count,
+                            "max_objects": max_objects,
+                        })),
+                    )
+                        .into_response();
+                }
+            }
+            Err(_) => {
+                // If we can't check quota (e.g. bucket doesn't exist), let the put fail naturally
+            }
+        }
+    }
+
     let content_type = headers
         .get("content-type")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
+
+    let ip = extract_ip(&headers);
 
     // Stream body to disk (constant RAM)
     let stream = body
@@ -61,6 +101,14 @@ async fn put_object(
         .await
     {
         Ok(meta) => {
+            state.metrics.record_upload(meta.size);
+            state.audit.log(
+                &key_prefix(&caller),
+                "object.create",
+                &format!("{}/{}", meta.bucket, meta.key),
+                &json!({"size": meta.size, "content_type": meta.content_type, "sha256": meta.sha256}),
+                &ip,
+            );
             if let Some(ref wh) = state.webhooks {
                 wh.send("object.created", json!({
                     "bucket": meta.bucket,
@@ -234,6 +282,7 @@ async fn get_object(
     // Default: stream from disk (constant RAM)
     match state.storage.get_object_stream(&bucket, &key).await {
         Ok((meta, stream)) => {
+            state.metrics.record_download(meta.size);
             let body = Body::from_stream(stream);
             (
                 StatusCode::OK,
@@ -304,6 +353,7 @@ async fn delete_object(
     State(state): State<AppState>,
     Extension(caller): Extension<ApiKey>,
     Path((bucket, key)): Path<(String, String)>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
     if let Err(resp) = require_permission(&caller, "delete").await {
         return resp;
@@ -312,8 +362,17 @@ async fn delete_object(
         return (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()}))).into_response();
     }
 
+    let ip = extract_ip(&headers);
+
     match state.storage.delete_object(&bucket, &key).await {
         Ok(()) => {
+            state.audit.log(
+                &key_prefix(&caller),
+                "object.delete",
+                &format!("{}/{}", bucket, key),
+                &json!({}),
+                &ip,
+            );
             if let Some(ref wh) = state.webhooks {
                 wh.send("object.deleted", json!({"bucket": bucket, "key": key}));
             }

@@ -1,0 +1,65 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/aniasse/vaultfs
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8000
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: vaultfs.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+persistence:
+  enabled: true
+  size: 10Gi
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+
+config: |
+  [server]
+  bind = "0.0.0.0:8000"
+
+  [storage]
+  data_dir = "/data"
+  max_file_size = "5GB"
+  deduplication = true
+
+  [cache]
+  memory_size = "256MB"
+  disk_size = "2GB"
+
+  [images]
+  default_quality = 85
+  max_transform_size = "50MB"
+
+  [auth]
+  enabled = true
+
+  [quotas]
+  enabled = false
+  default_max_storage = "10GB"
+  default_max_objects = 100000
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

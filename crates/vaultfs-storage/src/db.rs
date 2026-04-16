@@ -314,6 +314,21 @@ impl Database {
         Ok(())
     }
 
+    /// Returns (total_size_bytes, object_count) for a given bucket.
+    pub fn bucket_storage_stats(&self, bucket: &str) -> Result<(u64, u64), StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let (total_size, count) = conn.query_row(
+            "SELECT COALESCE(SUM(size), 0), COUNT(*) FROM objects WHERE bucket = ?1",
+            params![bucket],
+            |row| {
+                let size: i64 = row.get(0)?;
+                let count: i64 = row.get(1)?;
+                Ok((size as u64, count as u64))
+            },
+        )?;
+        Ok((total_size, count))
+    }
+
     pub fn find_by_hash(&self, sha256: &str) -> Result<Option<String>, StorageError> {
         let conn = self.conn.lock().unwrap();
         let result = conn.query_row(

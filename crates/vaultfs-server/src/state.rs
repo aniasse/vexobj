@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::audit::AuditLogger;
 use crate::config::{self, Config};
+use crate::metrics::Metrics;
 use crate::ratelimit::RateLimiter;
 use crate::webhooks::{WebhookConfig, WebhookSender};
 use vaultfs_auth::{AuthManager, PresignedUrlGenerator};
@@ -17,6 +19,8 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub rate_limiter: Option<Arc<RateLimiter>>,
     pub webhooks: Option<Arc<WebhookSender>>,
+    pub metrics: Arc<Metrics>,
+    pub audit: Arc<AuditLogger>,
 }
 
 impl AppState {
@@ -77,6 +81,9 @@ impl AppState {
             None
         };
 
+        let metrics = Metrics::new();
+        let audit = AuditLogger::open(&data_dir)?;
+
         Ok(Self {
             storage: Arc::new(storage),
             cache: Arc::new(cache),
@@ -113,10 +120,17 @@ impl AppState {
                     max_requests: config.rate_limit.max_requests,
                     window_secs: config.rate_limit.window_secs,
                 },
+                quotas: config::QuotaConfig {
+                    enabled: config.quotas.enabled,
+                    default_max_storage: config.quotas.default_max_storage.clone(),
+                    default_max_objects: config.quotas.default_max_objects,
+                },
                 webhooks: Vec::new(), // Don't store webhook secrets in shared state
             }),
             rate_limiter,
             webhooks,
+            metrics: Arc::new(metrics),
+            audit: Arc::new(audit),
         })
     }
 }

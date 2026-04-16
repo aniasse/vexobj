@@ -13,6 +13,8 @@ use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
+use crate::audit;
+use crate::metrics;
 use crate::middleware::auth_middleware;
 use crate::ratelimit::rate_limit_middleware;
 use crate::security::security_middleware;
@@ -22,7 +24,8 @@ pub fn create_router(state: AppState) -> Router {
     // Public routes (no auth)
     let public = Router::new()
         .merge(health::routes())
-        .merge(dashboard::routes());
+        .merge(dashboard::routes())
+        .merge(metrics::routes());
 
     // Protected routes (auth required)
     let protected = Router::new()
@@ -30,6 +33,7 @@ pub fn create_router(state: AppState) -> Router {
         .merge(objects::routes())
         .merge(multipart::routes())
         .merge(admin::routes())
+        .merge(audit::routes())
         .merge(stats::routes())
         .merge(stream::routes())
         .route_layer(axum_mw::from_fn_with_state(
@@ -48,8 +52,17 @@ pub fn create_router(state: AppState) -> Router {
 
     // Rate limiting layer (wraps everything)
     if state.rate_limiter.is_some() {
-        app = app.layer(axum_mw::from_fn_with_state(state, rate_limit_middleware));
+        app = app.layer(axum_mw::from_fn_with_state(
+            state.clone(),
+            rate_limit_middleware,
+        ));
     }
+
+    // Metrics middleware (wraps everything, counts requests)
+    app = app.layer(axum_mw::from_fn_with_state(
+        state,
+        metrics::metrics_middleware,
+    ));
 
     app.layer(axum::middleware::from_fn(security_middleware))
         .layer(CompressionLayer::new())

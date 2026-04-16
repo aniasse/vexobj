@@ -1,4 +1,6 @@
+mod audit;
 mod config;
+mod metrics;
 mod middleware;
 mod ratelimit;
 mod routes;

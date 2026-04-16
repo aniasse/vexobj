@@ -1,0 +1,18 @@
+apiVersion: v2
+name: vaultfs
+description: High-performance self-hosted object storage with built-in image processing
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/aniasse/vaultfs
+sources:
+  - https://github.com/aniasse/vaultfs
+maintainers:
+  - name: Adama Niasse
+    url: https://github.com/aniasse
+keywords:
+  - storage
+  - object-storage
+  - s3
+  - image-processing
+  - self-hosted

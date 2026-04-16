@@ -1,11 +1,12 @@
 use axum::extract::{Extension, Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::audit::{extract_ip, key_prefix};
 use crate::middleware::require_permission;
 use crate::state::AppState;
 use vaultfs_auth::ApiKey;
@@ -30,17 +31,29 @@ struct CreateBucketBody {
 async fn create_bucket(
     State(state): State<AppState>,
     Extension(caller): Extension<ApiKey>,
+    headers: HeaderMap,
     Json(body): Json<CreateBucketBody>,
 ) -> impl IntoResponse {
     if let Err(resp) = require_permission(&caller, "admin").await {
         return resp;
     }
 
+    let ip = extract_ip(&headers);
+
     match state.storage.create_bucket(&CreateBucketRequest {
-        name: body.name,
+        name: body.name.clone(),
         public: body.public,
     }) {
-        Ok(bucket) => (StatusCode::CREATED, Json(json!(bucket))).into_response(),
+        Ok(bucket) => {
+            state.audit.log(
+                &key_prefix(&caller),
+                "bucket.create",
+                &body.name,
+                &json!({"public": body.public}),
+                &ip,
+            );
+            (StatusCode::CREATED, Json(json!(bucket))).into_response()
+        }
         Err(e) => (
             StatusCode::CONFLICT,
             Json(json!({"error": e.to_string()})),
@@ -90,13 +103,25 @@ async fn delete_bucket(
     State(state): State<AppState>,
     Extension(caller): Extension<ApiKey>,
     Path(name): Path<String>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
     if let Err(resp) = require_permission(&caller, "admin").await {
         return resp;
     }
 
+    let ip = extract_ip(&headers);
+
     match state.storage.delete_bucket(&name) {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => {
+            state.audit.log(
+                &key_prefix(&caller),
+                "bucket.delete",
+                &name,
+                &json!({}),
+                &ip,
+            );
+            StatusCode::NO_CONTENT.into_response()
+        }
         Err(e) => (
             StatusCode::BAD_REQUEST,
             Json(json!({"error": e.to_string()})),

@@ -32,6 +32,8 @@ sha2 = { workspace = true }
 hex = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 
+rusqlite = { workspace = true }
+
 vaultfs-storage = { workspace = true }
 vaultfs-processing = { workspace = true }
 vaultfs-s3-compat = { workspace = true }

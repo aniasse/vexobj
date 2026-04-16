@@ -1,0 +1,17 @@
+VaultFS has been deployed!
+
+1. Get the admin API key from the pod logs:
+
+   kubectl logs -l app.kubernetes.io/name=vaultfs --tail=20
+
+2. Access VaultFS:
+{{- if .Values.ingress.enabled }}
+   URL: http{{ if $.Values.ingress.tls }}s{{ end }}://{{ (index .Values.ingress.hosts 0).host }}
+{{- else }}
+   kubectl port-forward svc/{{ include "vaultfs.fullname" . }} 8000:{{ .Values.service.port }}
+   URL: http://localhost:8000
+{{- end }}
+
+3. Dashboard: <URL>/dashboard
+4. API docs: <URL>/docs
+5. Metrics: <URL>/metrics

@@ -18,6 +18,8 @@ pub struct Config {
     #[serde(default)]
     pub rate_limit: RateLimitConfig,
     #[serde(default)]
+    pub quotas: QuotaConfig,
+    #[serde(default)]
     pub webhooks: Vec<WebhookConfigEntry>,
 }
 
@@ -153,6 +155,33 @@ pub struct WebhookConfigEntry {
     pub secret: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct QuotaConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_max_storage")]
+    pub default_max_storage: String,
+    #[serde(default = "default_max_objects")]
+    pub default_max_objects: u64,
+}
+
+impl Default for QuotaConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            default_max_storage: default_max_storage(),
+            default_max_objects: default_max_objects(),
+        }
+    }
+}
+
+fn default_max_storage() -> String {
+    "10GB".into()
+}
+fn default_max_objects() -> u64 {
+    100_000
+}
+
 fn default_bind() -> String {
     "0.0.0.0:8000".into()
 }
@@ -191,12 +220,64 @@ impl Config {
     pub fn load() -> Result<Self> {
         let config_path = std::env::var("VAULTFS_CONFIG").unwrap_or_else(|_| "config.toml".into());
 
-        if std::path::Path::new(&config_path).exists() {
+        let mut config: Config = if std::path::Path::new(&config_path).exists() {
             let content = std::fs::read_to_string(&config_path)?;
-            Ok(toml::from_str(&content)?)
+            toml::from_str(&content)?
         } else {
-            Ok(toml::from_str("")?)
+            toml::from_str("")?
+        };
+
+        // Environment variable overrides (VAULTFS_ prefix)
+        if let Ok(val) = std::env::var("VAULTFS_BIND") {
+            config.server.bind = val;
         }
+        if let Ok(val) = std::env::var("VAULTFS_DATA_DIR") {
+            config.storage.data_dir = val;
+        }
+        if let Ok(val) = std::env::var("VAULTFS_AUTH_ENABLED") {
+            config.auth.enabled = val.parse().unwrap_or(config.auth.enabled);
+        }
+        if let Ok(val) = std::env::var("VAULTFS_MAX_FILE_SIZE") {
+            config.storage.max_file_size = val;
+        }
+        if let Ok(val) = std::env::var("VAULTFS_DEDUPLICATION") {
+            config.storage.deduplication = val.parse().unwrap_or(config.storage.deduplication);
+        }
+        if let Ok(val) = std::env::var("VAULTFS_CACHE_MEMORY_SIZE") {
+            config.cache.memory_size = val;
+        }
+        if let Ok(val) = std::env::var("VAULTFS_CACHE_DISK_SIZE") {
+            config.cache.disk_size = val;
+        }
+        if let Ok(val) = std::env::var("VAULTFS_TLS_ENABLED") {
+            config.tls.enabled = val.parse().unwrap_or(config.tls.enabled);
+        }
+        if let Ok(val) = std::env::var("VAULTFS_TLS_CERT_PATH") {
+            config.tls.cert_path = Some(val);
+        }
+        if let Ok(val) = std::env::var("VAULTFS_TLS_KEY_PATH") {
+            config.tls.key_path = Some(val);
+        }
+        if let Ok(val) = std::env::var("VAULTFS_RATE_LIMIT_ENABLED") {
+            config.rate_limit.enabled = val.parse().unwrap_or(config.rate_limit.enabled);
+        }
+        if let Ok(val) = std::env::var("VAULTFS_RATE_LIMIT_MAX") {
+            config.rate_limit.max_requests = val.parse().unwrap_or(config.rate_limit.max_requests);
+        }
+        if let Ok(val) = std::env::var("VAULTFS_RATE_LIMIT_WINDOW") {
+            config.rate_limit.window_secs = val.parse().unwrap_or(config.rate_limit.window_secs);
+        }
+        if let Ok(val) = std::env::var("VAULTFS_QUOTAS_ENABLED") {
+            config.quotas.enabled = val.parse().unwrap_or(config.quotas.enabled);
+        }
+        if let Ok(val) = std::env::var("VAULTFS_QUOTAS_MAX_STORAGE") {
+            config.quotas.default_max_storage = val;
+        }
+        if let Ok(val) = std::env::var("VAULTFS_QUOTAS_MAX_OBJECTS") {
+            config.quotas.default_max_objects = val.parse().unwrap_or(config.quotas.default_max_objects);
+        }
+
+        Ok(config)
     }
 }
 

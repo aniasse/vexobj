@@ -7,6 +7,7 @@ members = [
     "crates/vaultfs-cache",
     "crates/vaultfs-auth",
     "crates/vaultfs-tests",
+    "crates/vaultfs-cli",
 ]
 resolver = "2"
 
@@ -55,6 +56,8 @@ mime_guess = "2"
 bytes = "1"
 futures = "0.3"
 tokio-util = { version = "0.7", features = ["io"] }
+clap = { version = "4", features = ["derive", "env"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
 
 # Internal crates (also used in integration tests)
 vaultfs-storage = { path = "crates/vaultfs-storage" }
