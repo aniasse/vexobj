@@ -21,6 +21,8 @@ pub struct Config {
     pub quotas: QuotaConfig,
     #[serde(default)]
     pub webhooks: Vec<WebhookConfigEntry>,
+    #[serde(default)]
+    pub sse: SseConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -155,6 +157,17 @@ pub struct WebhookConfigEntry {
     pub secret: Option<String>,
 }
 
+/// Server-side encryption at rest. When enabled, blobs are stored
+/// AES-256-GCM encrypted on disk. `master_key` must be 64 hex chars (32
+/// bytes). Can be set via VAULTFS_SSE_MASTER_KEY for secrets hygiene.
+#[derive(Debug, Deserialize, Default)]
+pub struct SseConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub master_key: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct QuotaConfig {
     #[serde(default)]
@@ -275,6 +288,12 @@ impl Config {
         }
         if let Ok(val) = std::env::var("VAULTFS_QUOTAS_MAX_OBJECTS") {
             config.quotas.default_max_objects = val.parse().unwrap_or(config.quotas.default_max_objects);
+        }
+        if let Ok(val) = std::env::var("VAULTFS_SSE_ENABLED") {
+            config.sse.enabled = val.parse().unwrap_or(config.sse.enabled);
+        }
+        if let Ok(val) = std::env::var("VAULTFS_SSE_MASTER_KEY") {
+            config.sse.master_key = val;
         }
 
         Ok(config)

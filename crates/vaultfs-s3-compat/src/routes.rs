@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use axum::extract::{Path, Query, State};
+use axum::extract::{OriginalUri, Path, Query, State};
 use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::any;
@@ -9,7 +9,7 @@ use bytes::Bytes;
 use serde::Deserialize;
 
 use crate::error::S3Error;
-use crate::signature::parse_auth_header;
+use crate::signature::{parse_auth_header, verify_sigv4};
 use crate::xml;
 use vaultfs_auth::AuthManager;
 use vaultfs_storage::StorageEngine;
@@ -36,8 +36,23 @@ pub fn s3_router(storage: Arc<StorageEngine>, auth: Arc<AuthManager>) -> Router 
         .with_state(state)
 }
 
-/// Authenticate the S3 request — extract API key from Authorization header
-fn authenticate(state: &S3State, headers: &HeaderMap) -> Result<(), S3Error> {
+/// Authenticate an S3 request.
+///
+/// Supports two modes:
+/// - `Authorization: AWS4-HMAC-SHA256 ...` — full SigV4 signature check: we
+///   recompute the canonical request from what the server actually received
+///   and compare HMACs. Rejects requests where the signed bytes differ from
+///   the received bytes (tamper / replay different URL etc.).
+/// - `Authorization: Bearer <key>` — convenience shortcut, no signature
+///   verification. Useful for `curl` / development but NOT for untrusted
+///   networks; callers who care should use SigV4.
+fn authenticate(
+    state: &S3State,
+    method: &str,
+    uri_path: &str,
+    query: &str,
+    headers: &HeaderMap,
+) -> Result<(), S3Error> {
     let auth_header = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
@@ -45,15 +60,42 @@ fn authenticate(state: &S3State, headers: &HeaderMap) -> Result<(), S3Error> {
 
     if auth_header.starts_with("AWS4-HMAC-SHA256") {
         let parsed = parse_auth_header(auth_header).ok_or_else(S3Error::access_denied)?;
-        // In VaultFS, the access_key_id is the full API key
-        // We verify by looking up the key
-        state
+        let (_api_key, secret) = state
             .auth
-            .verify_key(&parsed.access_key)
+            .find_by_access_key(&parsed.access_key)
             .map_err(|_| S3Error::access_denied())?;
+        if secret.is_empty() {
+            // Legacy row with no stored plaintext — can't verify SigV4. The
+            // caller must rotate to a freshly-issued key to use SigV4.
+            return Err(S3Error::access_denied());
+        }
+
+        let payload_hash = headers
+            .get("x-amz-content-sha256")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        if payload_hash.is_empty() {
+            return Err(S3Error::access_denied());
+        }
+
+        let header_pairs: Vec<(String, String)> = headers
+            .iter()
+            .filter_map(|(n, v)| v.to_str().ok().map(|s| (n.as_str().to_string(), s.to_string())))
+            .collect();
+
+        if !verify_sigv4(
+            method,
+            uri_path,
+            query,
+            &header_pairs,
+            payload_hash,
+            &secret,
+            &parsed,
+        ) {
+            return Err(S3Error::access_denied());
+        }
         Ok(())
     } else if let Some(key) = auth_header.strip_prefix("Bearer ") {
-        // Also accept Bearer tokens for convenience
         state
             .auth
             .verify_key(key)
@@ -68,9 +110,16 @@ fn authenticate(state: &S3State, headers: &HeaderMap) -> Result<(), S3Error> {
 
 async fn s3_service(
     State(state): State<S3State>,
+    OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
 ) -> Response {
-    if let Err(e) = authenticate(&state, &headers) {
+    if let Err(e) = authenticate(
+        &state,
+        "GET",
+        uri.path(),
+        uri.query().unwrap_or(""),
+        &headers,
+    ) {
         return e.into_response();
     }
 
@@ -103,11 +152,18 @@ struct BucketQuery {
 async fn s3_bucket(
     State(state): State<S3State>,
     method: Method,
+    OriginalUri(uri): OriginalUri,
     Path(bucket): Path<String>,
     Query(query): Query<BucketQuery>,
     headers: HeaderMap,
 ) -> Response {
-    if let Err(e) = authenticate(&state, &headers) {
+    if let Err(e) = authenticate(
+        &state,
+        method.as_str(),
+        uri.path(),
+        uri.query().unwrap_or(""),
+        &headers,
+    ) {
         return e.into_response();
     }
 
@@ -188,11 +244,18 @@ async fn list_objects_v2(state: &S3State, bucket: &str, query: BucketQuery) -> R
 async fn s3_object(
     State(state): State<S3State>,
     method: Method,
+    OriginalUri(uri): OriginalUri,
     Path((bucket, key)): Path<(String, String)>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    if let Err(e) = authenticate(&state, &headers) {
+    if let Err(e) = authenticate(
+        &state,
+        method.as_str(),
+        uri.path(),
+        uri.query().unwrap_or(""),
+        &headers,
+    ) {
         return e.into_response();
     }
 

@@ -1,10 +1,12 @@
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio_util::io::ReaderStream;
 use tracing::info;
 
 use crate::db::Database;
+use crate::encryption::Encryptor;
 use crate::error::StorageError;
 use crate::models::*;
 
@@ -18,6 +20,7 @@ pub struct StorageEngine {
     data_dir: PathBuf,
     max_file_size: u64,
     deduplication: bool,
+    encryptor: Option<Arc<Encryptor>>,
 }
 
 impl StorageEngine {
@@ -25,6 +28,15 @@ impl StorageEngine {
         data_dir: PathBuf,
         max_file_size: u64,
         deduplication: bool,
+    ) -> Result<Self, StorageError> {
+        Self::with_encryption(data_dir, max_file_size, deduplication, None)
+    }
+
+    pub fn with_encryption(
+        data_dir: PathBuf,
+        max_file_size: u64,
+        deduplication: bool,
+        encryptor: Option<Arc<Encryptor>>,
     ) -> Result<Self, StorageError> {
         let db_path = data_dir.join("vaultfs.db");
         std::fs::create_dir_all(&data_dir)?;
@@ -37,7 +49,12 @@ impl StorageEngine {
             data_dir,
             max_file_size,
             deduplication,
+            encryptor,
         })
+    }
+
+    pub fn encryption_enabled(&self) -> bool {
+        self.encryptor.is_some()
     }
 
     pub fn create_bucket(&self, req: &CreateBucketRequest) -> Result<Bucket, StorageError> {
@@ -109,12 +126,18 @@ impl StorageEngine {
             }
         }
 
-        // Write blob to disk
+        // Write blob to disk. With SSE enabled, we encrypt before writing —
+        // the file on disk is the ciphertext; the sha256 stays the plaintext
+        // hash so dedup lookups and client-facing ETags keep working.
         let full_path = self.data_dir.join(&storage_path);
         if let Some(parent) = full_path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        tokio::fs::write(&full_path, &data).await?;
+        let bytes_on_disk = match &self.encryptor {
+            Some(enc) => enc.encrypt(&sha256, &data)?,
+            None => data.to_vec(),
+        };
+        tokio::fs::write(&full_path, &bytes_on_disk).await?;
 
         let content_type = content_type
             .map(String::from)
@@ -152,7 +175,11 @@ impl StorageEngine {
     pub async fn get_object(&self, bucket: &str, key: &str) -> Result<(ObjectMeta, bytes::Bytes), StorageError> {
         let (meta, storage_path) = self.db.get_object(bucket, key)?;
         let full_path = self.data_dir.join(&storage_path);
-        let data = tokio::fs::read(&full_path).await?;
+        let raw = tokio::fs::read(&full_path).await?;
+        let data = match &self.encryptor {
+            Some(enc) => enc.decrypt(&meta.sha256, &raw)?,
+            None => raw,
+        };
         Ok((meta, bytes::Bytes::from(data)))
     }
 
@@ -283,12 +310,23 @@ impl StorageEngine {
             }
         }
 
-        // Move temp file to final content-addressed path
+        // Move temp file to final content-addressed path. With SSE, we have
+        // to take an extra pass: read the plaintext temp file, encrypt, then
+        // write the ciphertext to the final path. Streaming AEAD would avoid
+        // this but AES-GCM emits the auth tag at the end, so we can't hand
+        // out a partial file while still writing.
         let final_path = self.data_dir.join(&storage_path);
         if let Some(parent) = final_path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        tokio::fs::rename(&temp_path, &final_path).await?;
+        if let Some(enc) = &self.encryptor {
+            let plaintext = tokio::fs::read(&temp_path).await?;
+            let ciphertext = enc.encrypt(&sha256, &plaintext)?;
+            tokio::fs::write(&final_path, &ciphertext).await?;
+            let _ = tokio::fs::remove_file(&temp_path).await;
+        } else {
+            tokio::fs::rename(&temp_path, &final_path).await?;
+        }
 
         let content_type = content_type
             .map(String::from)
@@ -318,17 +356,36 @@ impl StorageEngine {
         Ok(meta)
     }
 
-    /// Stream-download: returns a stream of file chunks instead of loading entire file into RAM.
+    /// Stream-download: returns a stream of file chunks instead of loading
+    /// the entire file into RAM. With SSE enabled we have to load the blob
+    /// into memory to verify the auth tag before handing bytes to the client
+    /// — the stream then yields the decrypted plaintext as one chunk.
     pub async fn get_object_stream(
         &self,
         bucket: &str,
         key: &str,
-    ) -> Result<(ObjectMeta, ReaderStream<tokio::fs::File>), StorageError> {
+    ) -> Result<
+        (
+            ObjectMeta,
+            futures::stream::BoxStream<'static, std::io::Result<bytes::Bytes>>,
+        ),
+        StorageError,
+    > {
         let (meta, storage_path) = self.db.get_object(bucket, key)?;
         let full_path = self.data_dir.join(&storage_path);
+
+        if let Some(enc) = &self.encryptor {
+            let raw = tokio::fs::read(&full_path).await?;
+            let plaintext = enc.decrypt(&meta.sha256, &raw)?;
+            let stream = futures::stream::once(async move {
+                Ok::<_, std::io::Error>(bytes::Bytes::from(plaintext))
+            });
+            return Ok((meta, Box::pin(stream)));
+        }
+
         let file = tokio::fs::File::open(&full_path).await?;
         let stream = ReaderStream::new(file);
-        Ok((meta, stream))
+        Ok((meta, Box::pin(stream)))
     }
 
     pub fn db(&self) -> &Database {
@@ -353,7 +410,11 @@ impl StorageEngine {
     ) -> Result<(ObjectVersion, bytes::Bytes), StorageError> {
         let (version, storage_path) = self.db.get_version(bucket, key, version_id)?;
         let full_path = self.data_dir.join(&storage_path);
-        let data = tokio::fs::read(&full_path).await?;
+        let raw = tokio::fs::read(&full_path).await?;
+        let data = match &self.encryptor {
+            Some(enc) => enc.decrypt(&version.sha256, &raw)?,
+            None => raw,
+        };
         Ok((version, bytes::Bytes::from(data)))
     }
 

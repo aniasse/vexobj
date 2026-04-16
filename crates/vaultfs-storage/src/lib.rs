@@ -1,5 +1,6 @@
 pub mod backup;
 mod db;
+mod encryption;
 mod engine;
 mod error;
 pub mod gc;
@@ -7,6 +8,7 @@ mod models;
 
 pub use backup::BackupManager;
 pub use db::Database;
+pub use encryption::Encryptor;
 pub use engine::{LifecycleResult, StorageEngine};
 pub use error::StorageError;
 pub use gc::{GarbageCollector, GcResult};

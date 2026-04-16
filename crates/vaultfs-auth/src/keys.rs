@@ -74,6 +74,13 @@ impl AuthManager {
             ",
         )?;
 
+        // SigV4 verification needs the plaintext secret to recompute HMACs.
+        // Keys created before this column existed get an empty raw_key and
+        // must authenticate via Bearer only — rotate to enable SigV4.
+        let _ = conn.execute_batch(
+            "ALTER TABLE api_keys ADD COLUMN raw_key TEXT NOT NULL DEFAULT '';",
+        );
+
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -93,8 +100,8 @@ impl AuthManager {
 
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO api_keys (id, name, key_hash, key_prefix, created_at, permissions, bucket_access)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO api_keys (id, name, key_hash, key_prefix, created_at, permissions, bucket_access, raw_key)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 id,
                 name,
@@ -103,6 +110,7 @@ impl AuthManager {
                 now.to_rfc3339(),
                 serde_json::to_string(&permissions).unwrap(),
                 serde_json::to_string(&bucket_access).unwrap(),
+                raw_key,
             ],
         )?;
 
@@ -144,6 +152,43 @@ impl AuthManager {
             },
         )
         .map_err(|_| AuthError::InvalidApiKey)
+    }
+
+    /// Look up a key by its SigV4 access-key identifier. The full raw API key
+    /// is used as the access_key_id in the AWS Credential string, so we try
+    /// an exact match first, then fall back to matching `key_prefix` for
+    /// clients that truncate. Returns the ApiKey plus the stored plaintext
+    /// secret (empty for legacy rows — caller must reject SigV4 for those).
+    pub fn find_by_access_key(
+        &self,
+        access_key: &str,
+    ) -> Result<(ApiKey, String), AuthError> {
+        let conn = self.conn.lock().unwrap();
+        let row = conn
+            .query_row(
+                "SELECT id, name, key_prefix, created_at, permissions, bucket_access, raw_key
+                 FROM api_keys WHERE raw_key = ?1 OR key_prefix = ?1",
+                params![access_key],
+                |row| {
+                    let api_key = ApiKey {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        key_prefix: row.get(2)?,
+                        created_at: row
+                            .get::<_, String>(3)?
+                            .parse()
+                            .unwrap_or_else(|_| Utc::now()),
+                        permissions: serde_json::from_str(&row.get::<_, String>(4)?)
+                            .unwrap_or_default(),
+                        bucket_access: serde_json::from_str(&row.get::<_, String>(5)?)
+                            .unwrap_or_default(),
+                    };
+                    let raw_key: String = row.get(6)?;
+                    Ok((api_key, raw_key))
+                },
+            )
+            .map_err(|_| AuthError::InvalidApiKey)?;
+        Ok(row)
     }
 
     pub fn list_keys(&self) -> Result<Vec<ApiKey>, AuthError> {

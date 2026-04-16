@@ -35,11 +35,23 @@ impl TestServer {
     /// Spawn a VaultFS server on a random port with a fresh temp directory.
     /// Blocks until the health endpoint responds or a timeout is reached.
     fn start() -> Self {
+        Self::start_with_sse(None)
+    }
+
+    /// Variant that enables server-side encryption with the given 64-hex-char
+    /// master key. Used by the SSE integration test; everything else keeps
+    /// calling `start()` for the no-SSE default.
+    fn start_with_sse(sse_master_key: Option<&str>) -> Self {
         let temp_dir = std::env::temp_dir().join(format!("vaultfs-e2e-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).expect("create temp dir");
 
         let port = find_free_port();
         let bind_addr = format!("127.0.0.1:{}", port);
+
+        let sse_section = match sse_master_key {
+            Some(k) => format!("\n[sse]\nenabled = true\nmaster_key = \"{k}\"\n"),
+            None => String::new(),
+        };
 
         // Write a minimal config file
         let config_path = temp_dir.join("config.toml");
@@ -58,9 +70,10 @@ enabled = true
 enabled = true
 max_requests = 100
 window_secs = 60
-"#,
+{sse_section}"#,
             bind_addr = bind_addr,
-            data_dir = temp_dir.to_string_lossy().replace('\\', "/")
+            data_dir = temp_dir.to_string_lossy().replace('\\', "/"),
+            sse_section = sse_section,
         );
         std::fs::write(&config_path, &config_content).expect("write config");
 
@@ -1021,6 +1034,63 @@ async fn e2e_delete_version_and_purge() {
 }
 
 #[tokio::test]
+async fn e2e_sse_at_rest() {
+    let key = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+    let srv = TestServer::start_with_sse(Some(key));
+    let client = srv.client();
+    let auth = srv.auth_header();
+
+    // Create bucket and put an object
+    client
+        .post(format!("{}/v1/buckets", srv.url))
+        .header("Authorization", &auth)
+        .json(&serde_json::json!({"name": "sse-bucket", "public": false}))
+        .send()
+        .await
+        .unwrap();
+
+    let payload = "top secret — must be encrypted at rest";
+    let resp = client
+        .put(format!("{}/v1/objects/sse-bucket/secret.txt", srv.url))
+        .header("Authorization", &auth)
+        .header("Content-Type", "text/plain")
+        .body(payload)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let meta: Value = resp.json().await.unwrap();
+    let sha256 = meta["sha256"].as_str().unwrap().to_string();
+
+    // GET returns the plaintext — round-trip works
+    let resp = client
+        .get(format!("{}/v1/objects/sse-bucket/secret.txt", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.text().await.unwrap(), payload);
+
+    // Confirm the bytes on disk are NOT the plaintext. The blob lives at
+    // data_dir/blobs/<aa>/<bb>/<sha256>. We can find data_dir via the test
+    // temp directory used by the harness.
+    let data_dir = srv._temp_dir.clone();
+    let blob_path = data_dir
+        .join("blobs")
+        .join(&sha256[..2])
+        .join(&sha256[2..4])
+        .join(&sha256);
+    let on_disk = std::fs::read(&blob_path).expect("blob file exists");
+    assert!(
+        !on_disk.windows(payload.len()).any(|w| w == payload.as_bytes()),
+        "plaintext must not appear on disk"
+    );
+    // Ciphertext is payload length + 16-byte auth tag
+    assert_eq!(on_disk.len(), payload.len() + 16);
+}
+
+#[tokio::test]
 async fn e2e_object_lock() {
     let srv = TestServer::start();
     let client = srv.client();
@@ -1370,6 +1440,124 @@ async fn e2e_s3_compat_copy_object() {
         .await
         .unwrap();
     assert_eq!(resp.text().await.unwrap(), "original payload");
+}
+
+/// Build a SigV4 `Authorization` header for a GET request using the same
+/// algorithm the server expects. Keeps the test self-contained.
+fn sigv4_get_auth(
+    url: &str,
+    access_key: &str,
+    secret: &str,
+    amz_date: &str,
+    payload_hash: &str,
+) -> String {
+    use hmac::{Hmac, Mac};
+    use sha2::{Digest, Sha256};
+    type HmacSha256 = Hmac<Sha256>;
+
+    let parsed = reqwest::Url::parse(url).unwrap();
+    let host = match parsed.port() {
+        Some(p) => format!("{}:{}", parsed.host_str().unwrap(), p),
+        None => parsed.host_str().unwrap().to_string(),
+    };
+
+    let canonical_uri = parsed.path().to_string();
+    let canonical_query = parsed.query().unwrap_or("").to_string();
+
+    let date = &amz_date[..8]; // YYYYMMDD
+    let region = "us-east-1";
+    let service = "s3";
+    let scope = format!("{date}/{region}/{service}/aws4_request");
+
+    let canonical_headers = format!(
+        "host:{host}\nx-amz-content-sha256:{payload_hash}\nx-amz-date:{amz_date}\n"
+    );
+    let signed_headers = "host;x-amz-content-sha256;x-amz-date";
+
+    let canonical_request = format!(
+        "GET\n{canonical_uri}\n{canonical_query}\n{canonical_headers}\n{signed_headers}\n{payload_hash}"
+    );
+    let mut h = Sha256::new();
+    h.update(canonical_request.as_bytes());
+    let cr_hash = hex::encode(h.finalize());
+
+    let sts = format!("AWS4-HMAC-SHA256\n{amz_date}\n{scope}\n{cr_hash}");
+
+    let mac = |key: &[u8], data: &[u8]| -> Vec<u8> {
+        let mut m = HmacSha256::new_from_slice(key).unwrap();
+        m.update(data);
+        m.finalize().into_bytes().to_vec()
+    };
+    let k_date = mac(format!("AWS4{secret}").as_bytes(), date.as_bytes());
+    let k_region = mac(&k_date, region.as_bytes());
+    let k_service = mac(&k_region, service.as_bytes());
+    let k_signing = mac(&k_service, b"aws4_request");
+    let sig = hex::encode(mac(&k_signing, sts.as_bytes()));
+
+    format!(
+        "AWS4-HMAC-SHA256 Credential={access_key}/{scope}, \
+         SignedHeaders={signed_headers}, Signature={sig}"
+    )
+}
+
+#[tokio::test]
+async fn e2e_s3_compat_sigv4_accepts_valid_and_rejects_tamper() {
+    let srv = TestServer::start();
+    let client = srv.client();
+    let auth_bearer = srv.auth_header();
+
+    // Create bucket via the Bearer shortcut so we have something to list.
+    client
+        .put(format!("{}/s3/sigv4-bucket", srv.url))
+        .header("Authorization", &auth_bearer)
+        .send()
+        .await
+        .unwrap();
+
+    // The admin key is the full `vfs_...` string — our server accepts the
+    // raw key as the Credential access_key (see find_by_access_key).
+    let key = srv.admin_key.clone();
+    let url = format!("{}/s3", srv.url);
+    let amz_date = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+    let empty_hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+    let signed = sigv4_get_auth(&url, &key, &key, &amz_date, empty_hash);
+
+    let resp = client
+        .get(&url)
+        .header("Authorization", &signed)
+        .header("x-amz-date", &amz_date)
+        .header("x-amz-content-sha256", empty_hash)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200, "valid SigV4 must be accepted");
+    assert!(resp.text().await.unwrap().contains("<ListAllMyBucketsResult"));
+
+    // Now tamper with the signature — last-char flip. Server must reject.
+    let mut bad = signed.clone();
+    bad.pop();
+    bad.push('0');
+    let resp = client
+        .get(&url)
+        .header("Authorization", &bad)
+        .header("x-amz-date", &amz_date)
+        .header("x-amz-content-sha256", empty_hash)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403, "tampered SigV4 must be rejected");
+
+    // Tamper by swapping the query — signed for `/s3`, sent to `/s3?extra=1`.
+    let resp = client
+        .get(format!("{}?extra=1", url))
+        .header("Authorization", &signed)
+        .header("x-amz-date", &amz_date)
+        .header("x-amz-content-sha256", empty_hash)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403, "URL mismatch must be rejected");
 }
 
 #[tokio::test]

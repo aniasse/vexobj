@@ -8,7 +8,7 @@ use crate::ratelimit::RateLimiter;
 use crate::webhooks::{WebhookConfig, WebhookSender};
 use vaultfs_auth::{AuthManager, PresignedUrlGenerator};
 use vaultfs_cache::Cache;
-use vaultfs_storage::StorageEngine;
+use vaultfs_storage::{Encryptor, StorageEngine};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -28,7 +28,24 @@ impl AppState {
         let data_dir = PathBuf::from(&config.storage.data_dir);
         let max_file_size = config::parse_size(&config.storage.max_file_size);
 
-        let storage = StorageEngine::new(data_dir.clone(), max_file_size, config.storage.deduplication)?;
+        let encryptor = if config.sse.enabled {
+            if config.sse.master_key.is_empty() {
+                anyhow::bail!("sse.enabled=true but sse.master_key is empty");
+            }
+            Some(Arc::new(
+                Encryptor::from_hex(&config.sse.master_key)
+                    .map_err(|e| anyhow::anyhow!("invalid SSE master key: {e}"))?,
+            ))
+        } else {
+            None
+        };
+
+        let storage = StorageEngine::with_encryption(
+            data_dir.clone(),
+            max_file_size,
+            config.storage.deduplication,
+            encryptor,
+        )?;
 
         let memory_size = config::parse_size(&config.cache.memory_size) as usize;
         let disk_size = config::parse_size(&config.cache.disk_size);
@@ -126,6 +143,12 @@ impl AppState {
                     default_max_objects: config.quotas.default_max_objects,
                 },
                 webhooks: Vec::new(), // Don't store webhook secrets in shared state
+                sse: config::SseConfig {
+                    enabled: config.sse.enabled,
+                    // Master key is already bound to Encryptor; don't copy
+                    // plaintext into shared state that may get logged.
+                    master_key: String::new(),
+                },
             }),
             rate_limiter,
             webhooks,

@@ -20,3 +20,5 @@ mime_guess = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
 tokio-util = { workspace = true }
+aes-gcm = { workspace = true }
+hkdf = { workspace = true }
