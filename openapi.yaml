@@ -19,7 +19,16 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
-      description: "API key (vfs_...)"
+      description: "API key (vfs_...) — used for the VaultFS native API."
+    awsV4:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: >
+        `AWS4-HMAC-SHA256` signature for the S3-compat layer at `/s3/*`.
+        The full VaultFS API key acts as both access_key_id and secret.
+        Full signature verification is performed — tampered requests are
+        rejected with 403.
 
   schemas:
     Bucket:
@@ -159,6 +168,60 @@ components:
             type: object
         version:
           type: string
+
+    ObjectVersion:
+      type: object
+      properties:
+        id:
+          type: string
+        bucket:
+          type: string
+        key:
+          type: string
+        version_id:
+          type: string
+        size:
+          type: integer
+        content_type:
+          type: string
+        sha256:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        is_latest:
+          type: boolean
+        is_delete_marker:
+          type: boolean
+
+    ObjectLock:
+      type: object
+      description: >
+        Retention timestamp and legal-hold flag for a live object. Either
+        or both make the object undeletable. Retention cannot be shortened
+        while still active (WORM).
+      properties:
+        retain_until:
+          type: string
+          format: date-time
+          nullable: true
+        legal_hold:
+          type: boolean
+
+    LifecycleRule:
+      type: object
+      properties:
+        id:
+          type: string
+        bucket:
+          type: string
+        prefix:
+          type: string
+        expire_days:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
 
     Error:
       type: object
@@ -361,6 +424,11 @@ paths:
           schema:
             type: string
             enum: [cover, contain, fill]
+        - name: version_id
+          in: query
+          description: Fetch a specific historical version (bucket must have versioning enabled)
+          schema:
+            type: string
       responses:
         "200":
           description: Object data
@@ -409,13 +477,81 @@ paths:
         "404":
           description: Object not found
     delete:
-      summary: Delete an object
+      summary: Delete an object (or a specific version)
       tags: [Objects]
+      parameters:
+        - name: version_id
+          in: query
+          description: >
+            When present, removes only that version (and promotes the
+            newest remaining version to `is_latest`). Otherwise deletes
+            the live object; if versioning is enabled, a delete-marker is
+            written instead of hard-deleting.
+          schema:
+            type: string
       responses:
         "204":
-          description: Object deleted
+          description: Object (or version) deleted
         "404":
-          description: Object not found
+          description: Object or version not found
+        "409":
+          description: Object is under retention or legal hold
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  reason:
+                    type: string
+
+  /v1/versions/{bucket}/{key}:
+    parameters:
+      - name: bucket
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: List all versions and delete-markers for a key
+      tags: [Objects]
+      responses:
+        "200":
+          description: Versions, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  versions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ObjectVersion"
+    delete:
+      summary: Purge every version (and the live object) for a key
+      tags: [Objects]
+      responses:
+        "200":
+          description: Purge summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  bucket:
+                    type: string
+                  key:
+                    type: string
+                  blobs_removed:
+                    type: integer
+        "409":
+          description: Object is under retention or legal hold
 
   /v1/stream/{bucket}/{key}:
     parameters:
@@ -610,6 +746,296 @@ paths:
               schema:
                 $ref: "#/components/schemas/Stats"
 
+  /v1/admin/backup:
+    post:
+      summary: Create a full backup snapshot (db + blobs)
+      tags: [Admin]
+      responses:
+        "200":
+          description: Snapshot summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  path:
+                    type: string
+                  db_size:
+                    type: integer
+                  blobs_copied:
+                    type: integer
+                  total_size:
+                    type: integer
+
+  /v1/admin/backup/export/{bucket}:
+    parameters:
+      - name: bucket
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      summary: Export a single bucket's objects to a directory
+      tags: [Admin]
+      responses:
+        "200":
+          description: Export summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  bucket:
+                    type: string
+                  objects_exported:
+                    type: integer
+                  path:
+                    type: string
+
+  /v1/admin/versioning/{bucket}:
+    parameters:
+      - name: bucket
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      summary: Enable versioning on a bucket
+      tags: [Admin]
+      responses:
+        "200":
+          description: Versioning enabled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  bucket:
+                    type: string
+                  versioning:
+                    type: string
+                    example: enabled
+
+  /v1/admin/lifecycle/{bucket}:
+    parameters:
+      - name: bucket
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: List lifecycle rules for a bucket
+      tags: [Admin]
+      responses:
+        "200":
+          description: Rules
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rules:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/LifecycleRule"
+    post:
+      summary: Create a lifecycle expiration rule
+      tags: [Admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expire_days]
+              properties:
+                prefix:
+                  type: string
+                  description: Only objects whose key starts with this prefix expire
+                expire_days:
+                  type: integer
+                  description: Delete objects older than this many days
+      responses:
+        "201":
+          description: Rule created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LifecycleRule"
+
+  /v1/admin/lifecycle/rule/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      summary: Delete a lifecycle rule
+      tags: [Admin]
+      responses:
+        "204":
+          description: Rule deleted
+        "404":
+          description: Rule not found
+
+  /v1/admin/lifecycle/run:
+    post:
+      summary: Run lifecycle rules now (expire eligible objects)
+      tags: [Admin]
+      responses:
+        "200":
+          description: Lifecycle summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  objects_expired:
+                    type: integer
+                  bytes_freed:
+                    type: integer
+
+  /v1/admin/lock/{bucket}/{key}:
+    parameters:
+      - name: bucket
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Read the object-lock state for a live object
+      tags: [Admin]
+      responses:
+        "200":
+          description: Current lock
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObjectLock"
+        "404":
+          description: Object not found
+    put:
+      summary: Set retention and/or legal hold
+      description: >
+        Retention (`retain_until`) can only be extended once set — attempts
+        to shorten or clear an active retention are rejected with 409.
+      tags: [Admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ObjectLock"
+      responses:
+        "200":
+          description: Lock updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObjectLock"
+        "404":
+          description: Object not found
+        "409":
+          description: Retention cannot be shortened/cleared while active
+    delete:
+      summary: Release legal hold
+      description: >
+        Clears `legal_hold` only — if `retain_until` is still in the
+        future, the object remains undeletable until retention elapses.
+      tags: [Admin]
+      responses:
+        "204":
+          description: Legal hold released
+        "404":
+          description: Object not found
+
+  /v1/admin/migrate/s3:
+    post:
+      summary: S3 migration stub — redirects to CLI
+      description: >
+        Server-side S3 migration is not implemented; response includes the
+        equivalent `vaultfsctl migrate s3` command to run locally.
+      tags: [Admin]
+      responses:
+        "501":
+          description: Not implemented; hint at CLI command
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  hint:
+                    type: string
+                  command:
+                    type: string
+
+  /v1/admin/audit:
+    get:
+      summary: Recent audit log entries
+      tags: [Admin]
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Entries, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      type: object
+
+  /metrics:
+    get:
+      summary: Prometheus metrics exposition
+      security: []
+      tags: [System]
+      responses:
+        "200":
+          description: Metrics in Prometheus text format
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /s3:
+    get:
+      summary: S3-compatible list-buckets
+      description: >
+        Entry point for the S3-compatible API at `/s3/*`. Accepts either
+        `Authorization: AWS4-HMAC-SHA256 ...` (full SigV4 verification)
+        or `Authorization: Bearer <vfs_key>` (convenience). Each
+        `/s3/{bucket}` and `/s3/{bucket}/{key}` mirrors the standard S3
+        REST API (PUT, GET, HEAD, DELETE, list-objects-v2, copy via
+        `x-amz-copy-source`). Returns AWS-style XML.
+      tags: [S3]
+      security:
+        - awsV4: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: ListAllMyBucketsResult XML
+          content:
+            application/xml:
+              schema:
+                type: string
+        "403":
+          description: Access denied (missing/invalid auth or bad SigV4)
+
   /dashboard:
     get:
       summary: Admin dashboard (HTML)
@@ -637,4 +1063,6 @@ tags:
   - name: Auth
     description: Authentication and presigned URLs
   - name: Admin
-    description: API key management, stats, and maintenance
+    description: API key management, stats, and maintenance (versioning, lifecycle, lock, backup, audit)
+  - name: S3
+    description: S3-compatible REST surface at `/s3/*` with real SigV4 verification
