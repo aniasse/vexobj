@@ -1,14 +1,15 @@
 <!doctype html>
-<html lang="en">
+<html lang="fr">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>VaultFS — self-hosted object storage, single binary.</title>
-<meta name="description" content="Self-hosted object storage with image processing, S3-compatibility, SSE, versioning, object lock, and async replication. Written in Rust.">
-<meta property="og:title" content="VaultFS — self-hosted object storage, single binary.">
-<meta property="og:description" content="S3-compatible. Server-side encryption. Versioning + object lock. Async replication. Single ~14 MB binary.">
+<title>VaultFS — stockage objet auto-hébergé, un seul binaire.</title>
+<meta name="description" content="Stockage objet auto-hébergé avec traitement d'images, compatibilité S3, chiffrement au repos, versioning, verrouillage d'objet et réplication asynchrone. Écrit en Rust.">
+<meta property="og:title" content="VaultFS — stockage objet auto-hébergé, un seul binaire.">
+<meta property="og:description" content="Compatible S3. Chiffrement au repos. Versioning + object lock. Réplication asynchrone. Binaire unique de ~14 Mo.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://aniasse.github.io/vaultfs/">
+<meta http-equiv="content-language" content="fr">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -184,6 +185,36 @@ section { position: relative; }
   border-color: var(--ink);
 }
 .masthead .gh svg { width: 14px; height: 14px; }
+
+/* Language toggle — FR / EN in masthead. Small, typographic, not loud. */
+.lang-toggle {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--ink-faint);
+}
+.lang-toggle button {
+  background: none;
+  border: none;
+  padding: 4px 2px;
+  cursor: pointer;
+  color: var(--ink-faint);
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: uppercase;
+  transition: color 120ms ease;
+}
+.lang-toggle button:hover { color: var(--ink); }
+.lang-toggle button.active {
+  color: var(--rust);
+  text-decoration: underline;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 4px;
+}
+.lang-toggle .sep { color: var(--ink-faint); user-select: none; }
 
 /* —————— HERO —————— */
 
@@ -750,7 +781,10 @@ footer a { border-bottom-color: var(--ink-faint); }
   .masthead { grid-template-columns: 1fr auto; }
   .masthead .tagline { grid-column: 1 / -1; text-align: center; font-size: 10px; }
   .masthead nav { display: none; }
+  .masthead .lang-toggle-mobile { display: flex; }
 }
+
+.masthead .lang-toggle-mobile { display: none; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -767,13 +801,18 @@ footer a { border-bottom-color: var(--ink-faint); }
 
 <!-- —————— MASTHEAD —————— -->
 <header class="masthead">
-  <div class="tagline caps">Specimen № 001 · v0.1.0 · April 2026</div>
+  <div class="tagline caps" data-i18n="masthead.tagline">Spécimen Nº 001 · v0.1.0 · Avril 2026</div>
   <div class="brand">VAULTFS<span class="dot">.</span></div>
   <nav>
-    <a href="#spec">Features</a>
+    <div class="lang-toggle" role="group" aria-label="Language">
+      <button type="button" data-lang="fr" class="active">FR</button>
+      <span class="sep">/</span>
+      <button type="button" data-lang="en">EN</button>
+    </div>
+    <a href="#spec" data-i18n="nav.features">Fonctionnalités</a>
     <a href="#code">API</a>
-    <a href="#arch">Architecture</a>
-    <a href="#install">Install</a>
+    <a href="#arch" data-i18n="nav.arch">Architecture</a>
+    <a href="#install" data-i18n="nav.install">Installation</a>
     <a href="https://github.com/aniasse/vaultfs" class="gh" target="_blank" rel="noopener">
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.44 9.8 8.21 11.39.6.11.82-.26.82-.58 0-.29-.01-1.05-.02-2.07-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.73.08-.73 1.21.09 1.84 1.24 1.84 1.24 1.07 1.84 2.81 1.31 3.5 1 .11-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.11-3.17 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6 0C17.32 4.55 18.33 4.87 18.33 4.87c.66 1.65.25 2.87.12 3.17.77.84 1.24 1.91 1.24 3.22 0 4.61-2.81 5.63-5.49 5.92.43.37.81 1.1.81 2.22 0 1.61-.01 2.9-.01 3.3 0 .32.22.7.83.58A12 12 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
       GitHub
@@ -784,38 +823,26 @@ footer a { border-bottom-color: var(--ink-faint); }
 <!-- —————— HERO —————— -->
 <section class="hero">
   <div>
-    <h1 class="hero-heading">
-      <span class="lead">A vault you</span>
-      <span class="break1"><em>run yourself.</em></span>
-    </h1>
+    <h1 class="hero-heading" data-i18n="hero.title"><span class="lead">Un coffre-fort</span><span class="break1"><em>à vous seul.</em></span></h1>
 
     <div class="hero-footer">
-      <p>
-        Object storage that lives on a disk you own. S3-compatible with real AWS
-        Signature V4 verification, server-side encryption at rest, versioning,
-        object lock, and async replication. Written in Rust. One binary. No
-        external dependencies.
-      </p>
+      <p data-i18n="hero.desc">Un stockage objet qui vit sur un disque qui vous appartient. Compatible S3 avec vérification AWS Signature V4 réelle, chiffrement au repos, versioning, verrouillage d'objet et réplication asynchrone. Écrit en Rust. Un seul binaire. Aucune dépendance externe.</p>
       <div class="cta-row">
-        <a href="#install" class="btn bare btn-accent">
-          ↓ Download v0.1.0
-        </a>
-        <a href="https://github.com/aniasse/vaultfs" class="btn bare" target="_blank" rel="noopener">
-          View source
-        </a>
+        <a href="#install" class="btn bare btn-accent" data-i18n="hero.cta1">↓ Télécharger v0.1.0</a>
+        <a href="https://github.com/aniasse/vaultfs" class="btn bare" target="_blank" rel="noopener" data-i18n="hero.cta2">Voir le code source</a>
       </div>
     </div>
   </div>
 
   <aside class="hero-meta">
     <dl>
-      <dt>Version</dt><dd>0.1.0</dd>
-      <dt>License</dt><dd>MIT</dd>
-      <dt>Language</dt><dd>Rust</dd>
-      <dt>Binary</dt><dd>~14 MB</dd>
-      <dt>Metadata</dt><dd>SQLite (WAL)</dd>
-      <dt>Deps</dt><dd>0</dd>
-      <dt>Status</dt><dd><span style="color: var(--rust)">● Released</span></dd>
+      <dt data-i18n="meta.version">Version</dt><dd>0.1.0</dd>
+      <dt data-i18n="meta.license">Licence</dt><dd>MIT</dd>
+      <dt data-i18n="meta.lang">Langage</dt><dd>Rust</dd>
+      <dt data-i18n="meta.binary">Binaire</dt><dd>~14 Mo</dd>
+      <dt data-i18n="meta.metadata">Métadonnées</dt><dd>SQLite (WAL)</dd>
+      <dt data-i18n="meta.deps">Deps</dt><dd>0</dd>
+      <dt data-i18n="meta.status">État</dt><dd data-i18n="meta.statusVal"><span style="color: var(--rust)">● Publié</span></dd>
     </dl>
   </aside>
 </section>
@@ -826,31 +853,27 @@ footer a { border-bottom-color: var(--ink-faint); }
 <section class="bench reveal">
   <div class="page-pad">
     <header class="bench-header">
-      <div class="caps">— benchmarks / hot paths / per core</div>
-      <div class="rule-label">measured, not marketed</div>
+      <div class="caps" data-i18n="bench.header">— benchmarks / chemins critiques / par cœur</div>
+      <div class="rule-label" data-i18n="bench.rule">mesuré, pas vendu</div>
     </header>
     <div class="bench-grid">
       <div class="bench-cell">
         <span class="index caps">01</span>
-        <span class="bench-num">1.25<sup>GB/s</sup></span>
-        <p class="bench-label"><strong>AES-256-GCM</strong> throughput. SSE is not what's slowing you down.</p>
+        <span class="bench-num">1,25<sup>Go/s</sup></span>
+        <p class="bench-label" data-i18n="bench.l1"><strong>Débit AES-256-GCM.</strong> Le chiffrement au repos n'est pas ce qui vous ralentit.</p>
       </div>
       <div class="bench-cell">
         <span class="index caps">02</span>
         <span class="bench-num">100<sup>k rps</sup></span>
-        <p class="bench-label"><strong>SigV4 verifications</strong> per core per second. Full signature check, not just access-key lookup.</p>
+        <p class="bench-label" data-i18n="bench.l2"><strong>Vérifications SigV4</strong> par cœur par seconde. Contrôle de signature complet, pas juste un lookup de clé d'accès.</p>
       </div>
       <div class="bench-cell">
         <span class="index caps">03</span>
-        <span class="bench-num">~14<sup>MB</sup></span>
-        <p class="bench-label"><strong>Single binary.</strong> No runtime, no interpreter, no container orchestrator required.</p>
+        <span class="bench-num">~14<sup>Mo</sup></span>
+        <p class="bench-label" data-i18n="bench.l3"><strong>Un seul binaire.</strong> Pas de runtime, pas d'interpréteur, pas d'orchestrateur de conteneurs requis.</p>
       </div>
     </div>
-    <p class="bench-foot">
-      → Intel i5-10300H / no SHA-NI / software only. Full methodology and per-size numbers in
-      <a href="https://github.com/aniasse/vaultfs/blob/main/docs/benchmarks.md" target="_blank" rel="noopener">docs/benchmarks.md</a>.
-      Reproduce with <span style="color: var(--ink)">cargo bench</span>.
-    </p>
+    <p class="bench-foot" data-i18n="bench.foot">→ Intel i5-10300H / sans SHA-NI / pur logiciel. Méthodologie complète et chiffres par taille dans <a href="https://github.com/aniasse/vaultfs/blob/main/docs/benchmarks.md" target="_blank" rel="noopener">docs/benchmarks.md</a>. Reproductible avec <span style="color: var(--ink)">cargo bench</span>.</p>
   </div>
 </section>
 
@@ -859,104 +882,66 @@ footer a { border-bottom-color: var(--ink-faint); }
 <!-- —————— SPEC SHEET —————— -->
 <section class="spec reveal" id="spec">
   <div class="spec-title">
-    <span class="caps">Specification — §1</span>
-    <h2>Everything production<br/>storage <em>actually needs.</em></h2>
-    <p>
-      Not a MinIO wrapper. Not a proof-of-concept. Every feature on this
-      list ships in the 0.1.0 binary with test coverage and published
-      behavior.
-    </p>
+    <span class="caps" data-i18n="spec.kicker">Spécification — §1</span>
+    <h2 data-i18n="spec.title">Tout ce dont un stockage de production<br/>a <em>vraiment besoin.</em></h2>
+    <p data-i18n="spec.lead">Ni un wrapper MinIO, ni un POC. Chaque élément de cette liste est livré dans le binaire 0.1.0 avec couverture de tests et comportement documenté.</p>
   </div>
 
   <ol class="spec-list">
     <li class="spec-item">
       <span class="spec-num">01</span>
       <div class="spec-body">
-        <span class="spec-label">S3-compatible API with real SigV4</span>
-        <p class="spec-desc">
-          Mount an <code>aws-sdk</code> client at <code>/s3/*</code> and it just works.
-          Authorization headers are verified, not parsed-and-trusted — the
-          canonical request is rebuilt from what the server received, HMACs
-          compared in constant time. Tampered URLs are rejected with 403.
-        </p>
+        <span class="spec-label" data-i18n="spec.1.label">API S3 avec SigV4 réelle</span>
+        <p class="spec-desc" data-i18n="spec.1.desc">Branchez un client <code>aws-sdk</code> sur <code>/s3/*</code> et ça marche. Les en-têtes Authorization sont vérifiés, pas juste parsés — la requête canonique est reconstruite depuis ce que le serveur a reçu, les HMAC comparés en temps constant. Une URL modifiée est rejetée avec un 403.</p>
       </div>
     </li>
     <li class="spec-item">
       <span class="spec-num">02</span>
       <div class="spec-body">
-        <span class="spec-label">Server-side encryption, dedup-friendly</span>
-        <p class="spec-desc">
-          AES-256-GCM at rest. Per-blob keys derived via HKDF from a master key
-          and the plaintext SHA-256, so two identical uploads produce identical
-          ciphertext — content-addressable deduplication keeps working.
-        </p>
+        <span class="spec-label" data-i18n="spec.2.label">Chiffrement au repos, compatible dédup</span>
+        <p class="spec-desc" data-i18n="spec.2.desc">AES-256-GCM au repos. Clés par blob dérivées via HKDF d'une clé maître et du SHA-256 du plaintext : deux uploads identiques produisent le même ciphertext, la déduplication content-addressable reste opérationnelle.</p>
       </div>
     </li>
     <li class="spec-item">
       <span class="spec-num">03</span>
       <div class="spec-body">
-        <span class="spec-label">Versioning, delete-markers, object lock</span>
-        <p class="spec-desc">
-          Full version history per key, with <code>?version_id=</code> on GET/DELETE
-          and a one-shot purge endpoint. Per-object retention (WORM) and legal
-          hold block deletes with HTTP 409 until the clock runs out.
-        </p>
+        <span class="spec-label" data-i18n="spec.3.label">Versioning, delete-markers, object lock</span>
+        <p class="spec-desc" data-i18n="spec.3.desc">Historique complet par clé, avec <code>?version_id=</code> sur GET/DELETE et un endpoint de purge en une seule requête. La rétention par objet (WORM) et le legal hold bloquent les suppressions avec un HTTP 409 jusqu'à ce que l'horloge expire.</p>
       </div>
     </li>
     <li class="spec-item">
       <span class="spec-num">04</span>
       <div class="spec-body">
-        <span class="spec-label">Async primary-replica replication</span>
-        <p class="spec-desc">
-          Every write appends an atomic event to a log; replicas pull the log,
-          fetch content-addressed blobs, and apply directly to their own
-          database. One CLI command promotes a replica when the primary fails.
-        </p>
+        <span class="spec-label" data-i18n="spec.4.label">Réplication primary-replica asynchrone</span>
+        <p class="spec-desc" data-i18n="spec.4.desc">Chaque écriture ajoute un événement atomique à un log ; les répliques le consomment, récupèrent les blobs content-addressed, et appliquent directement dans leur base. Une commande CLI promeut une réplique si le primary tombe.</p>
       </div>
     </li>
     <li class="spec-item">
       <span class="spec-num">05</span>
       <div class="spec-body">
-        <span class="spec-label">Image transforms, on the fly</span>
-        <p class="spec-desc">
-          Resize / crop / convert via URL query parameters. Auto-negotiates
-          AVIF → WebP → JPEG from the <code>Accept</code> header. Results go through a
-          two-level cache (memory LRU + bounded disk) so your CDN actually
-          helps.
-        </p>
+        <span class="spec-label" data-i18n="spec.5.label">Transformations d'images, à la volée</span>
+        <p class="spec-desc" data-i18n="spec.5.desc">Resize / crop / conversion via paramètres d'URL. Négociation automatique AVIF → WebP → JPEG via l'en-tête <code>Accept</code>. Résultats passés dans un cache à deux niveaux (LRU mémoire + disque borné), pour que votre CDN serve à quelque chose.</p>
       </div>
     </li>
     <li class="spec-item">
       <span class="spec-num">06</span>
       <div class="spec-body">
-        <span class="spec-label">Lifecycle, quotas, audit log</span>
-        <p class="spec-desc">
-          Expire-by-prefix rules run on schedule or on demand. Bucket-level
-          quotas (size + object count). Every write is logged to SQLite with
-          actor, action, target, and source IP.
-        </p>
+        <span class="spec-label" data-i18n="spec.6.label">Lifecycle, quotas, audit log</span>
+        <p class="spec-desc" data-i18n="spec.6.desc">Règles d'expiration par préfixe, manuelles ou programmées. Quotas par bucket (taille + nombre d'objets). Chaque écriture est enregistrée en SQLite avec acteur, action, cible et IP source.</p>
       </div>
     </li>
     <li class="spec-item">
       <span class="spec-num">07</span>
       <div class="spec-body">
-        <span class="spec-label">Prometheus, Grafana, and a dashboard</span>
-        <p class="spec-desc">
-          Metrics at <code>/metrics</code>, an embedded admin UI at <code>/dashboard</code>,
-          and a ready-to-import Grafana JSON that covers p50/p95/p99, error
-          ratio, and throughput — no dashboard-building afternoon required.
-        </p>
+        <span class="spec-label" data-i18n="spec.7.label">Prometheus, Grafana, et un dashboard</span>
+        <p class="spec-desc" data-i18n="spec.7.desc">Métriques sur <code>/metrics</code>, UI admin embarquée sur <code>/dashboard</code>, et un JSON Grafana prêt à importer qui couvre p50/p95/p99, taux d'erreur et débit — pas d'après-midi à construire un dashboard.</p>
       </div>
     </li>
     <li class="spec-item">
       <span class="spec-num">08</span>
       <div class="spec-body">
-        <span class="spec-label">Official SDKs</span>
-        <p class="spec-desc">
-          TypeScript (zero-dep, native fetch), Python (httpx + typed
-          dataclasses), and Go (zero-dep <code>net/http</code>). Full coverage of
-          versioning, object lock, and lifecycle — not just CRUD.
-        </p>
+        <span class="spec-label" data-i18n="spec.8.label">SDKs officiels</span>
+        <p class="spec-desc" data-i18n="spec.8.desc">TypeScript (zéro dépendance, fetch natif), Python (httpx + dataclasses typées), et Go (zéro dépendance, <code>net/http</code> standard). Couverture complète du versioning, de l'object lock et du lifecycle — pas juste du CRUD.</p>
       </div>
     </li>
   </ol>
@@ -965,8 +950,8 @@ footer a { border-bottom-color: var(--ink-faint); }
 <!-- —————— CODE SECTION —————— -->
 <section class="code-section reveal" id="code">
   <header class="code-section-header">
-    <h2>Talk to it.</h2>
-    <span class="caps caps-accent">— code · §2</span>
+    <h2 data-i18n="code.title">Parlez-lui.</h2>
+    <span class="caps caps-accent" data-i18n="code.kicker">— code · §2</span>
   </header>
 
   <div class="tabs" role="tablist">
@@ -978,8 +963,8 @@ footer a { border-bottom-color: var(--ink-faint); }
   </div>
 
   <div class="code-panel active" data-panel="curl">
-    <button class="copy-btn" data-copy>Copy</button>
-<pre><span class="cmt"># Create a bucket, upload an image, resize it on the fly.</span>
+    <button class="copy-btn" data-copy data-i18n="code.copy">Copier</button>
+<pre data-i18n-html="code.curl"><span class="cmt"># Créer un bucket, uploader une image, la redimensionner à la volée.</span>
 
 curl -X POST http://localhost:8000/v1/buckets \
   -H <span class="str">"Authorization: Bearer $VFS_KEY"</span> \
@@ -990,14 +975,465 @@ curl -X PUT http://localhost:8000/v1/objects/photos/beach.jpg \
   -H <span class="str">"Content-Type: image/jpeg"</span> \
   --data-binary @beach.jpg
 
-<span class="cmt"># WebP at 400px, with cache on second hit.</span>
+<span class="cmt"># WebP à 400px, avec cache dès la seconde requête.</span>
 curl <span class="str">"http://localhost:8000/v1/objects/photos/beach.jpg?w=400&format=webp"</span> \
   -H <span class="str">"Authorization: Bearer $VFS_KEY"</span> -o beach.webp</pre>
   </div>
 
   <div class="code-panel" data-panel="ts">
-    <button class="copy-btn" data-copy>Copy</button>
-<pre><span class="key">import</span> { VaultFS } <span class="key">from</span> <span class="str">"@vaultfs/client"</span>;
+    <button class="copy-btn" data-copy data-i18n="code.copy">Copier</button>
+<pre data-i18n-html="code.ts"><span class="key">import</span> { VaultFS } <span class="key">from</span> <span class="str">"@vaultfs/client"</span>;
+
+<span class="key">const</span> vfs = <span class="key">new</span> VaultFS({
+  baseUrl: <span class="str">"http://localhost:8000"</span>,
+  apiKey:  process.env.VFS_KEY!,
+});
+
+<span class="key">await</span> vfs.enableVersioning(<span class="str">"photos"</span>);
+<span class="key">await</span> vfs.putObject(<span class="str">"photos"</span>, <span class="str">"beach.jpg"</span>, file, <span class="str">"image/jpeg"</span>);
+
+<span class="cmt">// Verrouille le fichier 30 jours avec un legal hold.</span>
+<span class="key">await</span> vfs.setLock(<span class="str">"photos"</span>, <span class="str">"beach.jpg"</span>, {
+  retain_until: <span class="key">new</span> Date(Date.now() + 30 * 86_400_000).toISOString(),
+  legal_hold:   <span class="op">true</span>,
+});</pre>
+  </div>
+
+  <div class="code-panel" data-panel="py">
+    <button class="copy-btn" data-copy data-i18n="code.copy">Copier</button>
+<pre data-i18n-html="code.py"><span class="key">from</span> vaultfs <span class="key">import</span> VaultFS
+
+vfs = VaultFS(<span class="str">"http://localhost:8000"</span>, api_key=os.environ[<span class="str">"VFS_KEY"</span>])
+
+vfs.enable_versioning(<span class="str">"photos"</span>)
+vfs.put_object(<span class="str">"photos"</span>, <span class="str">"beach.jpg"</span>,
+               <span class="key">open</span>(<span class="str">"beach.jpg"</span>, <span class="str">"rb"</span>), <span class="str">"image/jpeg"</span>)
+
+<span class="cmt"># Chaque PUT crée une nouvelle version sur un bucket versionné.</span>
+versions = vfs.list_versions(<span class="str">"photos"</span>, <span class="str">"beach.jpg"</span>)
+<span class="key">for</span> v <span class="key">in</span> versions:
+    <span class="key">print</span>(v.version_id, v.size, v.is_latest)</pre>
+  </div>
+
+  <div class="code-panel" data-panel="go">
+    <button class="copy-btn" data-copy data-i18n="code.copy">Copier</button>
+<pre data-i18n-html="code.go"><span class="key">import</span> <span class="str">"github.com/aniasse/vaultfs/sdks/go"</span>
+
+c := vaultfs.<span class="op">New</span>(<span class="str">"http://localhost:8000"</span>, os.<span class="op">Getenv</span>(<span class="str">"VFS_KEY"</span>))
+
+<span class="cmt">// Expiration à 7 jours sous tmp/.</span>
+rule, _ := c.<span class="op">CreateLifecycleRule</span>(<span class="str">"photos"</span>, <span class="str">"tmp/"</span>, <span class="op">7</span>)
+fmt.<span class="op">Println</span>(<span class="str">"rule id:"</span>, rule.ID)
+
+<span class="cmt">// Balaye maintenant ; n'attend pas l'heure programmée.</span>
+expired, freed, _ := c.<span class="op">RunLifecycle</span>()
+fmt.<span class="op">Printf</span>(<span class="str">"expired %d objects, freed %d bytes\n"</span>, expired, freed)</pre>
+  </div>
+
+  <div class="code-panel" data-panel="ctl">
+    <button class="copy-btn" data-copy data-i18n="code.copy">Copier</button>
+<pre data-i18n-html="code.ctl"><span class="cmt"># Répliquer un primary sur cette machine, toutes les 5 secondes.</span>
+vaultfsctl replicate \
+  --url          http://localhost:8000 \
+  --key          $REPLICA_KEY \
+  --primary      https://primary.example.com \
+  --primary-key  $PRIMARY_KEY \
+  --cursor-file  /var/lib/vaultfs/replica.cursor \
+  --interval     <span class="op">5</span>
+
+<span class="cmt"># Primary HS ? On promeut la réplique.</span>
+vaultfsctl promote \
+  --url          http://localhost:8000 \
+  --key          $REPLICA_KEY \
+  --cursor-file  /var/lib/vaultfs/replica.cursor</pre>
+  </div>
+</section>
+
+<!-- —————— ARCHITECTURE —————— -->
+<section class="arch reveal" id="arch">
+  <div class="arch-title">
+    <span class="caps" data-i18n="arch.kicker">Architecture — §3</span>
+    <h2 data-i18n="arch.title">Ennuyeux, <em>volontairement.</em></h2>
+    <p data-i18n="arch.desc">Un processus. Un dossier de données. Un fichier SQLite pour les métadonnées, des blobs content-addressed dans <span class="mono" style="color: var(--ink)">blobs/&lt;aa&gt;/&lt;bb&gt;/&lt;sha&gt;</span>, et un log de réplication append-only optionnel. Sauvegarde : <span class="mono" style="color: var(--ink)">rsync</span>. Restauration : <span class="mono" style="color: var(--ink)">rsync</span>.</p>
+  </div>
+
+  <div class="arch-diagram" aria-hidden="true">
+<pre data-i18n-html="arch.diagram">  CLIENTS                            <span class="hl">PRIMARY</span>                         RÉPLIQUE
+  ━━━━━━━                            ━━━━━━━━━━                      ━━━━━━━━━
+
+  curl / SDK   ───── HTTP ─────▶   <span class="hl">┌────────────────────┐</span>         ┌───────────┐
+  aws-sdk-s3   ──── SigV4 ─────▶   <span class="hl">│</span>  axum + tokio      <span class="hl">│</span>         │           │
+  dashboard    ────  TLS  ─────▶   <span class="hl">│</span>  ────────────────  <span class="hl">│</span>         │  nœud     │
+                                   <span class="hl">│</span>  storage engine    <span class="hl">│</span>◀── consomme│  réplique │
+                                   <span class="hl">│</span>    ├─ sha256        <span class="hl">│</span>   events   │           │
+                                   <span class="hl">│</span>    ├─ AES-256-GCM   <span class="hl">│</span>   + blobs  └───────────┘
+                                   <span class="hl">│</span>    └─ dedup         <span class="hl">│</span>        △
+                                   <span class="hl">│</span>  ────────────────  <span class="hl">│</span>        │
+                                   <span class="hl">│</span>  SQLite (WAL)       <span class="hl">│</span>        │
+                                   <span class="hl">└────────────────────┘</span>        │
+                                              │                       │
+                                              ▼                       │
+                                   <span class="dim">  ./data/</span>                        │
+                                   <span class="dim">  ├── vaultfs.db         ─── append atomique ┐</span>
+                                   <span class="dim">  ├── blobs/aa/bb/&lt;sha&gt;</span>                   │
+                                   <span class="dim">  ├── backups/…</span>                            ▼
+                                   <span class="dim">  └── replication_events</span>         ┌───────────┐
+                                                                      │  vaultfsctl │
+                                                                      │  replicate  │
+                                                                      └───────────┘</pre>
+  </div>
+</section>
+
+</div>
+
+<!-- —————— INSTALL / DARK VAULT —————— -->
+<section class="install reveal" id="install">
+  <div class="page-pad">
+    <span class="caps caps-accent" style="color: var(--rust); display: block; margin-bottom: 16px;" data-i18n="install.kicker">— démarrer · §4</span>
+    <h2 data-i18n="install.title">Choisissez une porte.<br/><em>Entrez.</em></h2>
+    <p class="lead" data-i18n="install.lead">Trois façons de démarrer. Toutes produisent le même daemon — prenez celle que vos doigts connaissent déjà. Au premier lancement, le serveur génère une clé API admin et l'affiche sur stdout. Gardez-la.</p>
+
+    <div class="install-grid">
+      <div class="install-col">
+        <span class="caps" data-i18n="install.optA">Option A</span>
+        <h3>Docker</h3>
+        <p data-i18n="install.dockerDesc">Zéro configuration. Un volume pour l'état. Image prête pour la production sur GHCR.</p>
+<pre data-i18n-html="install.dockerCmd">docker run -d \
+  --name vaultfs \
+  -p <span class="op">8000</span>:<span class="op">8000</span> \
+  -v vaultfs-data:/data \
+  ghcr.io/aniasse/vaultfs:latest</pre>
+      </div>
+
+      <div class="install-col">
+        <span class="caps" data-i18n="install.optB">Option B</span>
+        <h3 data-i18n="install.binary">Binaire</h3>
+        <p data-i18n="install.binaryDesc">Linux amd64 ou macOS arm64. Checksums dans <span class="mono">SHA256SUMS</span> sur la page de release.</p>
+<pre data-i18n-html="install.binaryCmd"><span class="cmt"># linux-amd64</span>
+curl -LO https://github.com/aniasse/vaultfs/\
+releases/download/v0.1.0/\
+vaultfs-linux-amd64.tar.gz
+tar xzf vaultfs-linux-amd64.tar.gz
+./vaultfs</pre>
+      </div>
+
+      <div class="install-col">
+        <span class="caps" data-i18n="install.optC">Option C</span>
+        <h3 data-i18n="install.source">Depuis les sources</h3>
+        <p data-i18n="install.sourceDesc">Rust 1.85+ (edition2024). La suite de tests complète tourne en ~2 s après un build à chaud.</p>
+<pre data-i18n-html="install.sourceCmd">git clone \
+  https://github.com/aniasse/vaultfs.git
+<span class="key">cd</span> vaultfs
+cargo build --release
+./target/release/vaultfs</pre>
+      </div>
+    </div>
+
+    <div class="footer-cta">
+      <p data-i18n="install.quote">« Possédez le disque, les clés, et l'uptime. »<br/>Spec API complète, runbooks et benchmarks dans le dépôt GitHub.</p>
+      <a href="https://github.com/aniasse/vaultfs" class="btn bare" target="_blank" rel="noopener" data-i18n="install.repo">Ouvrir le dépôt →</a>
+    </div>
+  </div>
+</section>
+
+<div class="page">
+<!-- —————— FOOTER —————— -->
+<footer>
+  <div class="left caps">MIT · 2026 · Adama Niasse</div>
+  <div class="center" data-i18n="footer.center">— le coffre reste là où vous l'avez posé —</div>
+  <div class="right">
+    <a href="https://github.com/aniasse/vaultfs" target="_blank" rel="noopener">github</a>
+    <a href="https://github.com/aniasse/vaultfs/releases/tag/v0.1.0" target="_blank" rel="noopener">v0.1.0</a>
+    <a href="https://github.com/aniasse/vaultfs/blob/main/docs/benchmarks.md" target="_blank" rel="noopener">benchmarks</a>
+    <a href="https://github.com/aniasse/vaultfs/blob/main/openapi.yaml" target="_blank" rel="noopener">openapi</a>
+  </div>
+</footer>
+</div>
+
+<script>
+  // ─── i18n ───────────────────────────────────────────────────────────
+  // Plain-text entries go in I18N[lang][key] with plain strings. Entries
+  // that need HTML (code blocks, heading accents, ASCII diagram) live in
+  // I18N_HTML[lang][key] and are inserted with innerHTML. Every element
+  // carries data-i18n or data-i18n-html; the two sets don't overlap.
+
+  const I18N = {
+    fr: {
+      "masthead.tagline": "Spécimen Nº 001 · v0.1.0 · Avril 2026",
+      "nav.features":     "Fonctionnalités",
+      "nav.arch":         "Architecture",
+      "nav.install":      "Installation",
+      "hero.desc":        "Un stockage objet qui vit sur un disque qui vous appartient. Compatible S3 avec vérification AWS Signature V4 réelle, chiffrement au repos, versioning, verrouillage d'objet et réplication asynchrone. Écrit en Rust. Un seul binaire. Aucune dépendance externe.",
+      "hero.cta1":        "↓ Télécharger v0.1.0",
+      "hero.cta2":        "Voir le code source",
+      "meta.version":     "Version",
+      "meta.license":     "Licence",
+      "meta.lang":        "Langage",
+      "meta.binary":      "Binaire",
+      "meta.metadata":    "Métadonnées",
+      "meta.deps":        "Deps",
+      "meta.status":      "État",
+      "bench.header":     "— benchmarks / chemins critiques / par cœur",
+      "bench.rule":       "mesuré, pas vendu",
+      "spec.kicker":      "Spécification — §1",
+      "spec.lead":        "Ni un wrapper MinIO, ni un POC. Chaque élément de cette liste est livré dans le binaire 0.1.0 avec couverture de tests et comportement documenté.",
+      "spec.1.label":     "API S3 avec SigV4 réelle",
+      "spec.2.label":     "Chiffrement au repos, compatible dédup",
+      "spec.3.label":     "Versioning, delete-markers, object lock",
+      "spec.4.label":     "Réplication primary-replica asynchrone",
+      "spec.5.label":     "Transformations d'images, à la volée",
+      "spec.6.label":     "Lifecycle, quotas, audit log",
+      "spec.7.label":     "Prometheus, Grafana, et un dashboard",
+      "spec.8.label":     "SDKs officiels",
+      "code.title":       "Parlez-lui.",
+      "code.kicker":      "— code · §2",
+      "code.copy":        "Copier",
+      "arch.kicker":      "Architecture — §3",
+      "install.kicker":   "— démarrer · §4",
+      "install.optA":     "Option A",
+      "install.optB":     "Option B",
+      "install.optC":     "Option C",
+      "install.binary":   "Binaire",
+      "install.source":   "Depuis les sources",
+      "install.lead":     "Trois façons de démarrer. Toutes produisent le même daemon — prenez celle que vos doigts connaissent déjà. Au premier lancement, le serveur génère une clé API admin et l'affiche sur stdout. Gardez-la.",
+      "install.dockerDesc": "Zéro configuration. Un volume pour l'état. Image prête pour la production sur GHCR.",
+      "install.binaryDesc": "Linux amd64 ou macOS arm64. Checksums dans SHA256SUMS sur la page de release.",
+      "install.sourceDesc": "Rust 1.85+ (edition2024). La suite de tests complète tourne en ~2 s après un build à chaud.",
+      "install.repo":     "Ouvrir le dépôt →",
+      "footer.center":    "— le coffre reste là où vous l'avez posé —",
+    },
+    en: {
+      "masthead.tagline": "Specimen № 001 · v0.1.0 · April 2026",
+      "nav.features":     "Features",
+      "nav.arch":         "Architecture",
+      "nav.install":      "Install",
+      "hero.desc":        "Object storage that lives on a disk you own. S3-compatible with real AWS Signature V4 verification, server-side encryption at rest, versioning, object lock, and async replication. Written in Rust. One binary. No external dependencies.",
+      "hero.cta1":        "↓ Download v0.1.0",
+      "hero.cta2":        "View source",
+      "meta.version":     "Version",
+      "meta.license":     "License",
+      "meta.lang":        "Language",
+      "meta.binary":      "Binary",
+      "meta.metadata":    "Metadata",
+      "meta.deps":        "Deps",
+      "meta.status":      "Status",
+      "bench.header":     "— benchmarks / hot paths / per core",
+      "bench.rule":       "measured, not marketed",
+      "spec.kicker":      "Specification — §1",
+      "spec.lead":        "Not a MinIO wrapper. Not a proof-of-concept. Every feature on this list ships in the 0.1.0 binary with test coverage and published behavior.",
+      "spec.1.label":     "S3-compatible API with real SigV4",
+      "spec.2.label":     "Server-side encryption, dedup-friendly",
+      "spec.3.label":     "Versioning, delete-markers, object lock",
+      "spec.4.label":     "Async primary-replica replication",
+      "spec.5.label":     "Image transforms, on the fly",
+      "spec.6.label":     "Lifecycle, quotas, audit log",
+      "spec.7.label":     "Prometheus, Grafana, and a dashboard",
+      "spec.8.label":     "Official SDKs",
+      "code.title":       "Talk to it.",
+      "code.kicker":      "— code · §2",
+      "code.copy":        "Copy",
+      "arch.kicker":      "Architecture — §3",
+      "install.kicker":   "— get started · §4",
+      "install.optA":     "Option A",
+      "install.optB":     "Option B",
+      "install.optC":     "Option C",
+      "install.binary":   "Binary",
+      "install.source":   "From source",
+      "install.lead":     "Three ways to start. All of them produce the same running daemon — pick whichever your fingers already know. On first launch the server generates an admin API key and prints it to stdout. Save it.",
+      "install.dockerDesc": "Zero configuration. One volume for state. Production-ready image on GHCR.",
+      "install.binaryDesc": "Linux amd64 or macOS arm64. Checksums in SHA256SUMS on the release page.",
+      "install.sourceDesc": "Rust 1.85+ (edition2024). Full test suite runs in ~2 s after a warm build.",
+      "install.repo":     "Open repository →",
+      "footer.center":    "— the vault stays where you put it —",
+    },
+  };
+
+  const I18N_HTML = {
+    fr: {
+      "hero.title":       '<span class="lead">Un coffre-fort</span><span class="break1"><em>à vous seul.</em></span>',
+      "meta.statusVal":   '<span style="color: var(--rust)">● Publié</span>',
+      "bench.l1":         '<strong>Débit AES-256-GCM.</strong> Le chiffrement au repos n\'est pas ce qui vous ralentit.',
+      "bench.l2":         '<strong>Vérifications SigV4</strong> par cœur par seconde. Contrôle de signature complet, pas juste un lookup de clé d\'accès.',
+      "bench.l3":         '<strong>Un seul binaire.</strong> Pas de runtime, pas d\'interpréteur, pas d\'orchestrateur de conteneurs requis.',
+      "bench.foot":       '→ Intel i5-10300H / sans SHA-NI / pur logiciel. Méthodologie complète et chiffres par taille dans <a href="https://github.com/aniasse/vaultfs/blob/main/docs/benchmarks.md" target="_blank" rel="noopener">docs/benchmarks.md</a>. Reproductible avec <span style="color: var(--ink)">cargo bench</span>.',
+      "spec.title":       'Tout ce dont un stockage de production<br/>a <em>vraiment besoin.</em>',
+      "spec.1.desc":      'Branchez un client <code>aws-sdk</code> sur <code>/s3/*</code> et ça marche. Les en-têtes Authorization sont vérifiés, pas juste parsés — la requête canonique est reconstruite depuis ce que le serveur a reçu, les HMAC comparés en temps constant. Une URL modifiée est rejetée avec un 403.',
+      "spec.2.desc":      'AES-256-GCM au repos. Clés par blob dérivées via HKDF d\'une clé maître et du SHA-256 du plaintext : deux uploads identiques produisent le même ciphertext, la déduplication content-addressable reste opérationnelle.',
+      "spec.3.desc":      'Historique complet par clé, avec <code>?version_id=</code> sur GET/DELETE et un endpoint de purge en une seule requête. La rétention par objet (WORM) et le legal hold bloquent les suppressions avec un HTTP 409 jusqu\'à ce que l\'horloge expire.',
+      "spec.4.desc":      'Chaque écriture ajoute un événement atomique à un log ; les répliques le consomment, récupèrent les blobs content-addressed, et appliquent directement dans leur base. Une commande CLI promeut une réplique si le primary tombe.',
+      "spec.5.desc":      'Resize / crop / conversion via paramètres d\'URL. Négociation automatique AVIF → WebP → JPEG via l\'en-tête <code>Accept</code>. Résultats passés dans un cache à deux niveaux (LRU mémoire + disque borné), pour que votre CDN serve à quelque chose.',
+      "spec.6.desc":      'Règles d\'expiration par préfixe, manuelles ou programmées. Quotas par bucket (taille + nombre d\'objets). Chaque écriture est enregistrée en SQLite avec acteur, action, cible et IP source.',
+      "spec.7.desc":      'Métriques sur <code>/metrics</code>, UI admin embarquée sur <code>/dashboard</code>, et un JSON Grafana prêt à importer qui couvre p50/p95/p99, taux d\'erreur et débit — pas d\'après-midi à construire un dashboard.',
+      "spec.8.desc":      'TypeScript (zéro dépendance, fetch natif), Python (httpx + dataclasses typées), et Go (zéro dépendance, <code>net/http</code> standard). Couverture complète du versioning, de l\'object lock et du lifecycle — pas juste du CRUD.',
+      "arch.title":       'Ennuyeux, <em>volontairement.</em>',
+      "arch.desc":        'Un processus. Un dossier de données. Un fichier SQLite pour les métadonnées, des blobs content-addressed dans <span class="mono" style="color: var(--ink)">blobs/&lt;aa&gt;/&lt;bb&gt;/&lt;sha&gt;</span>, et un log de réplication append-only optionnel. Sauvegarde : <span class="mono" style="color: var(--ink)">rsync</span>. Restauration : <span class="mono" style="color: var(--ink)">rsync</span>.',
+      "install.title":    'Choisissez une porte.<br/><em>Entrez.</em>',
+      "install.quote":    '« Possédez le disque, les clés, et l\'uptime. »<br/>Spec API complète, runbooks et benchmarks dans le dépôt GitHub.',
+
+      // Code blocks — only the comments change between languages; the
+      // commands and identifiers are shared across both versions.
+      "code.curl":
+`<span class="cmt"># Créer un bucket, uploader une image, la redimensionner à la volée.</span>
+
+curl -X POST http://localhost:8000/v1/buckets \\
+  -H <span class="str">"Authorization: Bearer $VFS_KEY"</span> \\
+  -d <span class="str">'{"name": "photos"}'</span>
+
+curl -X PUT http://localhost:8000/v1/objects/photos/beach.jpg \\
+  -H <span class="str">"Authorization: Bearer $VFS_KEY"</span> \\
+  -H <span class="str">"Content-Type: image/jpeg"</span> \\
+  --data-binary @beach.jpg
+
+<span class="cmt"># WebP à 400px, avec cache dès la seconde requête.</span>
+curl <span class="str">"http://localhost:8000/v1/objects/photos/beach.jpg?w=400&amp;format=webp"</span> \\
+  -H <span class="str">"Authorization: Bearer $VFS_KEY"</span> -o beach.webp`,
+
+      "code.ts":
+`<span class="key">import</span> { VaultFS } <span class="key">from</span> <span class="str">"@vaultfs/client"</span>;
+
+<span class="key">const</span> vfs = <span class="key">new</span> VaultFS({
+  baseUrl: <span class="str">"http://localhost:8000"</span>,
+  apiKey:  process.env.VFS_KEY!,
+});
+
+<span class="key">await</span> vfs.enableVersioning(<span class="str">"photos"</span>);
+<span class="key">await</span> vfs.putObject(<span class="str">"photos"</span>, <span class="str">"beach.jpg"</span>, file, <span class="str">"image/jpeg"</span>);
+
+<span class="cmt">// Verrouille le fichier 30 jours avec un legal hold.</span>
+<span class="key">await</span> vfs.setLock(<span class="str">"photos"</span>, <span class="str">"beach.jpg"</span>, {
+  retain_until: <span class="key">new</span> Date(Date.now() + 30 * 86_400_000).toISOString(),
+  legal_hold:   <span class="op">true</span>,
+});`,
+
+      "code.py":
+`<span class="key">from</span> vaultfs <span class="key">import</span> VaultFS
+
+vfs = VaultFS(<span class="str">"http://localhost:8000"</span>, api_key=os.environ[<span class="str">"VFS_KEY"</span>])
+
+vfs.enable_versioning(<span class="str">"photos"</span>)
+vfs.put_object(<span class="str">"photos"</span>, <span class="str">"beach.jpg"</span>,
+               <span class="key">open</span>(<span class="str">"beach.jpg"</span>, <span class="str">"rb"</span>), <span class="str">"image/jpeg"</span>)
+
+<span class="cmt"># Chaque PUT crée une nouvelle version sur un bucket versionné.</span>
+versions = vfs.list_versions(<span class="str">"photos"</span>, <span class="str">"beach.jpg"</span>)
+<span class="key">for</span> v <span class="key">in</span> versions:
+    <span class="key">print</span>(v.version_id, v.size, v.is_latest)`,
+
+      "code.go":
+`<span class="key">import</span> <span class="str">"github.com/aniasse/vaultfs/sdks/go"</span>
+
+c := vaultfs.<span class="op">New</span>(<span class="str">"http://localhost:8000"</span>, os.<span class="op">Getenv</span>(<span class="str">"VFS_KEY"</span>))
+
+<span class="cmt">// Expiration à 7 jours sous tmp/.</span>
+rule, _ := c.<span class="op">CreateLifecycleRule</span>(<span class="str">"photos"</span>, <span class="str">"tmp/"</span>, <span class="op">7</span>)
+fmt.<span class="op">Println</span>(<span class="str">"rule id:"</span>, rule.ID)
+
+<span class="cmt">// Balaye maintenant ; n'attend pas l'heure programmée.</span>
+expired, freed, _ := c.<span class="op">RunLifecycle</span>()
+fmt.<span class="op">Printf</span>(<span class="str">"expired %d objects, freed %d bytes\\n"</span>, expired, freed)`,
+
+      "code.ctl":
+`<span class="cmt"># Répliquer un primary sur cette machine, toutes les 5 secondes.</span>
+vaultfsctl replicate \\
+  --url          http://localhost:8000 \\
+  --key          $REPLICA_KEY \\
+  --primary      https://primary.example.com \\
+  --primary-key  $PRIMARY_KEY \\
+  --cursor-file  /var/lib/vaultfs/replica.cursor \\
+  --interval     <span class="op">5</span>
+
+<span class="cmt"># Primary HS ? On promeut la réplique.</span>
+vaultfsctl promote \\
+  --url          http://localhost:8000 \\
+  --key          $REPLICA_KEY \\
+  --cursor-file  /var/lib/vaultfs/replica.cursor`,
+
+      "install.dockerCmd":
+`docker run -d \\
+  --name vaultfs \\
+  -p <span class="op">8000</span>:<span class="op">8000</span> \\
+  -v vaultfs-data:/data \\
+  ghcr.io/aniasse/vaultfs:latest`,
+
+      "install.binaryCmd":
+`<span class="cmt"># linux-amd64</span>
+curl -LO https://github.com/aniasse/vaultfs/\\
+releases/download/v0.1.0/\\
+vaultfs-linux-amd64.tar.gz
+tar xzf vaultfs-linux-amd64.tar.gz
+./vaultfs`,
+
+      "install.sourceCmd":
+`git clone \\
+  https://github.com/aniasse/vaultfs.git
+<span class="key">cd</span> vaultfs
+cargo build --release
+./target/release/vaultfs`,
+
+      "arch.diagram":
+`  CLIENTS                            <span class="hl">PRIMARY</span>                         RÉPLIQUE
+  ━━━━━━━                            ━━━━━━━━━━                      ━━━━━━━━━
+
+  curl / SDK   ───── HTTP ─────▶   <span class="hl">┌────────────────────┐</span>         ┌───────────┐
+  aws-sdk-s3   ──── SigV4 ─────▶   <span class="hl">│</span>  axum + tokio      <span class="hl">│</span>         │           │
+  dashboard    ────  TLS  ─────▶   <span class="hl">│</span>  ────────────────  <span class="hl">│</span>         │  nœud     │
+                                   <span class="hl">│</span>  storage engine    <span class="hl">│</span>◀── consomme│  réplique │
+                                   <span class="hl">│</span>    ├─ sha256        <span class="hl">│</span>   events   │           │
+                                   <span class="hl">│</span>    ├─ AES-256-GCM   <span class="hl">│</span>   + blobs  └───────────┘
+                                   <span class="hl">│</span>    └─ dedup         <span class="hl">│</span>        △
+                                   <span class="hl">│</span>  ────────────────  <span class="hl">│</span>        │
+                                   <span class="hl">│</span>  SQLite (WAL)       <span class="hl">│</span>        │
+                                   <span class="hl">└────────────────────┘</span>        │
+                                              │                       │
+                                              ▼                       │
+                                   <span class="dim">  ./data/</span>                        │
+                                   <span class="dim">  ├── vaultfs.db         ─── append atomique ┐</span>
+                                   <span class="dim">  ├── blobs/aa/bb/&lt;sha&gt;</span>                   │
+                                   <span class="dim">  ├── backups/…</span>                            ▼
+                                   <span class="dim">  └── replication_events</span>         ┌───────────┐
+                                                                      │  vaultfsctl │
+                                                                      │  replicate  │
+                                                                      └───────────┘`,
+    },
+    en: {
+      "hero.title":       '<span class="lead">A vault you</span><span class="break1"><em>run yourself.</em></span>',
+      "meta.statusVal":   '<span style="color: var(--rust)">● Released</span>',
+      "bench.l1":         '<strong>AES-256-GCM</strong> throughput. SSE is not what\'s slowing you down.',
+      "bench.l2":         '<strong>SigV4 verifications</strong> per core per second. Full signature check, not just access-key lookup.',
+      "bench.l3":         '<strong>Single binary.</strong> No runtime, no interpreter, no container orchestrator required.',
+      "bench.foot":       '→ Intel i5-10300H / no SHA-NI / software only. Full methodology and per-size numbers in <a href="https://github.com/aniasse/vaultfs/blob/main/docs/benchmarks.md" target="_blank" rel="noopener">docs/benchmarks.md</a>. Reproduce with <span style="color: var(--ink)">cargo bench</span>.',
+      "spec.title":       'Everything production<br/>storage <em>actually needs.</em>',
+      "spec.1.desc":      'Mount an <code>aws-sdk</code> client at <code>/s3/*</code> and it just works. Authorization headers are verified, not parsed-and-trusted — the canonical request is rebuilt from what the server received, HMACs compared in constant time. Tampered URLs are rejected with 403.',
+      "spec.2.desc":      'AES-256-GCM at rest. Per-blob keys derived via HKDF from a master key and the plaintext SHA-256, so two identical uploads produce identical ciphertext — content-addressable deduplication keeps working.',
+      "spec.3.desc":      'Full version history per key, with <code>?version_id=</code> on GET/DELETE and a one-shot purge endpoint. Per-object retention (WORM) and legal hold block deletes with HTTP 409 until the clock runs out.',
+      "spec.4.desc":      'Every write appends an atomic event to a log; replicas pull the log, fetch content-addressed blobs, and apply directly to their own database. One CLI command promotes a replica when the primary fails.',
+      "spec.5.desc":      'Resize / crop / convert via URL query parameters. Auto-negotiates AVIF → WebP → JPEG from the <code>Accept</code> header. Results go through a two-level cache (memory LRU + bounded disk) so your CDN actually helps.',
+      "spec.6.desc":      'Expire-by-prefix rules run on schedule or on demand. Bucket-level quotas (size + object count). Every write is logged to SQLite with actor, action, target, and source IP.',
+      "spec.7.desc":      'Metrics at <code>/metrics</code>, an embedded admin UI at <code>/dashboard</code>, and a ready-to-import Grafana JSON that covers p50/p95/p99, error ratio, and throughput — no dashboard-building afternoon required.',
+      "spec.8.desc":      'TypeScript (zero-dep, native fetch), Python (httpx + typed dataclasses), and Go (zero-dep <code>net/http</code>). Full coverage of versioning, object lock, and lifecycle — not just CRUD.',
+      "arch.title":       'Boring, on <em>purpose.</em>',
+      "arch.desc":        'One process. One data directory. A SQLite file for metadata, content-addressed blobs in <span class="mono" style="color: var(--ink)">blobs/&lt;aa&gt;/&lt;bb&gt;/&lt;sha&gt;</span>, and an optional append-only replication log. Backup is <span class="mono" style="color: var(--ink)">rsync</span>. Restore is <span class="mono" style="color: var(--ink)">rsync</span>.',
+      "install.title":    'Pick a door.<br/><em>Walk in.</em>',
+      "install.quote":    '"Own the disk, the keys, and the uptime."<br/>Browse the complete API spec, runbooks, and benchmarks on GitHub.',
+
+      "code.curl":
+`<span class="cmt"># Create a bucket, upload an image, resize it on the fly.</span>
+
+curl -X POST http://localhost:8000/v1/buckets \\
+  -H <span class="str">"Authorization: Bearer $VFS_KEY"</span> \\
+  -d <span class="str">'{"name": "photos"}'</span>
+
+curl -X PUT http://localhost:8000/v1/objects/photos/beach.jpg \\
+  -H <span class="str">"Authorization: Bearer $VFS_KEY"</span> \\
+  -H <span class="str">"Content-Type: image/jpeg"</span> \\
+  --data-binary @beach.jpg
+
+<span class="cmt"># WebP at 400px, with cache on second hit.</span>
+curl <span class="str">"http://localhost:8000/v1/objects/photos/beach.jpg?w=400&amp;format=webp"</span> \\
+  -H <span class="str">"Authorization: Bearer $VFS_KEY"</span> -o beach.webp`,
+
+      "code.ts":
+`<span class="key">import</span> { VaultFS } <span class="key">from</span> <span class="str">"@vaultfs/client"</span>;
 
 <span class="key">const</span> vfs = <span class="key">new</span> VaultFS({
   baseUrl: <span class="str">"http://localhost:8000"</span>,
@@ -1011,12 +1447,10 @@ curl <span class="str">"http://localhost:8000/v1/objects/photos/beach.jpg?w=400&
 <span class="key">await</span> vfs.setLock(<span class="str">"photos"</span>, <span class="str">"beach.jpg"</span>, {
   retain_until: <span class="key">new</span> Date(Date.now() + 30 * 86_400_000).toISOString(),
   legal_hold:   <span class="op">true</span>,
-});</pre>
-  </div>
+});`,
 
-  <div class="code-panel" data-panel="py">
-    <button class="copy-btn" data-copy>Copy</button>
-<pre><span class="key">from</span> vaultfs <span class="key">import</span> VaultFS
+      "code.py":
+`<span class="key">from</span> vaultfs <span class="key">import</span> VaultFS
 
 vfs = VaultFS(<span class="str">"http://localhost:8000"</span>, api_key=os.environ[<span class="str">"VFS_KEY"</span>])
 
@@ -1027,12 +1461,10 @@ vfs.put_object(<span class="str">"photos"</span>, <span class="str">"beach.jpg"<
 <span class="cmt"># Every PUT creates a new version on a versioned bucket.</span>
 versions = vfs.list_versions(<span class="str">"photos"</span>, <span class="str">"beach.jpg"</span>)
 <span class="key">for</span> v <span class="key">in</span> versions:
-    <span class="key">print</span>(v.version_id, v.size, v.is_latest)</pre>
-  </div>
+    <span class="key">print</span>(v.version_id, v.size, v.is_latest)`,
 
-  <div class="code-panel" data-panel="go">
-    <button class="copy-btn" data-copy>Copy</button>
-<pre><span class="key">import</span> <span class="str">"github.com/aniasse/vaultfs/sdks/go"</span>
+      "code.go":
+`<span class="key">import</span> <span class="str">"github.com/aniasse/vaultfs/sdks/go"</span>
 
 c := vaultfs.<span class="op">New</span>(<span class="str">"http://localhost:8000"</span>, os.<span class="op">Getenv</span>(<span class="str">"VFS_KEY"</span>))
 
@@ -1042,43 +1474,48 @@ fmt.<span class="op">Println</span>(<span class="str">"rule id:"</span>, rule.ID
 
 <span class="cmt">// Sweep now; don't wait for the schedule.</span>
 expired, freed, _ := c.<span class="op">RunLifecycle</span>()
-fmt.<span class="op">Printf</span>(<span class="str">"expired %d objects, freed %d bytes\n"</span>, expired, freed)</pre>
-  </div>
+fmt.<span class="op">Printf</span>(<span class="str">"expired %d objects, freed %d bytes\\n"</span>, expired, freed)`,
 
-  <div class="code-panel" data-panel="ctl">
-    <button class="copy-btn" data-copy>Copy</button>
-<pre><span class="cmt"># Replicate a primary onto this machine, every 5 seconds.</span>
-vaultfsctl replicate \
-  --url          http://localhost:8000 \
-  --key          $REPLICA_KEY \
-  --primary      https://primary.example.com \
-  --primary-key  $PRIMARY_KEY \
-  --cursor-file  /var/lib/vaultfs/replica.cursor \
+      "code.ctl":
+`<span class="cmt"># Replicate a primary onto this machine, every 5 seconds.</span>
+vaultfsctl replicate \\
+  --url          http://localhost:8000 \\
+  --key          $REPLICA_KEY \\
+  --primary      https://primary.example.com \\
+  --primary-key  $PRIMARY_KEY \\
+  --cursor-file  /var/lib/vaultfs/replica.cursor \\
   --interval     <span class="op">5</span>
 
 <span class="cmt"># Primary went down? Promote the replica.</span>
-vaultfsctl promote \
-  --url          http://localhost:8000 \
-  --key          $REPLICA_KEY \
-  --cursor-file  /var/lib/vaultfs/replica.cursor</pre>
-  </div>
-</section>
+vaultfsctl promote \\
+  --url          http://localhost:8000 \\
+  --key          $REPLICA_KEY \\
+  --cursor-file  /var/lib/vaultfs/replica.cursor`,
 
-<!-- —————— ARCHITECTURE —————— -->
-<section class="arch reveal" id="arch">
-  <div class="arch-title">
-    <span class="caps">Architecture — §3</span>
-    <h2>Boring, on <em>purpose.</em></h2>
-    <p>
-      One process. One data directory. A SQLite file for metadata,
-      content-addressed blobs in <span class="mono" style="color: var(--ink)">blobs/&lt;aa&gt;/&lt;bb&gt;/&lt;sha&gt;</span>, and
-      an optional append-only replication log. Backup is <span class="mono" style="color: var(--ink)">rsync</span>.
-      Restore is <span class="mono" style="color: var(--ink)">rsync</span>.
-    </p>
-  </div>
+      "install.dockerCmd":
+`docker run -d \\
+  --name vaultfs \\
+  -p <span class="op">8000</span>:<span class="op">8000</span> \\
+  -v vaultfs-data:/data \\
+  ghcr.io/aniasse/vaultfs:latest`,
 
-  <div class="arch-diagram" aria-hidden="true">
-<pre>  CLIENTS                            <span class="hl">PRIMARY</span>                         REPLICA
+      "install.binaryCmd":
+`<span class="cmt"># linux-amd64</span>
+curl -LO https://github.com/aniasse/vaultfs/\\
+releases/download/v0.1.0/\\
+vaultfs-linux-amd64.tar.gz
+tar xzf vaultfs-linux-amd64.tar.gz
+./vaultfs`,
+
+      "install.sourceCmd":
+`git clone \\
+  https://github.com/aniasse/vaultfs.git
+<span class="key">cd</span> vaultfs
+cargo build --release
+./target/release/vaultfs`,
+
+      "arch.diagram":
+`  CLIENTS                            <span class="hl">PRIMARY</span>                         REPLICA
   ━━━━━━━                            ━━━━━━━━━━                      ━━━━━━━━━
 
   curl / SDK   ───── HTTP ─────▶   <span class="hl">┌────────────────────┐</span>         ┌───────────┐
@@ -1100,87 +1537,54 @@ vaultfsctl promote \
                                    <span class="dim">  └── replication_events</span>         ┌───────────┐
                                                                       │  vaultfsctl │
                                                                       │  replicate  │
-                                                                      └───────────┘</pre>
-  </div>
-</section>
+                                                                      └───────────┘`,
+    },
+  };
 
-</div>
+  function applyLang(lang) {
+    if (!I18N[lang]) return;
+    document.documentElement.lang = lang;
+    try { localStorage.setItem("vfs-lang", lang); } catch (_) { /* private mode etc. */ }
 
-<!-- —————— INSTALL / DARK VAULT —————— -->
-<section class="install reveal" id="install">
-  <div class="page-pad">
-    <span class="caps caps-accent" style="color: var(--rust); display: block; margin-bottom: 16px;">— get started · §4</span>
-    <h2>Pick a door.<br/><em>Walk in.</em></h2>
-    <p class="lead">
-      Three ways to start. All of them produce the same running daemon —
-      pick whichever your fingers already know. On first launch the server
-      generates an admin API key and prints it to stdout. Save it.
-    </p>
+    const dict = I18N[lang];
+    for (const el of document.querySelectorAll("[data-i18n]")) {
+      const v = dict[el.dataset.i18n];
+      if (v != null) el.textContent = v;
+    }
+    const hdict = I18N_HTML[lang];
+    for (const el of document.querySelectorAll("[data-i18n-html]")) {
+      const v = hdict[el.dataset.i18nHtml];
+      if (v != null) el.innerHTML = v;
+    }
+    for (const btn of document.querySelectorAll("[data-lang]")) {
+      btn.classList.toggle("active", btn.dataset.lang === lang);
+      btn.setAttribute("aria-pressed", btn.dataset.lang === lang ? "true" : "false");
+    }
+    // Update page title + meta description so search/share links match.
+    if (lang === "en") {
+      document.title = "VaultFS — self-hosted object storage, single binary.";
+    } else {
+      document.title = "VaultFS — stockage objet auto-hébergé, un seul binaire.";
+    }
+  }
 
-    <div class="install-grid">
-      <div class="install-col">
-        <span class="caps">Option A</span>
-        <h3>Docker</h3>
-        <p>Zero configuration. One volume for state. Production-ready image on GHCR.</p>
-<pre>docker run -d \
-  --name vaultfs \
-  -p <span class="op">8000</span>:<span class="op">8000</span> \
-  -v vaultfs-data:/data \
-  ghcr.io/aniasse/vaultfs:latest</pre>
-      </div>
+  // Prefer saved choice; otherwise use browser language if it starts
+  // with "en", else stick with the French default that's in the DOM.
+  (function init() {
+    let lang = null;
+    try { lang = localStorage.getItem("vfs-lang"); } catch (_) {}
+    if (!lang) {
+      const nav = (navigator.language || "").toLowerCase();
+      lang = nav.startsWith("en") ? "en" : "fr";
+    }
+    applyLang(lang);
+  })();
 
-      <div class="install-col">
-        <span class="caps">Option B</span>
-        <h3>Binary</h3>
-        <p>Linux amd64 or macOS arm64. Checksums in <span class="mono">SHA256SUMS</span> on the release page.</p>
-<pre><span class="cmt"># linux-amd64</span>
-curl -LO https://github.com/aniasse/vaultfs/\
-releases/download/v0.1.0/\
-vaultfs-linux-amd64.tar.gz
-tar xzf vaultfs-linux-amd64.tar.gz
-./vaultfs</pre>
-      </div>
+  for (const btn of document.querySelectorAll("[data-lang]")) {
+    btn.addEventListener("click", () => applyLang(btn.dataset.lang));
+  }
 
-      <div class="install-col">
-        <span class="caps">Option C</span>
-        <h3>From source</h3>
-        <p>Rust 1.85+ (edition2024). Full test suite runs in ~2 s after a warm build.</p>
-<pre>git clone \
-  https://github.com/aniasse/vaultfs.git
-<span class="key">cd</span> vaultfs
-cargo build --release
-./target/release/vaultfs</pre>
-      </div>
-    </div>
-
-    <div class="footer-cta">
-      <p>
-        “Own the disk, the keys, and the uptime.”<br/>
-        Browse the complete API spec, runbooks, and benchmarks on GitHub.
-      </p>
-      <a href="https://github.com/aniasse/vaultfs" class="btn bare" target="_blank" rel="noopener">
-        Open repository →
-      </a>
-    </div>
-  </div>
-</section>
-
-<div class="page">
-<!-- —————— FOOTER —————— -->
-<footer>
-  <div class="left caps">MIT · 2026 · Adama Niasse</div>
-  <div class="center">— the vault stays where you put it —</div>
-  <div class="right">
-    <a href="https://github.com/aniasse/vaultfs" target="_blank" rel="noopener">github</a>
-    <a href="https://github.com/aniasse/vaultfs/releases/tag/v0.1.0" target="_blank" rel="noopener">v0.1.0</a>
-    <a href="https://github.com/aniasse/vaultfs/blob/main/docs/benchmarks.md" target="_blank" rel="noopener">benchmarks</a>
-    <a href="https://github.com/aniasse/vaultfs/blob/main/openapi.yaml" target="_blank" rel="noopener">openapi</a>
-  </div>
-</footer>
-</div>
-
-<script>
-  // Tab switcher
+  // ─── Tab switcher ──────────────────────────────────────────────────
   document.querySelectorAll(".tab").forEach(tab => {
     tab.addEventListener("click", () => {
       const target = tab.dataset.tab;
@@ -1191,7 +1595,7 @@ cargo build --release
     });
   });
 
-  // Copy buttons — extracts just the text content, including nested spans.
+  // ─── Copy buttons ──────────────────────────────────────────────────
   document.querySelectorAll("[data-copy]").forEach(btn => {
     btn.addEventListener("click", async () => {
       const pre = btn.nextElementSibling;
@@ -1199,7 +1603,7 @@ cargo build --release
       try {
         await navigator.clipboard.writeText(text);
         const orig = btn.textContent;
-        btn.textContent = "Copied";
+        btn.textContent = (document.documentElement.lang === "fr") ? "Copié" : "Copied";
         btn.classList.add("copied");
         setTimeout(() => {
           btn.textContent = orig;
@@ -1211,7 +1615,7 @@ cargo build --release
     });
   });
 
-  // Scroll reveal — just toggle `.in` when the section is ~15% in view.
+  // ─── Scroll reveal ─────────────────────────────────────────────────
   const io = new IntersectionObserver(entries => {
     for (const entry of entries) {
       if (entry.isIntersecting) {
