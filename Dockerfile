@@ -4,7 +4,7 @@ FROM rust:1.88-bookworm AS builder
 WORKDIR /build
 COPY . .
 
-RUN cargo build --release --bin vaultfs
+RUN cargo build --release --bin vaultfs --bin vaultfsctl
 
 # ── Runtime stage ────────────────────────────────────────
 FROM debian:bookworm-slim
@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN useradd -r -s /bin/false vaultfs
 
 COPY --from=builder /build/target/release/vaultfs /usr/local/bin/vaultfs
+COPY --from=builder /build/target/release/vaultfsctl /usr/local/bin/vaultfsctl
 
 RUN mkdir -p /data && chown vaultfs:vaultfs /data
 

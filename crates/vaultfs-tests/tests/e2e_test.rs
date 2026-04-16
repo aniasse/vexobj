@@ -1034,6 +1034,120 @@ async fn e2e_delete_version_and_purge() {
 }
 
 #[tokio::test]
+async fn e2e_replication_promote_clears_cursor() {
+    // Simulate: primary is gone, replica caught up to some events,
+    // operator runs `vaultfsctl promote`. We verify the command runs
+    // to success and deletes the cursor file so a later replicate
+    // call can't silently replay from 0 against the dead primary.
+    let primary = TestServer::start();
+    let replica = TestServer::start();
+    let client = primary.client();
+
+    // Minimal primary activity so the replica has a non-zero cursor.
+    client
+        .post(format!("{}/v1/buckets", primary.url))
+        .header("Authorization", primary.auth_header())
+        .json(&serde_json::json!({"name": "promo-bucket", "public": false}))
+        .send()
+        .await
+        .unwrap();
+    client
+        .put(format!("{}/v1/objects/promo-bucket/note.txt", primary.url))
+        .header("Authorization", primary.auth_header())
+        .body("hello")
+        .send()
+        .await
+        .unwrap();
+
+    let cursor = std::env::temp_dir().join(format!("cursor-{}", uuid::Uuid::new_v4()));
+    let binary = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("target/debug/vaultfsctl");
+
+    // Replicate once so the cursor file exists and holds a real id.
+    let sync_out = Command::new(&binary)
+        .args([
+            "--url",
+            &replica.url,
+            "--key",
+            &replica.admin_key,
+            "replicate",
+            "--primary",
+            &primary.url,
+            "--primary-key",
+            &primary.admin_key,
+            "--cursor-file",
+        ])
+        .arg(&cursor)
+        .output()
+        .expect("run replicate");
+    assert!(
+        sync_out.status.success(),
+        "replicate must succeed: {}",
+        String::from_utf8_lossy(&sync_out.stderr)
+    );
+    assert!(cursor.exists(), "replicate should have created cursor file");
+    let before: i64 = std::fs::read_to_string(&cursor)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert!(before >= 1, "cursor should reflect at least one applied event");
+
+    // Now promote the replica. Cursor file should disappear.
+    let promo_out = Command::new(&binary)
+        .args([
+            "--url",
+            &replica.url,
+            "--key",
+            &replica.admin_key,
+            "promote",
+            "--cursor-file",
+        ])
+        .arg(&cursor)
+        .output()
+        .expect("run promote");
+    assert!(
+        promo_out.status.success(),
+        "promote must succeed: stdout={} stderr={}",
+        String::from_utf8_lossy(&promo_out.stdout),
+        String::from_utf8_lossy(&promo_out.stderr),
+    );
+    let stdout = String::from_utf8_lossy(&promo_out.stdout);
+    assert!(
+        stdout.contains("cursor file deleted"),
+        "stdout should mention cursor deletion, got: {stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("last applied event id = {before}")),
+        "stdout should report the checkpointed id, got: {stdout}"
+    );
+    assert!(!cursor.exists(), "cursor must be deleted post-promote");
+
+    // --keep-cursor keeps the file even on success
+    std::fs::write(&cursor, "42").unwrap();
+    let keep_out = Command::new(&binary)
+        .args([
+            "--url",
+            &replica.url,
+            "--key",
+            &replica.admin_key,
+            "promote",
+            "--keep-cursor",
+            "--cursor-file",
+        ])
+        .arg(&cursor)
+        .output()
+        .expect("run promote --keep-cursor");
+    assert!(keep_out.status.success());
+    assert!(cursor.exists(), "--keep-cursor must leave the file in place");
+    let _ = std::fs::remove_file(&cursor);
+}
+
+#[tokio::test]
 async fn e2e_replication_two_node_sync() {
     // Spin up two independent servers and drive a one-shot replicate
     // from "primary" to "replica" via the vaultfsctl binary.

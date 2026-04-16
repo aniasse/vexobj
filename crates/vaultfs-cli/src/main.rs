@@ -54,6 +54,21 @@ enum Commands {
         #[command(subcommand)]
         source: MigrateSource,
     },
+    /// Promote this replica to a new primary after the old primary failed.
+    /// Prints the checkpoint cursor, deletes the cursor file so nothing
+    /// accidentally reconnects to the dead primary, and runs a sanity
+    /// probe against the local server. See docs/failover.md.
+    Promote {
+        /// Cursor file written by `vaultfsctl replicate`. Deleted on
+        /// success so a future replicate call against the dead primary
+        /// fails loudly instead of rewinding to 0.
+        #[arg(long, default_value = "./vaultfs-replica.cursor")]
+        cursor_file: PathBuf,
+        /// Skip deletion of the cursor file (handy in tests or if you
+        /// want to inspect the last-applied id without side effects).
+        #[arg(long)]
+        keep_cursor: bool,
+    },
     /// Pull replication events from a primary VaultFS and apply them to the
     /// local server. Designed to run as a one-shot or a tight loop.
     Replicate {
@@ -314,6 +329,10 @@ async fn main() -> Result<()> {
                 .await
             }
         },
+        Commands::Promote {
+            cursor_file,
+            keep_cursor,
+        } => cmd_promote(&api, &cursor_file, keep_cursor).await,
         Commands::Replicate {
             primary,
             primary_key,
@@ -1611,4 +1630,99 @@ async fn cmd_replicate(
         }
         tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Promote
+// ---------------------------------------------------------------------------
+
+async fn cmd_promote(
+    api: &ApiClient,
+    cursor_file: &std::path::Path,
+    keep_cursor: bool,
+) -> Result<()> {
+    println!("=== VaultFS promote ===");
+    println!("Local server: {}", api.base_url);
+    println!();
+
+    // Sanity probe — the new primary must answer /health and have an
+    // authenticated caller. Failing fast here prevents an operator from
+    // updating DNS only to discover the node is down.
+    let resp = api
+        .get("/health")
+        .send()
+        .await
+        .context("local server did not respond to /health")?;
+    if !resp.status().is_success() {
+        anyhow::bail!(
+            "local /health returned HTTP {} — refusing to promote an unhealthy node",
+            resp.status().as_u16()
+        );
+    }
+    let body: Value = resp.json().await.unwrap_or(Value::Null);
+    println!(
+        "  ✓ local server healthy (version={})",
+        body.get("version").and_then(|v| v.as_str()).unwrap_or("?")
+    );
+
+    let stats_resp = api
+        .get("/v1/stats")
+        .send()
+        .await
+        .context("local /v1/stats request failed")?;
+    if !stats_resp.status().is_success() {
+        anyhow::bail!(
+            "local /v1/stats returned HTTP {} — the admin API key looks wrong",
+            stats_resp.status().as_u16()
+        );
+    }
+    let stats: Value = stats_resp.json().await.unwrap_or(Value::Null);
+    println!(
+        "  ✓ local admin auth works  buckets={} objects={} disk={}",
+        stats.get("buckets").and_then(|v| v.as_u64()).unwrap_or(0),
+        stats.get("total_objects").and_then(|v| v.as_u64()).unwrap_or(0),
+        stats
+            .get("disk_usage_human")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?"),
+    );
+
+    // Checkpoint: report the last-applied event id, then (unless
+    // --keep-cursor) delete the file so a future `replicate` against
+    // the dead primary errors instead of silently replaying from 0.
+    let cursor = std::fs::read_to_string(cursor_file)
+        .ok()
+        .and_then(|s| s.trim().parse::<i64>().ok())
+        .unwrap_or(0);
+    println!(
+        "  ✓ cursor file: {} (last applied event id = {})",
+        cursor_file.display(),
+        cursor
+    );
+
+    if keep_cursor {
+        println!("  — keeping cursor file (you passed --keep-cursor)");
+    } else if cursor_file.exists() {
+        std::fs::remove_file(cursor_file).with_context(|| {
+            format!("failed to delete cursor file {}", cursor_file.display())
+        })?;
+        println!("  ✓ cursor file deleted");
+    } else {
+        println!("  — cursor file already absent");
+    }
+
+    // Operator checklist. Promotion itself is not a state change on the
+    // server — the server always writes to its own replication log.
+    // What changes is *who the world talks to*, which the operator
+    // must reconfigure outside VaultFS.
+    println!();
+    println!("Promotion checklist (complete these next):");
+    println!("  1. Point clients at this node (DNS, load balancer, SDK base_url).");
+    println!("  2. Revoke the old primary's admin key (in case it comes back online).");
+    println!("  3. Start `vaultfsctl replicate` on each remaining replica with");
+    println!("     --primary={} and a fresh cursor file.", api.base_url);
+    println!("  4. Investigate why the old primary failed before reusing the node.");
+    println!();
+    println!("See docs/failover.md for the full runbook.");
+    Ok(())
 }
