@@ -2675,6 +2675,7 @@ dependencies = [
  "axum-server",
  "bytes",
  "chrono",
+ "futures",
  "hex",
  "hmac",
  "mime_guess",

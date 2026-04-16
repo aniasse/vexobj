@@ -1,0 +1,640 @@
+openapi: 3.1.0
+info:
+  title: VaultFS API
+  description: High-performance self-hosted object storage with built-in image processing
+  version: 0.1.0
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8000
+    description: Local development
+
+security:
+  - bearerAuth: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: "API key (vfs_...)"
+
+  schemas:
+    Bucket:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        public:
+          type: boolean
+
+    ObjectMeta:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        bucket:
+          type: string
+        key:
+          type: string
+        size:
+          type: integer
+        content_type:
+          type: string
+        sha256:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+
+    ApiKey:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        key_prefix:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        permissions:
+          $ref: "#/components/schemas/Permissions"
+        bucket_access:
+          $ref: "#/components/schemas/BucketAccess"
+
+    Permissions:
+      type: object
+      properties:
+        read:
+          type: boolean
+        write:
+          type: boolean
+        delete:
+          type: boolean
+        admin:
+          type: boolean
+
+    BucketAccess:
+      oneOf:
+        - type: object
+          properties:
+            type:
+              const: all
+        - type: object
+          properties:
+            type:
+              const: specific
+            buckets:
+              type: array
+              items:
+                type: string
+
+    ListObjectsResponse:
+      type: object
+      properties:
+        objects:
+          type: array
+          items:
+            $ref: "#/components/schemas/ObjectMeta"
+        common_prefixes:
+          type: array
+          items:
+            type: string
+        is_truncated:
+          type: boolean
+        next_continuation_token:
+          type: string
+          nullable: true
+
+    PresignedUrl:
+      type: object
+      properties:
+        url:
+          type: string
+        method:
+          type: string
+        bucket:
+          type: string
+        key:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+
+    Stats:
+      type: object
+      properties:
+        buckets:
+          type: integer
+        total_objects:
+          type: integer
+        total_size:
+          type: integer
+        total_size_human:
+          type: string
+        disk_usage:
+          type: integer
+        disk_usage_human:
+          type: string
+        bucket_details:
+          type: array
+          items:
+            type: object
+        version:
+          type: string
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      security: []
+      tags: [System]
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  service:
+                    type: string
+                  version:
+                    type: string
+
+  /v1/buckets:
+    get:
+      summary: List all buckets
+      tags: [Buckets]
+      responses:
+        "200":
+          description: List of buckets
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  buckets:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Bucket"
+    post:
+      summary: Create a bucket
+      tags: [Buckets]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                public:
+                  type: boolean
+                  default: false
+      responses:
+        "201":
+          description: Bucket created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bucket"
+        "409":
+          description: Bucket already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/buckets/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Get bucket details
+      tags: [Buckets]
+      responses:
+        "200":
+          description: Bucket details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bucket"
+        "404":
+          description: Bucket not found
+    delete:
+      summary: Delete a bucket (must be empty)
+      tags: [Buckets]
+      responses:
+        "204":
+          description: Bucket deleted
+        "400":
+          description: Bucket not empty
+
+  /v1/objects/{bucket}:
+    parameters:
+      - name: bucket
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: List objects in a bucket
+      tags: [Objects]
+      parameters:
+        - name: prefix
+          in: query
+          schema:
+            type: string
+        - name: delimiter
+          in: query
+          schema:
+            type: string
+        - name: max_keys
+          in: query
+          schema:
+            type: integer
+            maximum: 1000
+        - name: continuation_token
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of objects
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListObjectsResponse"
+
+  /v1/objects/{bucket}/{key}:
+    parameters:
+      - name: bucket
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+    put:
+      summary: Upload an object
+      tags: [Objects]
+      requestBody:
+        required: true
+        content:
+          "*/*":
+            schema:
+              type: string
+              format: binary
+      responses:
+        "201":
+          description: Object created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObjectMeta"
+        "413":
+          description: Object too large
+    get:
+      summary: Download an object (with optional image transforms)
+      tags: [Objects]
+      parameters:
+        - name: w
+          in: query
+          description: Width in pixels (images only)
+          schema:
+            type: integer
+        - name: h
+          in: query
+          description: Height in pixels (images only)
+          schema:
+            type: integer
+        - name: format
+          in: query
+          description: Output format (jpeg, png, webp, avif, gif)
+          schema:
+            type: string
+            enum: [jpeg, jpg, png, webp, avif, gif]
+        - name: quality
+          in: query
+          description: Compression quality 1-100
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        - name: fit
+          in: query
+          description: Resize mode
+          schema:
+            type: string
+            enum: [cover, contain, fill]
+      responses:
+        "200":
+          description: Object data
+          headers:
+            Accept-Ranges:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+            X-VaultFS-Cache:
+              description: "hit or miss (for image transforms)"
+              schema:
+                type: string
+          content:
+            "*/*":
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: Partial content (range request)
+        "404":
+          description: Object not found
+    head:
+      summary: Get object metadata
+      tags: [Objects]
+      responses:
+        "200":
+          description: Object metadata in headers
+          headers:
+            Content-Type:
+              schema:
+                type: string
+            Content-Length:
+              schema:
+                type: integer
+            ETag:
+              schema:
+                type: string
+            Last-Modified:
+              schema:
+                type: string
+            Accept-Ranges:
+              schema:
+                type: string
+        "404":
+          description: Object not found
+    delete:
+      summary: Delete an object
+      tags: [Objects]
+      responses:
+        "204":
+          description: Object deleted
+        "404":
+          description: Object not found
+
+  /v1/stream/{bucket}/{key}:
+    parameters:
+      - name: bucket
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: key
+        in: path
+        required: true
+        schema:
+          type: string
+    put:
+      summary: Stream upload a large file (constant RAM usage)
+      tags: [Streaming]
+      requestBody:
+        required: true
+        content:
+          "*/*":
+            schema:
+              type: string
+              format: binary
+      responses:
+        "201":
+          description: Object created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObjectMeta"
+    get:
+      summary: Stream download a file (constant RAM usage)
+      tags: [Streaming]
+      responses:
+        "200":
+          description: Streamed file data
+          content:
+            "*/*":
+              schema:
+                type: string
+                format: binary
+
+  /v1/upload/{bucket}:
+    parameters:
+      - name: bucket
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      summary: Multipart upload (multiple files)
+      tags: [Upload]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "201":
+          description: All files uploaded
+        "207":
+          description: Partial success
+
+  /v1/presign:
+    post:
+      summary: Generate a presigned URL
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [method, bucket, key]
+              properties:
+                method:
+                  type: string
+                  enum: [GET, PUT, HEAD, DELETE]
+                bucket:
+                  type: string
+                key:
+                  type: string
+                expires_in:
+                  type: integer
+                  description: Seconds until expiration (max 86400)
+                  default: 3600
+      responses:
+        "200":
+          description: Presigned URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PresignedUrl"
+
+  /v1/admin/keys:
+    get:
+      summary: List API keys
+      tags: [Admin]
+      responses:
+        "200":
+          description: List of keys
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ApiKey"
+    post:
+      summary: Create an API key
+      tags: [Admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                permissions:
+                  $ref: "#/components/schemas/Permissions"
+                bucket_access:
+                  $ref: "#/components/schemas/BucketAccess"
+      responses:
+        "201":
+          description: Key created (secret shown only once)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  key:
+                    $ref: "#/components/schemas/ApiKey"
+                  secret:
+                    type: string
+                  warning:
+                    type: string
+
+  /v1/admin/keys/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      summary: Revoke an API key
+      tags: [Admin]
+      responses:
+        "204":
+          description: Key revoked
+        "404":
+          description: Key not found
+
+  /v1/admin/gc:
+    post:
+      summary: Run garbage collection on orphan blobs
+      tags: [Admin]
+      responses:
+        "200":
+          description: GC results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  blobs_scanned:
+                    type: integer
+                  orphans_removed:
+                    type: integer
+                  bytes_freed:
+                    type: integer
+
+  /v1/stats:
+    get:
+      summary: Storage statistics
+      tags: [Admin]
+      responses:
+        "200":
+          description: Stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Stats"
+
+  /dashboard:
+    get:
+      summary: Admin dashboard (HTML)
+      security: []
+      tags: [System]
+      responses:
+        "200":
+          description: Dashboard HTML page
+          content:
+            text/html:
+              schema:
+                type: string
+
+tags:
+  - name: System
+    description: Health and system endpoints
+  - name: Buckets
+    description: Bucket management
+  - name: Objects
+    description: Object storage and retrieval with image transforms
+  - name: Streaming
+    description: Stream upload/download for large files (constant RAM)
+  - name: Upload
+    description: Multipart file upload
+  - name: Auth
+    description: Authentication and presigned URLs
+  - name: Admin
+    description: API key management, stats, and maintenance

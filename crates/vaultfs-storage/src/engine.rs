@@ -1,5 +1,7 @@
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
+use tokio::io::AsyncWriteExt;
+use tokio_util::io::ReaderStream;
 use tracing::info;
 
 use crate::db::Database;
@@ -172,6 +174,105 @@ impl StorageEngine {
 
     pub fn is_image(content_type: &str) -> bool {
         content_type.starts_with("image/")
+    }
+
+    /// Stream-upload: write body to a temp file while hashing, then move to content-addressed path.
+    /// This avoids loading the entire file into RAM.
+    pub async fn put_object_stream<S, E>(
+        &self,
+        bucket: &str,
+        key: &str,
+        mut stream: S,
+        content_type: Option<&str>,
+        metadata: Option<serde_json::Value>,
+    ) -> Result<ObjectMeta, StorageError>
+    where
+        S: futures::Stream<Item = Result<bytes::Bytes, E>> + Unpin,
+        E: std::fmt::Display,
+    {
+        use futures::StreamExt;
+
+        // Verify bucket exists first
+        self.db.get_bucket(bucket)?;
+
+        let temp_path = self.data_dir.join(format!(".tmp-{}", uuid::Uuid::new_v4()));
+        let mut file = tokio::fs::File::create(&temp_path).await?;
+        let mut hasher = Sha256::new();
+        let mut size: u64 = 0;
+
+        // Stream body chunks directly to disk
+        while let Some(chunk_result) = stream.next().await {
+            let data = chunk_result.map_err(|e| {
+                StorageError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+            })?;
+            if size + data.len() as u64 > self.max_file_size {
+                drop(file);
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                return Err(StorageError::ObjectTooLarge {
+                    size: size + data.len() as u64,
+                    max: self.max_file_size,
+                });
+            }
+            hasher.update(&data);
+            file.write_all(&data).await?;
+            size += data.len() as u64;
+        }
+        file.flush().await?;
+        drop(file);
+
+        let sha256 = hex::encode(hasher.finalize());
+        let storage_path = self.blob_path(&sha256);
+
+        // Deduplication check
+        if self.deduplication {
+            if let Some(existing) = self.db.find_by_hash(&sha256)? {
+                let existing_full = self.data_dir.join(&existing);
+                if existing_full.exists() {
+                    let _ = tokio::fs::remove_file(&temp_path).await;
+                    let content_type = content_type
+                        .map(String::from)
+                        .unwrap_or_else(|| Self::guess_content_type(key));
+                    let meta = self.db.put_object(
+                        bucket, key, size, &content_type, &sha256, &existing,
+                        &metadata.unwrap_or(serde_json::Value::Object(Default::default())),
+                    )?;
+                    info!(bucket, key, size, deduplicated = true, "object stored (stream)");
+                    return Ok(meta);
+                }
+            }
+        }
+
+        // Move temp file to final content-addressed path
+        let final_path = self.data_dir.join(&storage_path);
+        if let Some(parent) = final_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        tokio::fs::rename(&temp_path, &final_path).await?;
+
+        let content_type = content_type
+            .map(String::from)
+            .unwrap_or_else(|| Self::guess_content_type(key));
+
+        let meta = self.db.put_object(
+            bucket, key, size, &content_type, &sha256, &storage_path,
+            &metadata.unwrap_or(serde_json::Value::Object(Default::default())),
+        )?;
+
+        info!(bucket, key, size, "object stored (stream)");
+        Ok(meta)
+    }
+
+    /// Stream-download: returns a stream of file chunks instead of loading entire file into RAM.
+    pub async fn get_object_stream(
+        &self,
+        bucket: &str,
+        key: &str,
+    ) -> Result<(ObjectMeta, ReaderStream<tokio::fs::File>), StorageError> {
+        let (meta, storage_path) = self.db.get_object(bucket, key)?;
+        let full_path = self.data_dir.join(&storage_path);
+        let file = tokio::fs::File::open(&full_path).await?;
+        let stream = ReaderStream::new(file);
+        Ok((meta, stream))
     }
 
     pub fn db(&self) -> &Database {

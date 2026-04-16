@@ -26,6 +26,7 @@ uuid = { workspace = true }
 bytes = { workspace = true }
 mime_guess = { workspace = true }
 rand = { workspace = true }
+futures = { workspace = true }
 hmac = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }

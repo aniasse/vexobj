@@ -1,0 +1,21 @@
+{
+  "name": "vaultfs-sdk",
+  "version": "0.1.0",
+  "description": "JavaScript/TypeScript SDK for VaultFS",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": ["vaultfs", "object-storage", "s3", "image-processing"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aniasse/vaultfs"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}
