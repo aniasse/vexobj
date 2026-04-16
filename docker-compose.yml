@@ -1,0 +1,14 @@
+services:
+  vaultfs:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - vaultfs-data:/data
+      - ./config/default.toml:/etc/vaultfs/config.toml:ro
+    environment:
+      - VAULTFS_CONFIG=/etc/vaultfs/config.toml
+    restart: unless-stopped
+
+volumes:
+  vaultfs-data:

@@ -2110,14 +2110,19 @@ name = "vaultfs-s3-compat"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64",
+ "bytes",
  "chrono",
  "hex",
  "hmac",
+ "mime_guess",
  "serde",
+ "serde_json",
  "sha2",
  "thiserror",
  "tokio",
  "tracing",
+ "uuid",
  "vaultfs-auth",
  "vaultfs-storage",
 ]

@@ -1,5 +1,6 @@
-// S3-compatible API layer — will be implemented in a future iteration
-// This module will provide AWS S3 v4 signature verification and
-// S3-compatible REST endpoints for drop-in replacement capability.
+mod error;
+mod routes;
+mod signature;
+mod xml;
 
-pub fn placeholder() {}
+pub use routes::s3_router;

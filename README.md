@@ -13,7 +13,10 @@ High-performance, self-hosted object storage with built-in image processing. A s
 - **Presigned URLs** — temporary signed URLs for secure upload/download
 - **Multipart upload** — upload multiple files in a single request
 - **Auto bootstrap** — first admin key generated on startup
-- **S3-compatible API** — drop-in replacement for AWS S3 (coming soon)
+- **S3-compatible API** — ListBuckets, GetObject, PutObject, CopyObject, DeleteObject, HeadObject, ListObjectsV2
+- **Admin dashboard** — embedded web UI at `/dashboard` for managing buckets, keys, and monitoring storage
+- **Stats endpoint** — storage metrics, per-bucket stats, disk usage
+- **Docker support** — Dockerfile + docker-compose included
 - **Single binary** — no external dependencies, no Docker required
 - **SQLite metadata** — zero-ops database, backup = copy a file
 - **14 MB binary** — lightweight, fast startup
@@ -130,6 +133,50 @@ curl -X DELETE http://localhost:8000/v1/admin/keys/{key-id} \
   -H "Authorization: Bearer $ADMIN_KEY"
 ```
 
+### S3-Compatible API
+
+VaultFS exposes an S3-compatible API under `/s3/`. Use it with any S3 SDK by pointing to your VaultFS instance.
+
+```bash
+# List buckets
+curl http://localhost:8000/s3/ -H "Authorization: Bearer $API_KEY"
+
+# Create bucket
+curl -X PUT http://localhost:8000/s3/my-bucket -H "Authorization: Bearer $API_KEY"
+
+# Put object
+curl -X PUT http://localhost:8000/s3/my-bucket/file.txt \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: text/plain" \
+  --data-binary @file.txt
+
+# Get object
+curl http://localhost:8000/s3/my-bucket/file.txt -H "Authorization: Bearer $API_KEY"
+
+# Copy object
+curl -X PUT http://localhost:8000/s3/my-bucket/copy.txt \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "x-amz-copy-source: my-bucket/file.txt"
+
+# List objects (ListObjectsV2)
+curl "http://localhost:8000/s3/my-bucket?list-type=2&prefix=docs/" \
+  -H "Authorization: Bearer $API_KEY"
+
+# Delete object
+curl -X DELETE http://localhost:8000/s3/my-bucket/file.txt -H "Authorization: Bearer $API_KEY"
+```
+
+### Stats
+
+```bash
+# Get storage stats (requires admin)
+curl http://localhost:8000/v1/stats -H "Authorization: Bearer $ADMIN_KEY"
+```
+
+### Dashboard
+
+Access the built-in admin dashboard at `http://localhost:8000/dashboard`. Enter your admin API key to view buckets, objects, API keys, and storage stats.
+
 ### Image Transform Parameters
 
 | Parameter | Description | Example |
@@ -161,6 +208,17 @@ max_transform_size = "50MB"
 
 [auth]
 enabled = true
+```
+
+## Docker
+
+```bash
+# Build and run
+docker compose up -d
+
+# Or standalone
+docker build -t vaultfs .
+docker run -p 8000:8000 -v vaultfs-data:/data vaultfs
 ```
 
 ## Architecture
