@@ -72,6 +72,18 @@ impl Database {
                 expire_days INTEGER NOT NULL,
                 created_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS replication_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                op TEXT NOT NULL,
+                bucket TEXT NOT NULL,
+                key TEXT NOT NULL,
+                sha256 TEXT NOT NULL DEFAULT '',
+                version_id TEXT,
+                timestamp TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_replication_events_id
+                ON replication_events(id);
             ",
         )?;
 
@@ -587,6 +599,84 @@ impl Database {
             params![bucket, key],
         )?;
         Ok(paths)
+    }
+
+    // ── Replication event log ───────────────────────────────────────────
+
+    /// Append a single event to the replication log. Called by the engine
+    /// after every state-changing write so primaries and replicas stay
+    /// in the same order.
+    pub fn append_replication_event(
+        &self,
+        op: &str,
+        bucket: &str,
+        key: &str,
+        sha256: &str,
+        version_id: Option<&str>,
+    ) -> Result<(), StorageError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO replication_events (op, bucket, key, sha256, version_id, timestamp)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                op,
+                bucket,
+                key,
+                sha256,
+                version_id,
+                Utc::now().to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Return events with `id > since`, ordered by id ascending. `limit`
+    /// caps the response size so replicas can paginate forever-long logs.
+    pub fn list_replication_events(
+        &self,
+        since: i64,
+        limit: u32,
+    ) -> Result<Vec<ReplicationEvent>, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let capped = limit.min(1000) as i64;
+        let mut stmt = conn.prepare(
+            "SELECT id, op, bucket, key, sha256, version_id, timestamp
+             FROM replication_events
+             WHERE id > ?1
+             ORDER BY id ASC
+             LIMIT ?2",
+        )?;
+        let events = stmt
+            .query_map(params![since, capped], |row| {
+                Ok(ReplicationEvent {
+                    id: row.get(0)?,
+                    op: row.get(1)?,
+                    bucket: row.get(2)?,
+                    key: row.get(3)?,
+                    sha256: row.get(4)?,
+                    version_id: row.get::<_, Option<String>>(5)?,
+                    timestamp: row
+                        .get::<_, String>(6)?
+                        .parse()
+                        .unwrap_or_else(|_| Utc::now()),
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(events)
+    }
+
+    /// Newest event id — used by replicas/ops to see how far ahead the
+    /// primary has moved without pulling every row.
+    pub fn latest_replication_event_id(&self) -> Result<i64, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let id: i64 = conn
+            .query_row(
+                "SELECT COALESCE(MAX(id), 0) FROM replication_events",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        Ok(id)
     }
 
     // ── Object lock ─────────────────────────────────────────────────────

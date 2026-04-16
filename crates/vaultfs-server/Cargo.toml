@@ -27,6 +27,7 @@ bytes = { workspace = true }
 mime_guess = { workspace = true }
 rand = { workspace = true }
 futures = { workspace = true }
+tokio-util = { workspace = true }
 hmac = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }

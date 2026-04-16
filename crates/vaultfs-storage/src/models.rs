@@ -74,6 +74,20 @@ impl ObjectLock {
     }
 }
 
+/// A single replication event. Appended to the primary's event log on
+/// every state-changing write; replicas poll `/v1/replication/events`
+/// and advance a cursor as they apply each one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplicationEvent {
+    pub id: i64,
+    pub op: String,
+    pub bucket: String,
+    pub key: String,
+    pub sha256: String,
+    pub version_id: Option<String>,
+    pub timestamp: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LifecycleRule {
     pub id: String,

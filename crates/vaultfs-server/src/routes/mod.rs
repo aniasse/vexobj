@@ -4,6 +4,7 @@ mod dashboard;
 mod health;
 mod multipart;
 mod objects;
+mod replication;
 mod stats;
 mod stream;
 
@@ -36,6 +37,7 @@ pub fn create_router(state: AppState) -> Router {
         .merge(audit::routes())
         .merge(stats::routes())
         .merge(stream::routes())
+        .merge(replication::routes())
         .route_layer(axum_mw::from_fn_with_state(
             state.clone(),
             auth_middleware,

@@ -155,6 +155,12 @@ impl StorageEngine {
 
         info!(bucket, key, size, "object stored");
 
+        // Replication event: one row per put. Appended *after* the
+        // metadata write succeeded so replicas never see a ghost event.
+        let _ = self
+            .db
+            .append_replication_event("put", bucket, key, &sha256, None);
+
         // If versioning is enabled, save a version record
         if self.db.is_versioning_enabled(bucket) {
             let version_id = uuid::Uuid::new_v4().to_string();
@@ -166,6 +172,13 @@ impl StorageEngine {
                 &content_type,
                 &sha256,
                 &storage_path,
+            );
+            let _ = self.db.append_replication_event(
+                "version_put",
+                bucket,
+                key,
+                &sha256,
+                Some(&version_id),
             );
         }
 
@@ -208,9 +221,19 @@ impl StorageEngine {
         if self.db.is_versioning_enabled(bucket) {
             let version_id = uuid::Uuid::new_v4().to_string();
             self.db.save_delete_marker(bucket, key, &version_id)?;
+            let _ = self.db.append_replication_event(
+                "delete_marker",
+                bucket,
+                key,
+                "",
+                Some(&version_id),
+            );
         }
 
         let storage_path = self.db.delete_object(bucket, key)?;
+        let _ = self
+            .db
+            .append_replication_event("delete", bucket, key, "", None);
         // Note: with dedup, we don't delete the blob as other objects may reference it
         if !self.deduplication {
             let full_path = self.data_dir.join(&storage_path);
@@ -339,6 +362,10 @@ impl StorageEngine {
 
         info!(bucket, key, size, "object stored (stream)");
 
+        let _ = self
+            .db
+            .append_replication_event("put", bucket, key, &sha256, None);
+
         // If versioning is enabled, save a version record
         if self.db.is_versioning_enabled(bucket) {
             let version_id = uuid::Uuid::new_v4().to_string();
@@ -350,6 +377,13 @@ impl StorageEngine {
                 &content_type,
                 &sha256,
                 &storage_path,
+            );
+            let _ = self.db.append_replication_event(
+                "version_put",
+                bucket,
+                key,
+                &sha256,
+                Some(&version_id),
             );
         }
 

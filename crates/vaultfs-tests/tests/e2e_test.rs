@@ -1034,6 +1034,120 @@ async fn e2e_delete_version_and_purge() {
 }
 
 #[tokio::test]
+async fn e2e_replication_event_log() {
+    let srv = TestServer::start();
+    let client = srv.client();
+    let auth = srv.auth_header();
+
+    // Fresh server — no events yet
+    let resp = client
+        .get(format!("{}/v1/replication/cursor", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["latest_id"], 0);
+
+    // Drive some writes — put creates events, delete creates one more
+    client
+        .post(format!("{}/v1/buckets", srv.url))
+        .header("Authorization", &auth)
+        .json(&serde_json::json!({"name": "repl-bucket", "public": false}))
+        .send()
+        .await
+        .unwrap();
+    for (key, body) in [("a.txt", "alpha"), ("b.txt", "bravo"), ("c.txt", "charlie")] {
+        client
+            .put(format!("{}/v1/objects/repl-bucket/{}", srv.url, key))
+            .header("Authorization", &auth)
+            .body(body.to_string())
+            .send()
+            .await
+            .unwrap();
+    }
+    client
+        .delete(format!("{}/v1/objects/repl-bucket/b.txt", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+
+    // All events since cursor=0 — expect 3 puts + 1 delete, in order
+    let resp = client
+        .get(format!("{}/v1/replication/events?since=0", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    let events = body["events"].as_array().unwrap();
+    assert_eq!(events.len(), 4, "expected 3 puts + 1 delete");
+    assert_eq!(events[0]["op"], "put");
+    assert_eq!(events[0]["key"], "a.txt");
+    assert!(events[0]["sha256"].as_str().unwrap().len() == 64);
+    assert_eq!(events[3]["op"], "delete");
+    assert_eq!(events[3]["key"], "b.txt");
+    assert!(body["latest_id"].as_i64().unwrap() >= 4);
+
+    // Pagination: since=2 should return only the 3rd put and the delete
+    let resp = client
+        .get(format!("{}/v1/replication/events?since=2&limit=10", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    let body: Value = resp.json().await.unwrap();
+    let events = body["events"].as_array().unwrap();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["id"], 3);
+    assert_eq!(events[1]["id"], 4);
+
+    // Blob fetch by sha256 — use the hash from the first put
+    let first_event = client
+        .get(format!("{}/v1/replication/events?since=0&limit=1", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    let sha = first_event["events"][0]["sha256"].as_str().unwrap().to_string();
+    let resp = client
+        .get(format!("{}/v1/replication/blob/{}", srv.url, sha))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body_bytes = resp.bytes().await.unwrap();
+    // With SSE off (default), the bytes on disk are the raw plaintext
+    assert_eq!(&body_bytes[..], b"alpha");
+
+    // Malformed sha rejected
+    let resp = client
+        .get(format!("{}/v1/replication/blob/not-a-sha", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    // Unknown sha → 404
+    let missing = "0".repeat(64);
+    let resp = client
+        .get(format!("{}/v1/replication/blob/{}", srv.url, missing))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+}
+
+#[tokio::test]
 async fn e2e_sse_at_rest() {
     let key = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
     let srv = TestServer::start_with_sse(Some(key));
