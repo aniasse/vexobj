@@ -19,6 +19,13 @@ pub fn routes() -> Router<AppState> {
         .route("/v1/admin/gc", axum::routing::post(run_gc))
         .route("/v1/admin/backup", axum::routing::post(create_backup))
         .route("/v1/admin/backup/export/{bucket}", axum::routing::post(export_bucket))
+        .route("/v1/admin/versioning/{bucket}", axum::routing::post(enable_versioning))
+        .route(
+            "/v1/admin/lifecycle/{bucket}",
+            axum::routing::post(create_lifecycle_rule).get(list_lifecycle_rules),
+        )
+        .route("/v1/admin/lifecycle/run", axum::routing::post(run_lifecycle))
+        .route("/v1/admin/lifecycle/rule/{id}", axum::routing::delete(delete_lifecycle_rule))
 }
 
 #[derive(Deserialize)]
@@ -284,4 +291,164 @@ async fn export_bucket(
         )
             .into_response(),
     }
+}
+
+// ── Versioning ──────────────────────────────────────────────────────────
+
+async fn enable_versioning(
+    State(state): State<AppState>,
+    Extension(caller): Extension<ApiKey>,
+    Path(bucket): Path<String>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_permission(&caller, "admin").await {
+        return resp;
+    }
+
+    match state.storage.enable_versioning(&bucket) {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(json!({"bucket": bucket, "versioning": "enabled"})),
+        )
+            .into_response(),
+        Err(e) => {
+            let status = match &e {
+                vaultfs_storage::StorageError::BucketNotFound(_) => StatusCode::NOT_FOUND,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            (status, Json(json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
+// ── Lifecycle ───────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct CreateLifecycleBody {
+    #[serde(default)]
+    prefix: String,
+    expire_days: u64,
+}
+
+async fn create_lifecycle_rule(
+    State(state): State<AppState>,
+    Extension(caller): Extension<ApiKey>,
+    Path(bucket): Path<String>,
+    Json(body): Json<CreateLifecycleBody>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_permission(&caller, "admin").await {
+        return resp;
+    }
+
+    match state
+        .storage
+        .db()
+        .create_lifecycle_rule(&bucket, &body.prefix, body.expire_days)
+    {
+        Ok(rule) => (StatusCode::CREATED, Json(json!(rule))).into_response(),
+        Err(e) => {
+            let status = match &e {
+                vaultfs_storage::StorageError::BucketNotFound(_) => StatusCode::NOT_FOUND,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            (status, Json(json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
+async fn list_lifecycle_rules(
+    State(state): State<AppState>,
+    Extension(caller): Extension<ApiKey>,
+    Path(bucket): Path<String>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_permission(&caller, "admin").await {
+        return resp;
+    }
+
+    match state.storage.db().list_lifecycle_rules(&bucket) {
+        Ok(rules) => Json(json!({"rules": rules})).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn delete_lifecycle_rule(
+    State(state): State<AppState>,
+    Extension(caller): Extension<ApiKey>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_permission(&caller, "admin").await {
+        return resp;
+    }
+
+    match state.storage.db().delete_lifecycle_rule(&id) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "lifecycle rule not found"})),
+        )
+            .into_response(),
+    }
+}
+
+async fn run_lifecycle(
+    State(state): State<AppState>,
+    Extension(caller): Extension<ApiKey>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(resp) = require_permission(&caller, "admin").await {
+        return resp;
+    }
+
+    let ip = extract_ip(&headers);
+
+    match state.storage.run_lifecycle() {
+        Ok(result) => {
+            state.audit.log(
+                &key_prefix(&caller),
+                "lifecycle.run",
+                "lifecycle",
+                &json!({
+                    "objects_expired": result.objects_expired,
+                    "bytes_freed": result.bytes_freed,
+                }),
+                &ip,
+            );
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "objects_expired": result.objects_expired,
+                    "bytes_freed": result.bytes_freed,
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+// ── S3 Migration Stub ─────────────────────────────────────────────────
+
+async fn migrate_s3_stub(
+    Extension(caller): Extension<ApiKey>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_permission(&caller, "admin").await {
+        return resp;
+    }
+
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(json!({
+            "error": "server-side S3 migration is not implemented",
+            "hint": "Use the CLI tool instead:",
+            "command": "vaultfsctl migrate s3 --source-endpoint <ENDPOINT> --source-bucket <BUCKET> --source-access-key <KEY> --source-secret-key <SECRET> --dest-bucket <DEST>"
+        })),
+    )
+        .into_response()
 }

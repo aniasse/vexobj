@@ -70,6 +70,19 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Lifecycle expiration background task (runs every hour)
+    let storage_for_lifecycle = state.storage.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+            if let Ok(result) = storage_for_lifecycle.run_lifecycle() {
+                if result.objects_expired > 0 {
+                    tracing::info!(expired = result.objects_expired, bytes = result.bytes_freed, "lifecycle cleanup");
+                }
+            }
+        }
+    });
+
     // Rate limiter cleanup task
     if let Some(ref limiter) = state.rate_limiter {
         let limiter = limiter.clone();

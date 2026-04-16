@@ -49,6 +49,39 @@ enum Commands {
     },
     /// Health check
     Health,
+    /// Migrate data from external sources into VaultFS
+    Migrate {
+        #[command(subcommand)]
+        source: MigrateSource,
+    },
+}
+
+#[derive(Subcommand)]
+enum MigrateSource {
+    /// Import objects from an S3-compatible source (AWS S3, MinIO, etc.)
+    S3 {
+        /// S3 endpoint URL (e.g. https://s3.amazonaws.com or https://minio.example.com)
+        #[arg(long)]
+        source_endpoint: String,
+        /// Source S3 bucket name
+        #[arg(long)]
+        source_bucket: String,
+        /// S3 access key ID
+        #[arg(long)]
+        source_access_key: String,
+        /// S3 secret access key
+        #[arg(long)]
+        source_secret_key: String,
+        /// Destination VaultFS bucket name
+        #[arg(long)]
+        dest_bucket: String,
+        /// Only migrate objects with this key prefix
+        #[arg(long)]
+        prefix: Option<String>,
+        /// List objects that would be migrated without actually migrating
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -232,6 +265,29 @@ async fn main() -> Result<()> {
         Commands::Backup => cmd_backup(&api).await,
         Commands::Export { bucket } => cmd_export(&api, &bucket).await,
         Commands::Health => cmd_health(&api).await,
+        Commands::Migrate { source } => match source {
+            MigrateSource::S3 {
+                source_endpoint,
+                source_bucket,
+                source_access_key,
+                source_secret_key,
+                dest_bucket,
+                prefix,
+                dry_run,
+            } => {
+                cmd_migrate_s3(
+                    &api,
+                    &source_endpoint,
+                    &source_bucket,
+                    &source_access_key,
+                    &source_secret_key,
+                    &dest_bucket,
+                    prefix.as_deref(),
+                    dry_run,
+                )
+                .await
+            }
+        },
     }
 }
 
@@ -910,6 +966,401 @@ async fn cmd_health(api: &ApiClient) -> Result<()> {
         println!("VaultFS is healthy (v{})", version);
     } else {
         println!("VaultFS health check failed (HTTP {}, status={})", status, srv_status);
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// S3 Migration
+// ---------------------------------------------------------------------------
+
+/// Represents an object discovered in the S3 source bucket.
+struct S3Object {
+    key: String,
+    size: u64,
+}
+
+/// Parse the ListObjectsV2 XML response using simple string matching.
+/// Extracts <Key>, <Size> for each <Contents> entry, and the
+/// <NextContinuationToken> if present.
+fn parse_s3_list_response(xml: &str) -> (Vec<S3Object>, Option<String>) {
+    let mut objects = Vec::new();
+    let mut continuation_token = None;
+
+    // Extract <NextContinuationToken>
+    if let Some(start) = xml.find("<NextContinuationToken>") {
+        let after = &xml[start + "<NextContinuationToken>".len()..];
+        if let Some(end) = after.find("</NextContinuationToken>") {
+            continuation_token = Some(after[..end].to_string());
+        }
+    }
+
+    // Extract each <Contents> block
+    let mut search = xml;
+    while let Some(start) = search.find("<Contents>") {
+        let after = &search[start..];
+        let end = match after.find("</Contents>") {
+            Some(e) => e + "</Contents>".len(),
+            None => break,
+        };
+        let block = &after[..end];
+
+        let key = extract_xml_tag(block, "Key").unwrap_or_default();
+        let size: u64 = extract_xml_tag(block, "Size")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+
+        if !key.is_empty() {
+            objects.push(S3Object { key, size });
+        }
+
+        search = &search[start + end..];
+    }
+
+    (objects, continuation_token)
+}
+
+/// Extract the text content of a simple XML tag like <Tag>value</Tag>.
+fn extract_xml_tag(xml: &str, tag: &str) -> Option<String> {
+    let open = format!("<{}>", tag);
+    let close = format!("</{}>", tag);
+    let start = xml.find(&open)? + open.len();
+    let end = xml[start..].find(&close)? + start;
+    Some(xml[start..end].to_string())
+}
+
+/// Sign an S3 request using AWS Signature Version 4 (simplified).
+/// This produces the Authorization header for a given request.
+fn s3_sign_request(
+    method: &str,
+    url: &str,
+    access_key: &str,
+    secret_key: &str,
+    region: &str,
+    headers: &[(&str, &str)],
+    payload_hash: &str,
+) -> Vec<(String, String)> {
+    use hmac::{Hmac, Mac};
+    use sha2::{Digest, Sha256};
+
+    let now = chrono::Utc::now();
+    let date_stamp = now.format("%Y%m%d").to_string();
+    let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
+
+    // Parse the URL
+    let parsed = url::Url::parse(url).expect("invalid URL");
+    let host = parsed.host_str().unwrap_or("localhost");
+    let host_with_port = if let Some(port) = parsed.port() {
+        format!("{}:{}", host, port)
+    } else {
+        host.to_string()
+    };
+    let canonical_uri = parsed.path().to_string();
+    let canonical_querystring = parsed.query().unwrap_or("").to_string();
+
+    // Build signed headers: host + x-amz-content-sha256 + x-amz-date + any extras
+    let mut all_headers: Vec<(String, String)> = vec![
+        ("host".to_string(), host_with_port.clone()),
+        ("x-amz-content-sha256".to_string(), payload_hash.to_string()),
+        ("x-amz-date".to_string(), amz_date.clone()),
+    ];
+    for (k, v) in headers {
+        all_headers.push((k.to_lowercase(), v.to_string()));
+    }
+    all_headers.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let signed_headers: String = all_headers
+        .iter()
+        .map(|(k, _)| k.as_str())
+        .collect::<Vec<_>>()
+        .join(";");
+    let canonical_headers: String = all_headers
+        .iter()
+        .map(|(k, v)| format!("{}:{}\n", k, v.trim()))
+        .collect();
+
+    let canonical_request = format!(
+        "{}\n{}\n{}\n{}\n{}\n{}",
+        method, canonical_uri, canonical_querystring, canonical_headers, signed_headers, payload_hash,
+    );
+
+    let mut hasher = Sha256::new();
+    hasher.update(canonical_request.as_bytes());
+    let canonical_request_hash = hex::encode(hasher.finalize());
+
+    let credential_scope = format!("{}/{}/s3/aws4_request", date_stamp, region);
+    let string_to_sign = format!(
+        "AWS4-HMAC-SHA256\n{}\n{}\n{}",
+        amz_date, credential_scope, canonical_request_hash,
+    );
+
+    // Derive signing key
+    type HmacSha256 = Hmac<Sha256>;
+    let k_date = {
+        let mut mac = HmacSha256::new_from_slice(format!("AWS4{}", secret_key).as_bytes()).unwrap();
+        mac.update(date_stamp.as_bytes());
+        mac.finalize().into_bytes()
+    };
+    let k_region = {
+        let mut mac = HmacSha256::new_from_slice(&k_date).unwrap();
+        mac.update(region.as_bytes());
+        mac.finalize().into_bytes()
+    };
+    let k_service = {
+        let mut mac = HmacSha256::new_from_slice(&k_region).unwrap();
+        mac.update(b"s3");
+        mac.finalize().into_bytes()
+    };
+    let k_signing = {
+        let mut mac = HmacSha256::new_from_slice(&k_service).unwrap();
+        mac.update(b"aws4_request");
+        mac.finalize().into_bytes()
+    };
+
+    let signature = {
+        let mut mac = HmacSha256::new_from_slice(&k_signing).unwrap();
+        mac.update(string_to_sign.as_bytes());
+        hex::encode(mac.finalize().into_bytes())
+    };
+
+    let authorization = format!(
+        "AWS4-HMAC-SHA256 Credential={}/{}, SignedHeaders={}, Signature={}",
+        access_key, credential_scope, signed_headers, signature,
+    );
+
+    vec![
+        ("Authorization".to_string(), authorization),
+        ("x-amz-date".to_string(), amz_date),
+        (
+            "x-amz-content-sha256".to_string(),
+            payload_hash.to_string(),
+        ),
+        ("Host".to_string(), host_with_port),
+    ]
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn cmd_migrate_s3(
+    api: &ApiClient,
+    source_endpoint: &str,
+    source_bucket: &str,
+    access_key: &str,
+    secret_key: &str,
+    dest_bucket: &str,
+    prefix: Option<&str>,
+    dry_run: bool,
+) -> Result<()> {
+    let client = Client::new();
+    let endpoint = source_endpoint.trim_end_matches('/');
+    let region = "us-east-1"; // Default region; works for MinIO and most S3-compatible services.
+
+    println!(
+        "Discovering objects in s3://{}/{}...",
+        source_bucket,
+        prefix.unwrap_or("")
+    );
+
+    // Phase 1: List all objects with pagination
+    let mut all_objects: Vec<S3Object> = Vec::new();
+    let mut continuation_token: Option<String> = None;
+
+    loop {
+        let mut query = format!("list-type=2&max-keys=1000");
+        if let Some(p) = prefix {
+            query.push_str(&format!("&prefix={}", p));
+        }
+        if let Some(ref token) = continuation_token {
+            query.push_str(&format!("&continuation-token={}", token));
+        }
+
+        let list_url = format!("{}/{}?{}", endpoint, source_bucket, query);
+        let payload_hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"; // SHA-256 of empty body
+
+        let sig_headers =
+            s3_sign_request("GET", &list_url, access_key, secret_key, region, &[], payload_hash);
+
+        let mut req = client.get(&list_url);
+        for (k, v) in &sig_headers {
+            req = req.header(k.as_str(), v.as_str());
+        }
+
+        let resp = req.send().await.context("failed to list S3 objects")?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!(
+                "S3 ListObjectsV2 failed (HTTP {}): {}",
+                status.as_u16(),
+                body
+            );
+        }
+
+        let xml = resp.text().await.context("failed to read S3 list response")?;
+        let (objects, next_token) = parse_s3_list_response(&xml);
+
+        all_objects.extend(objects);
+        continuation_token = next_token;
+
+        if continuation_token.is_none() {
+            break;
+        }
+    }
+
+    if all_objects.is_empty() {
+        println!("No objects found.");
+        return Ok(());
+    }
+
+    let total = all_objects.len();
+    let total_size: u64 = all_objects.iter().map(|o| o.size).sum();
+    println!(
+        "Found {} object(s) ({} total)",
+        total,
+        human_size(total_size)
+    );
+
+    if dry_run {
+        println!("\n--- DRY RUN (no data will be transferred) ---\n");
+        for (i, obj) in all_objects.iter().enumerate() {
+            println!(
+                "[{}/{}] {} ({})",
+                i + 1,
+                total,
+                obj.key,
+                human_size(obj.size)
+            );
+        }
+        println!(
+            "\nWould migrate {} object(s), {} total.",
+            total,
+            human_size(total_size)
+        );
+        return Ok(());
+    }
+
+    // Phase 2: Download each object from S3 and upload to VaultFS
+    let mut migrated = 0u64;
+    let mut failed = 0u64;
+    let mut bytes_transferred = 0u64;
+
+    for (i, obj) in all_objects.iter().enumerate() {
+        let object_url = format!("{}/{}/{}", endpoint, source_bucket, obj.key);
+        let payload_hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+        let sig_headers = s3_sign_request(
+            "GET",
+            &object_url,
+            access_key,
+            secret_key,
+            region,
+            &[],
+            payload_hash,
+        );
+
+        let mut req = client.get(&object_url);
+        for (k, v) in &sig_headers {
+            req = req.header(k.as_str(), v.as_str());
+        }
+
+        let download = match req.send().await {
+            Ok(resp) if resp.status().is_success() => match resp.bytes().await {
+                Ok(data) => data,
+                Err(e) => {
+                    eprintln!(
+                        "[{}/{}] FAILED to read {} : {}",
+                        i + 1,
+                        total,
+                        obj.key,
+                        e
+                    );
+                    failed += 1;
+                    continue;
+                }
+            },
+            Ok(resp) => {
+                let status = resp.status();
+                eprintln!(
+                    "[{}/{}] FAILED to download {} (HTTP {})",
+                    i + 1,
+                    total,
+                    obj.key,
+                    status.as_u16()
+                );
+                failed += 1;
+                continue;
+            }
+            Err(e) => {
+                eprintln!(
+                    "[{}/{}] FAILED to download {} : {}",
+                    i + 1,
+                    total,
+                    obj.key,
+                    e
+                );
+                failed += 1;
+                continue;
+            }
+        };
+
+        // Guess content type from the key
+        let content_type = mime_guess::from_path(&obj.key)
+            .first_or_octet_stream()
+            .to_string();
+
+        // Upload to VaultFS
+        let upload_path = format!("/v1/objects/{}/{}", dest_bucket, obj.key);
+        let upload_resp = api
+            .put(&upload_path)
+            .header("Content-Type", &content_type)
+            .body(download.to_vec())
+            .send()
+            .await;
+
+        match upload_resp {
+            Ok(resp) if resp.status().is_success() => {
+                migrated += 1;
+                bytes_transferred += obj.size;
+                println!(
+                    "[{}/{}] Migrated {} ({})",
+                    i + 1,
+                    total,
+                    obj.key,
+                    human_size(obj.size)
+                );
+            }
+            Ok(resp) => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                eprintln!(
+                    "[{}/{}] FAILED to upload {} (HTTP {}): {}",
+                    i + 1,
+                    total,
+                    obj.key,
+                    status.as_u16(),
+                    body
+                );
+                failed += 1;
+            }
+            Err(e) => {
+                eprintln!(
+                    "[{}/{}] FAILED to upload {} : {}",
+                    i + 1,
+                    total,
+                    obj.key,
+                    e
+                );
+                failed += 1;
+            }
+        }
+    }
+
+    println!("\n--- Migration Complete ---");
+    println!("Migrated:    {} object(s)", migrated);
+    println!("Failed:      {} object(s)", failed);
+    println!("Transferred: {}", human_size(bytes_transferred));
+
+    if failed > 0 {
         std::process::exit(1);
     }
     Ok(())

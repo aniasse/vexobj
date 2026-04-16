@@ -7,7 +7,7 @@ mod models;
 
 pub use backup::BackupManager;
 pub use db::Database;
-pub use engine::StorageEngine;
+pub use engine::{LifecycleResult, StorageEngine};
 pub use error::StorageError;
 pub use gc::{GarbageCollector, GcResult};
 pub use models::*;

@@ -8,6 +8,11 @@ use crate::db::Database;
 use crate::error::StorageError;
 use crate::models::*;
 
+pub struct LifecycleResult {
+    pub objects_expired: u64,
+    pub bytes_freed: u64,
+}
+
 pub struct StorageEngine {
     db: Database,
     data_dir: PathBuf,
@@ -259,6 +264,21 @@ impl StorageEngine {
         )?;
 
         info!(bucket, key, size, "object stored (stream)");
+
+        // If versioning is enabled, save a version record
+        if self.db.is_versioning_enabled(bucket) {
+            let version_id = uuid::Uuid::new_v4().to_string();
+            let _ = self.db.save_version(
+                bucket,
+                key,
+                &version_id,
+                size,
+                &content_type,
+                &sha256,
+                &storage_path,
+            );
+        }
+
         Ok(meta)
     }
 
@@ -281,5 +301,55 @@ impl StorageEngine {
 
     pub fn data_dir(&self) -> &std::path::Path {
         &self.data_dir
+    }
+
+    // ── Versioning helpers ──────────────────────────────────────────────
+
+    pub fn list_versions(&self, bucket: &str, key: &str) -> Result<Vec<ObjectVersion>, StorageError> {
+        self.db.list_versions(bucket, key)
+    }
+
+    pub async fn get_version_data(
+        &self,
+        bucket: &str,
+        key: &str,
+        version_id: &str,
+    ) -> Result<(ObjectVersion, bytes::Bytes), StorageError> {
+        let (version, storage_path) = self.db.get_version(bucket, key, version_id)?;
+        let full_path = self.data_dir.join(&storage_path);
+        let data = tokio::fs::read(&full_path).await?;
+        Ok((version, bytes::Bytes::from(data)))
+    }
+
+    pub fn enable_versioning(&self, bucket: &str) -> Result<(), StorageError> {
+        self.db.enable_versioning(bucket)
+    }
+
+    // ── Lifecycle ───────────────────────────────────────────────────────
+
+    pub fn run_lifecycle(&self) -> Result<LifecycleResult, StorageError> {
+        let expired = self.db.find_expired_objects()?;
+        let mut objects_expired: u64 = 0;
+        let mut bytes_freed: u64 = 0;
+
+        for (bucket, key, storage_path) in &expired {
+            // Get size before deleting
+            if let Ok((meta, _)) = self.db.get_object(bucket, key) {
+                bytes_freed += meta.size;
+            }
+            // Delete from database
+            let _ = self.db.delete_object(bucket, key);
+            // Delete from disk if dedup is off
+            if !self.deduplication {
+                let full_path = self.data_dir.join(storage_path);
+                let _ = std::fs::remove_file(&full_path);
+            }
+            objects_expired += 1;
+        }
+
+        Ok(LifecycleResult {
+            objects_expired,
+            bytes_freed,
+        })
     }
 }

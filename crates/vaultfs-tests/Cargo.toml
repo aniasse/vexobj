@@ -16,3 +16,4 @@ bytes = { workspace = true }
 uuid = { workspace = true }
 serde_json = { workspace = true }
 futures = { workspace = true }
+reqwest = { workspace = true }

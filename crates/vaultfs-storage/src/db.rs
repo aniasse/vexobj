@@ -49,8 +49,37 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_objects_bucket_key ON objects(bucket, key);
             CREATE INDEX IF NOT EXISTS idx_objects_bucket_prefix ON objects(bucket, key);
             CREATE INDEX IF NOT EXISTS idx_objects_sha256 ON objects(sha256);
+
+            CREATE TABLE IF NOT EXISTS object_versions (
+                id TEXT PRIMARY KEY,
+                bucket TEXT NOT NULL,
+                key TEXT NOT NULL,
+                version_id TEXT NOT NULL,
+                size INTEGER NOT NULL,
+                content_type TEXT NOT NULL,
+                sha256 TEXT NOT NULL,
+                storage_path TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                is_latest INTEGER NOT NULL DEFAULT 1,
+                is_delete_marker INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_versions_bucket_key ON object_versions(bucket, key, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS lifecycle_rules (
+                id TEXT PRIMARY KEY,
+                bucket TEXT NOT NULL,
+                prefix TEXT NOT NULL DEFAULT '',
+                expire_days INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            );
             ",
         )?;
+
+        // Add versioning_enabled column if it doesn't exist (ALTER TABLE will fail if it already exists)
+        let _ = conn.execute_batch(
+            "ALTER TABLE buckets ADD COLUMN versioning_enabled INTEGER NOT NULL DEFAULT 0;",
+        );
+
         Ok(())
     }
 
@@ -341,5 +370,233 @@ impl Database {
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(StorageError::Database(e)),
         }
+    }
+
+    // ── Versioning ──────────────────────────────────────────────────────
+
+    pub fn enable_versioning(&self, bucket: &str) -> Result<(), StorageError> {
+        self.get_bucket(bucket)?;
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE buckets SET versioning_enabled = 1 WHERE name = ?1",
+            params![bucket],
+        )?;
+        Ok(())
+    }
+
+    pub fn is_versioning_enabled(&self, bucket: &str) -> bool {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT versioning_enabled FROM buckets WHERE name = ?1",
+            params![bucket],
+            |row| row.get::<_, i32>(0),
+        )
+        .map(|v| v != 0)
+        .unwrap_or(false)
+    }
+
+    pub fn save_version(
+        &self,
+        bucket: &str,
+        key: &str,
+        version_id: &str,
+        size: u64,
+        content_type: &str,
+        sha256: &str,
+        storage_path: &str,
+    ) -> Result<(), StorageError> {
+        let conn = self.conn.lock().unwrap();
+        // Mark all previous versions of this bucket+key as not latest
+        conn.execute(
+            "UPDATE object_versions SET is_latest = 0 WHERE bucket = ?1 AND key = ?2",
+            params![bucket, key],
+        )?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = Utc::now();
+        conn.execute(
+            "INSERT INTO object_versions (id, bucket, key, version_id, size, content_type, sha256, storage_path, created_at, is_latest, is_delete_marker)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, 0)",
+            params![
+                id,
+                bucket,
+                key,
+                version_id,
+                size as i64,
+                content_type,
+                sha256,
+                storage_path,
+                now.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_versions(&self, bucket: &str, key: &str) -> Result<Vec<ObjectVersion>, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, bucket, key, version_id, size, content_type, sha256, created_at, is_latest, is_delete_marker
+             FROM object_versions WHERE bucket = ?1 AND key = ?2 ORDER BY created_at DESC",
+        )?;
+        let versions = stmt
+            .query_map(params![bucket, key], |row| {
+                Ok(ObjectVersion {
+                    id: row.get(0)?,
+                    bucket: row.get(1)?,
+                    key: row.get(2)?,
+                    version_id: row.get(3)?,
+                    size: row.get::<_, i64>(4)? as u64,
+                    content_type: row.get(5)?,
+                    sha256: row.get(6)?,
+                    created_at: row
+                        .get::<_, String>(7)?
+                        .parse()
+                        .unwrap_or_else(|_| Utc::now()),
+                    is_latest: row.get::<_, i32>(8)? != 0,
+                    is_delete_marker: row.get::<_, i32>(9)? != 0,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(versions)
+    }
+
+    pub fn get_version(
+        &self,
+        bucket: &str,
+        key: &str,
+        version_id: &str,
+    ) -> Result<(ObjectVersion, String), StorageError> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT id, bucket, key, version_id, size, content_type, sha256, storage_path, created_at, is_latest, is_delete_marker
+             FROM object_versions WHERE bucket = ?1 AND key = ?2 AND version_id = ?3",
+            params![bucket, key, version_id],
+            |row| {
+                let version = ObjectVersion {
+                    id: row.get(0)?,
+                    bucket: row.get(1)?,
+                    key: row.get(2)?,
+                    version_id: row.get(3)?,
+                    size: row.get::<_, i64>(4)? as u64,
+                    content_type: row.get(5)?,
+                    sha256: row.get(6)?,
+                    created_at: row
+                        .get::<_, String>(8)?
+                        .parse()
+                        .unwrap_or_else(|_| Utc::now()),
+                    is_latest: row.get::<_, i32>(9)? != 0,
+                    is_delete_marker: row.get::<_, i32>(10)? != 0,
+                };
+                let storage_path: String = row.get(7)?;
+                Ok((version, storage_path))
+            },
+        )
+        .map_err(|_| StorageError::ObjectNotFound {
+            bucket: bucket.to_string(),
+            key: key.to_string(),
+        })
+    }
+
+    pub fn delete_version(
+        &self,
+        bucket: &str,
+        key: &str,
+        version_id: &str,
+    ) -> Result<(), StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let affected = conn.execute(
+            "DELETE FROM object_versions WHERE bucket = ?1 AND key = ?2 AND version_id = ?3",
+            params![bucket, key, version_id],
+        )?;
+        if affected == 0 {
+            return Err(StorageError::ObjectNotFound {
+                bucket: bucket.to_string(),
+                key: key.to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    // ── Lifecycle ───────────────────────────────────────────────────────
+
+    pub fn create_lifecycle_rule(
+        &self,
+        bucket: &str,
+        prefix: &str,
+        expire_days: u64,
+    ) -> Result<LifecycleRule, StorageError> {
+        self.get_bucket(bucket)?;
+        let conn = self.conn.lock().unwrap();
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = Utc::now();
+        conn.execute(
+            "INSERT INTO lifecycle_rules (id, bucket, prefix, expire_days, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![id, bucket, prefix, expire_days as i64, now.to_rfc3339()],
+        )?;
+        Ok(LifecycleRule {
+            id,
+            bucket: bucket.to_string(),
+            prefix: prefix.to_string(),
+            expire_days,
+            created_at: now,
+        })
+    }
+
+    pub fn list_lifecycle_rules(&self, bucket: &str) -> Result<Vec<LifecycleRule>, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, bucket, prefix, expire_days, created_at FROM lifecycle_rules WHERE bucket = ?1 ORDER BY created_at",
+        )?;
+        let rules = stmt
+            .query_map(params![bucket], |row| {
+                Ok(LifecycleRule {
+                    id: row.get(0)?,
+                    bucket: row.get(1)?,
+                    prefix: row.get(2)?,
+                    expire_days: row.get::<_, i64>(3)? as u64,
+                    created_at: row
+                        .get::<_, String>(4)?
+                        .parse()
+                        .unwrap_or_else(|_| Utc::now()),
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rules)
+    }
+
+    pub fn delete_lifecycle_rule(&self, id: &str) -> Result<(), StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let affected = conn.execute(
+            "DELETE FROM lifecycle_rules WHERE id = ?1",
+            params![id],
+        )?;
+        if affected == 0 {
+            return Err(StorageError::ObjectNotFound {
+                bucket: "lifecycle_rules".to_string(),
+                key: id.to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Returns (bucket, key, storage_path) for objects whose created_at + expire_days < now.
+    pub fn find_expired_objects(&self) -> Result<Vec<(String, String, String)>, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT o.bucket, o.key, o.storage_path
+             FROM objects o
+             INNER JOIN lifecycle_rules r
+               ON o.bucket = r.bucket AND o.key LIKE (r.prefix || '%')
+             WHERE datetime(o.created_at) < datetime('now', '-' || r.expire_days || ' days')",
+        )?;
+        let results = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(results)
     }
 }

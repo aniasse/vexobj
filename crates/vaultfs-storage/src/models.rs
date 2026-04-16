@@ -44,3 +44,26 @@ pub struct CreateBucketRequest {
     pub name: String,
     pub public: bool,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObjectVersion {
+    pub id: String,
+    pub bucket: String,
+    pub key: String,
+    pub version_id: String,
+    pub size: u64,
+    pub content_type: String,
+    pub sha256: String,
+    pub created_at: DateTime<Utc>,
+    pub is_latest: bool,
+    pub is_delete_marker: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LifecycleRule {
+    pub id: String,
+    pub bucket: String,
+    pub prefix: String,
+    pub expire_days: u64,
+    pub created_at: DateTime<Utc>,
+}

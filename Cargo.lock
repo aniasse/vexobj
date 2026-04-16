@@ -2144,6 +2144,7 @@ dependencies = [
  "js-sys",
  "log",
  "mime",
+ "mime_guess",
  "native-tls",
  "percent-encoding",
  "pin-project-lite",
@@ -2982,12 +2983,17 @@ name = "vaultfs-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
+ "hex",
+ "hmac",
  "mime_guess",
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
+ "url",
 ]
 
 [[package]]
@@ -3082,6 +3088,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "futures",
+ "reqwest",
  "serde_json",
  "tokio",
  "uuid",

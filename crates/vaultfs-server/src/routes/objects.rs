@@ -29,6 +29,7 @@ pub fn routes() -> Router<AppState> {
                 .delete(delete_object)
                 .head(head_object),
         )
+        .route("/v1/versions/{bucket}/{*key}", get(list_versions))
 }
 
 /// PUT now streams to disk by default — constant RAM regardless of file size.
@@ -144,6 +145,7 @@ struct GetObjectQuery {
     expires: Option<i64>,
     #[allow(dead_code)]
     signature: Option<String>,
+    version_id: Option<String>,
 }
 
 /// GET now streams from disk by default for non-image files.
@@ -160,6 +162,31 @@ async fn get_object(
     }
     if let Err(e) = state.auth.check_bucket_access(&caller, &bucket) {
         return (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()}))).into_response();
+    }
+
+    // If a specific version is requested, serve it directly
+    if let Some(ref vid) = query.version_id {
+        return match state.storage.get_version_data(&bucket, &key, vid).await {
+            Ok((version, data)) => {
+                state.metrics.record_download(version.size);
+                (
+                    StatusCode::OK,
+                    [
+                        ("content-type", version.content_type),
+                        ("content-length", version.size.to_string()),
+                        ("etag", format!("\"{}\"", version.sha256)),
+                        ("x-vaultfs-version-id", version.version_id),
+                    ],
+                    data,
+                )
+                    .into_response()
+            }
+            Err(_) => (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "version not found"})),
+            )
+                .into_response(),
+        };
     }
 
     let has_transform = query.w.is_some()
@@ -412,6 +439,28 @@ async fn list_objects(
         continuation_token: query.continuation_token,
     }) {
         Ok(response) => Json(json!(response)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn list_versions(
+    State(state): State<AppState>,
+    Extension(caller): Extension<ApiKey>,
+    Path((bucket, key)): Path<(String, String)>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_permission(&caller, "read").await {
+        return resp;
+    }
+    if let Err(e) = state.auth.check_bucket_access(&caller, &bucket) {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()}))).into_response();
+    }
+
+    match state.storage.list_versions(&bucket, &key) {
+        Ok(versions) => Json(json!({"versions": versions})).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": e.to_string()})),
