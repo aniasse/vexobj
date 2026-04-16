@@ -157,9 +157,9 @@ impl StorageEngine {
 
         // Replication event: one row per put. Appended *after* the
         // metadata write succeeded so replicas never see a ghost event.
-        let _ = self
-            .db
-            .append_replication_event("put", bucket, key, &sha256, None);
+        let _ = self.db.append_replication_event(
+            "put", bucket, key, &sha256, None, size, &content_type,
+        );
 
         // If versioning is enabled, save a version record
         if self.db.is_versioning_enabled(bucket) {
@@ -179,6 +179,8 @@ impl StorageEngine {
                 key,
                 &sha256,
                 Some(&version_id),
+                size,
+                &content_type,
             );
         }
 
@@ -227,13 +229,15 @@ impl StorageEngine {
                 key,
                 "",
                 Some(&version_id),
+                0,
+                "",
             );
         }
 
         let storage_path = self.db.delete_object(bucket, key)?;
         let _ = self
             .db
-            .append_replication_event("delete", bucket, key, "", None);
+            .append_replication_event("delete", bucket, key, "", None, 0, "");
         // Note: with dedup, we don't delete the blob as other objects may reference it
         if !self.deduplication {
             let full_path = self.data_dir.join(&storage_path);
@@ -362,9 +366,9 @@ impl StorageEngine {
 
         info!(bucket, key, size, "object stored (stream)");
 
-        let _ = self
-            .db
-            .append_replication_event("put", bucket, key, &sha256, None);
+        let _ = self.db.append_replication_event(
+            "put", bucket, key, &sha256, None, size, &content_type,
+        );
 
         // If versioning is enabled, save a version record
         if self.db.is_versioning_enabled(bucket) {
@@ -384,6 +388,8 @@ impl StorageEngine {
                 key,
                 &sha256,
                 Some(&version_id),
+                size,
+                &content_type,
             );
         }
 

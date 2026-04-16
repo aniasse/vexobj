@@ -87,6 +87,15 @@ impl Database {
             ",
         )?;
 
+        // Replication needs enough info in the log to rebuild an objects
+        // row on the replica. Size + content_type are carried alongside
+        // sha256 so `apply` does not have to round-trip to the primary
+        // for every event.
+        let _ = conn.execute_batch(
+            "ALTER TABLE replication_events ADD COLUMN size INTEGER NOT NULL DEFAULT 0;
+             ALTER TABLE replication_events ADD COLUMN content_type TEXT NOT NULL DEFAULT '';",
+        );
+
         // Add versioning_enabled column if it doesn't exist (ALTER TABLE will fail if it already exists)
         let _ = conn.execute_batch(
             "ALTER TABLE buckets ADD COLUMN versioning_enabled INTEGER NOT NULL DEFAULT 0;",
@@ -605,7 +614,9 @@ impl Database {
 
     /// Append a single event to the replication log. Called by the engine
     /// after every state-changing write so primaries and replicas stay
-    /// in the same order.
+    /// in the same order. `size` and `content_type` are 0 / "" for events
+    /// that don't carry a blob (delete, delete_marker).
+    #[allow(clippy::too_many_arguments)]
     pub fn append_replication_event(
         &self,
         op: &str,
@@ -613,11 +624,14 @@ impl Database {
         key: &str,
         sha256: &str,
         version_id: Option<&str>,
+        size: u64,
+        content_type: &str,
     ) -> Result<(), StorageError> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO replication_events (op, bucket, key, sha256, version_id, timestamp)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO replication_events
+               (op, bucket, key, sha256, version_id, timestamp, size, content_type)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 op,
                 bucket,
@@ -625,6 +639,8 @@ impl Database {
                 sha256,
                 version_id,
                 Utc::now().to_rfc3339(),
+                size as i64,
+                content_type,
             ],
         )?;
         Ok(())
@@ -640,7 +656,7 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         let capped = limit.min(1000) as i64;
         let mut stmt = conn.prepare(
-            "SELECT id, op, bucket, key, sha256, version_id, timestamp
+            "SELECT id, op, bucket, key, sha256, version_id, timestamp, size, content_type
              FROM replication_events
              WHERE id > ?1
              ORDER BY id ASC
@@ -659,6 +675,8 @@ impl Database {
                         .get::<_, String>(6)?
                         .parse()
                         .unwrap_or_else(|_| Utc::now()),
+                    size: row.get::<_, i64>(7)? as u64,
+                    content_type: row.get(8)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;

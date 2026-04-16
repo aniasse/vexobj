@@ -86,6 +86,10 @@ pub struct ReplicationEvent {
     pub sha256: String,
     pub version_id: Option<String>,
     pub timestamp: DateTime<Utc>,
+    /// 0 for delete / delete_marker; >0 for put / version_put.
+    pub size: u64,
+    /// Empty for delete / delete_marker.
+    pub content_type: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

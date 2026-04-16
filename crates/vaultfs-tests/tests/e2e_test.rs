@@ -1034,6 +1034,125 @@ async fn e2e_delete_version_and_purge() {
 }
 
 #[tokio::test]
+async fn e2e_replication_two_node_sync() {
+    // Spin up two independent servers and drive a one-shot replicate
+    // from "primary" to "replica" via the vaultfsctl binary.
+    let primary = TestServer::start();
+    let replica = TestServer::start();
+    let client = primary.client();
+
+    // Write a variety of operations on the primary so the replica has
+    // something to catch up on: bucket create → puts → overwrite →
+    // delete. Each of these appends at least one event on the primary.
+    client
+        .post(format!("{}/v1/buckets", primary.url))
+        .header("Authorization", primary.auth_header())
+        .json(&serde_json::json!({"name": "mirror", "public": false}))
+        .send()
+        .await
+        .unwrap();
+    for (key, body) in [("one.txt", "1111"), ("two.txt", "2222"), ("three.txt", "3333")] {
+        client
+            .put(format!("{}/v1/objects/mirror/{}", primary.url, key))
+            .header("Authorization", primary.auth_header())
+            .body(body.to_string())
+            .send()
+            .await
+            .unwrap();
+    }
+    // Overwrite one key so we exercise multiple puts on the same row.
+    client
+        .put(format!("{}/v1/objects/mirror/one.txt", primary.url))
+        .header("Authorization", primary.auth_header())
+        .body("1111-v2".to_string())
+        .send()
+        .await
+        .unwrap();
+    // Delete one so we cover the delete event on the replica too.
+    client
+        .delete(format!("{}/v1/objects/mirror/two.txt", primary.url))
+        .header("Authorization", primary.auth_header())
+        .send()
+        .await
+        .unwrap();
+
+    // Run vaultfsctl replicate once. Primary and replica each have their
+    // own admin key; we pass both explicitly.
+    let cursor = std::env::temp_dir().join(format!("cursor-{}", uuid::Uuid::new_v4()));
+    let binary = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("target/debug/vaultfsctl");
+    assert!(
+        binary.exists(),
+        "vaultfsctl binary not found at {}. Run `cargo build` first.",
+        binary.display()
+    );
+
+    let out = Command::new(&binary)
+        .args([
+            "--url",
+            &replica.url,
+            "--key",
+            &replica.admin_key,
+            "replicate",
+            "--primary",
+            &primary.url,
+            "--primary-key",
+            &primary.admin_key,
+            "--cursor-file",
+        ])
+        .arg(&cursor)
+        .output()
+        .expect("run vaultfsctl replicate");
+    assert!(
+        out.status.success(),
+        "vaultfsctl replicate failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+
+    // The replica should now mirror the primary: present keys present,
+    // deleted key gone, overwritten key at its latest value.
+    let one = client
+        .get(format!("{}/v1/objects/mirror/one.txt", replica.url))
+        .header("Authorization", replica.auth_header())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(one.status(), 200);
+    assert_eq!(one.text().await.unwrap(), "1111-v2");
+
+    let three = client
+        .get(format!("{}/v1/objects/mirror/three.txt", replica.url))
+        .header("Authorization", replica.auth_header())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(three.status(), 200);
+    assert_eq!(three.text().await.unwrap(), "3333");
+
+    let two = client
+        .get(format!("{}/v1/objects/mirror/two.txt", replica.url))
+        .header("Authorization", replica.auth_header())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(two.status(), 404, "deleted key should not exist on replica");
+
+    // Cursor file should be set to >=5 (3 puts + 1 overwrite + 1 delete).
+    let cursor_val: i64 = std::fs::read_to_string(&cursor)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert!(cursor_val >= 5, "cursor should advance, got {cursor_val}");
+    let _ = std::fs::remove_file(&cursor);
+}
+
+#[tokio::test]
 async fn e2e_replication_event_log() {
     let srv = TestServer::start();
     let client = srv.client();
@@ -1648,10 +1767,12 @@ async fn e2e_s3_compat_sigv4_accepts_valid_and_rejects_tamper() {
     assert_eq!(resp.status(), 200, "valid SigV4 must be accepted");
     assert!(resp.text().await.unwrap().contains("<ListAllMyBucketsResult"));
 
-    // Now tamper with the signature — last-char flip. Server must reject.
+    // Now tamper with the signature — flip the last hex char to a
+    // definitely-different one (0→1, anything-else→0) so we can't
+    // accidentally re-emit the same signature.
     let mut bad = signed.clone();
-    bad.pop();
-    bad.push('0');
+    let last = bad.pop().unwrap();
+    bad.push(if last == '0' { '1' } else { '0' });
     let resp = client
         .get(&url)
         .header("Authorization", &bad)

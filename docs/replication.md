@@ -101,14 +101,31 @@ cleanly.
 ## Current status (0.1.0)
 
 - ✅ Primary-side event log with atomic append
-- ✅ `/v1/replication/events` + `/v1/replication/blob/:sha256`
-- ⏳ `vaultfsctl replicate` CLI — coming in a follow-up commit
-- ⏳ Replica-side cursor persistence + apply loop
-- ⏳ End-to-end replication e2e test (two servers, primary → replica)
+- ✅ `GET /v1/replication/events` + `GET /v1/replication/cursor`
+- ✅ `GET /v1/replication/blob/:sha256` (serve)
+- ✅ `PUT /v1/replication/blob/:sha256` (import on replica, hash-verified
+      in non-SSE mode)
+- ✅ `POST /v1/replication/apply` (write to DB directly so replicas
+      don't re-append to their own log)
+- ✅ `vaultfsctl replicate` — one-shot or polling loop, persisted cursor
+- ✅ End-to-end two-server test
 
-The primary side is usable today: you can point any HTTP client at the
-endpoints and reconstruct a mirror by hand. The turnkey CLI is the
-next step.
+## Usage
+
+```bash
+# On each replica, run this either as a one-shot cron or a long-lived loop:
+vaultfsctl \
+  --url http://replica-local:8000 \
+  --key "$REPLICA_ADMIN_KEY" \
+  replicate \
+  --primary https://primary.example.com \
+  --primary-key "$PRIMARY_ADMIN_KEY" \
+  --cursor-file /var/lib/vaultfs/replica.cursor \
+  --interval 5   # 0 to exit after one sweep
+```
+
+The cursor file is a single integer — the id of the last applied event.
+Delete it to force a full resync from event 0.
 
 ## Security
 

@@ -54,6 +54,32 @@ enum Commands {
         #[command(subcommand)]
         source: MigrateSource,
     },
+    /// Pull replication events from a primary VaultFS and apply them to the
+    /// local server. Designed to run as a one-shot or a tight loop.
+    Replicate {
+        /// Primary VaultFS URL (e.g. https://vaultfs-primary.example.com)
+        #[arg(long)]
+        primary: String,
+        /// Admin API key on the primary (read-only keys are not enough)
+        #[arg(long, env = "VAULTFS_PRIMARY_KEY")]
+        primary_key: String,
+        /// Local (replica) VaultFS URL. Defaults to --url.
+        #[arg(long)]
+        local: Option<String>,
+        /// Admin API key on the local replica. Defaults to --key.
+        #[arg(long, env = "VAULTFS_LOCAL_KEY")]
+        local_key: Option<String>,
+        /// Cursor file that records the last applied event id. A missing
+        /// file means start from event 0 (full catch-up).
+        #[arg(long, default_value = "./vaultfs-replica.cursor")]
+        cursor_file: PathBuf,
+        /// Poll interval in seconds. If 0, apply once and exit.
+        #[arg(long, default_value_t = 0u64)]
+        interval: u64,
+        /// Max events pulled per batch (server caps at 1000).
+        #[arg(long, default_value_t = 100u32)]
+        batch_size: u32,
+    },
 }
 
 #[derive(Subcommand)]
@@ -288,6 +314,30 @@ async fn main() -> Result<()> {
                 .await
             }
         },
+        Commands::Replicate {
+            primary,
+            primary_key,
+            local,
+            local_key,
+            cursor_file,
+            interval,
+            batch_size,
+        } => {
+            let local_url = local.unwrap_or_else(|| api.base_url.clone());
+            let local_key_val = local_key
+                .or_else(|| api.api_key.clone())
+                .ok_or_else(|| anyhow::anyhow!("no local key — pass --local-key or --key"))?;
+            cmd_replicate(
+                &primary,
+                &primary_key,
+                &local_url,
+                &local_key_val,
+                &cursor_file,
+                interval,
+                batch_size,
+            )
+            .await
+        }
     }
 }
 
@@ -1364,4 +1414,201 @@ async fn cmd_migrate_s3(
         std::process::exit(1);
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Replication
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Deserialize)]
+struct ReplEvent {
+    id: i64,
+    op: String,
+    bucket: String,
+    key: String,
+    #[serde(default)]
+    sha256: String,
+    #[serde(default)]
+    version_id: Option<String>,
+    #[serde(default)]
+    size: u64,
+    #[serde(default)]
+    content_type: String,
+}
+
+#[derive(serde::Deserialize)]
+struct EventsPage {
+    events: Vec<ReplEvent>,
+}
+
+fn load_cursor(path: &std::path::Path) -> i64 {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+fn save_cursor(path: &std::path::Path, id: i64) -> Result<()> {
+    std::fs::write(path, id.to_string())
+        .with_context(|| format!("failed to persist cursor to {}", path.display()))
+}
+
+async fn sync_once(
+    primary: &str,
+    primary_key: &str,
+    local: &str,
+    local_key: &str,
+    cursor_file: &std::path::Path,
+    batch_size: u32,
+) -> Result<(u64, i64)> {
+    let client = Client::new();
+    let mut cursor = load_cursor(cursor_file);
+    let mut applied: u64 = 0;
+
+    loop {
+        // Pull the next batch
+        let url = format!(
+            "{}/v1/replication/events?since={}&limit={}",
+            primary.trim_end_matches('/'),
+            cursor,
+            batch_size
+        );
+        let resp = client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", primary_key))
+            .send()
+            .await
+            .context("fetch events")?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("primary events HTTP {}: {}", status, body);
+        }
+        let page: EventsPage = resp.json().await.context("parse events")?;
+        if page.events.is_empty() {
+            return Ok((applied, cursor));
+        }
+
+        for event in &page.events {
+            apply_one(primary, primary_key, local, local_key, event)
+                .await
+                .with_context(|| format!("apply event id={}", event.id))?;
+            cursor = event.id;
+            save_cursor(cursor_file, cursor)?;
+            applied += 1;
+        }
+    }
+}
+
+async fn apply_one(
+    primary: &str,
+    primary_key: &str,
+    local: &str,
+    local_key: &str,
+    event: &ReplEvent,
+) -> Result<()> {
+    let client = Client::new();
+
+    // Ensure the blob is on the replica before we publish a metadata row
+    // that references it. Idempotent: if the local already has the blob
+    // the import endpoint just overwrites with identical bytes.
+    if matches!(event.op.as_str(), "put" | "version_put") && !event.sha256.is_empty() {
+        let blob_url = format!(
+            "{}/v1/replication/blob/{}",
+            primary.trim_end_matches('/'),
+            event.sha256
+        );
+        let resp = client
+            .get(&blob_url)
+            .header("Authorization", format!("Bearer {}", primary_key))
+            .send()
+            .await
+            .context("fetch blob")?;
+        if !resp.status().is_success() {
+            anyhow::bail!(
+                "primary blob {} HTTP {}",
+                &event.sha256,
+                resp.status().as_u16()
+            );
+        }
+        let bytes = resp.bytes().await.context("read blob body")?;
+
+        let import_url = format!(
+            "{}/v1/replication/blob/{}",
+            local.trim_end_matches('/'),
+            event.sha256
+        );
+        let resp = client
+            .put(&import_url)
+            .header("Authorization", format!("Bearer {}", local_key))
+            .body(bytes)
+            .send()
+            .await
+            .context("import blob to local")?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("local import blob HTTP {}: {}", status, body);
+        }
+    }
+
+    let apply_url = format!("{}/v1/replication/apply", local.trim_end_matches('/'));
+    let resp = client
+        .post(&apply_url)
+        .header("Authorization", format!("Bearer {}", local_key))
+        .json(&serde_json::json!({
+            "op": event.op,
+            "bucket": event.bucket,
+            "key": event.key,
+            "sha256": event.sha256,
+            "version_id": event.version_id,
+            "size": event.size,
+            "content_type": event.content_type,
+        }))
+        .send()
+        .await
+        .context("apply to local")?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("local apply HTTP {}: {}", status, body);
+    }
+    Ok(())
+}
+
+async fn cmd_replicate(
+    primary: &str,
+    primary_key: &str,
+    local: &str,
+    local_key: &str,
+    cursor_file: &std::path::Path,
+    interval: u64,
+    batch_size: u32,
+) -> Result<()> {
+    if interval == 0 {
+        println!("Replicating {} → {} (one-shot)...", primary, local);
+        let (n, cursor) = sync_once(
+            primary, primary_key, local, local_key, cursor_file, batch_size,
+        )
+        .await?;
+        println!("Applied {} event(s). Cursor at {}.", n, cursor);
+        return Ok(());
+    }
+
+    println!(
+        "Replicating {} → {} every {}s (Ctrl-C to stop)...",
+        primary, local, interval
+    );
+    loop {
+        match sync_once(
+            primary, primary_key, local, local_key, cursor_file, batch_size,
+        )
+        .await
+        {
+            Ok((0, _)) => {}
+            Ok((n, cursor)) => println!("[{}] +{} events (cursor={})", chrono::Utc::now(), n, cursor),
+            Err(e) => eprintln!("[{}] replication error: {}", chrono::Utc::now(), e),
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+    }
 }
