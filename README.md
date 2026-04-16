@@ -2,6 +2,9 @@
 
 High-performance, self-hosted object storage with built-in image processing. A single binary alternative to S3 + Cloudinary that runs on a simple VPS.
 
+→ **Landing page**: https://aniasse.github.io/vaultfs/
+→ **Release**: [v0.1.0](https://github.com/aniasse/vaultfs/releases/tag/v0.1.0) (Linux amd64, macOS arm64, Docker `ghcr.io/aniasse/vaultfs:latest`)
+
 ## Features
 
 - **Universal object storage** — any file type (images, PDFs, videos, archives…)
