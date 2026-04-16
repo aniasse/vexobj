@@ -1,4 +1,4 @@
-use axum::extract::{Path, Query, State};
+use axum::extract::{Extension, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, put};
@@ -7,7 +7,9 @@ use bytes::Bytes;
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::middleware::require_permission;
 use crate::state::AppState;
+use vaultfs_auth::ApiKey;
 use vaultfs_processing::{
     best_format_from_accept, transform_image, FitMode, OutputFormat, TransformParams,
 };
@@ -17,7 +19,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/v1/objects/{bucket}", get(list_objects))
         .route(
-            "/v1/objects/{bucket}/*key",
+            "/v1/objects/{bucket}/{*key}",
             put(put_object)
                 .get(get_object)
                 .delete(delete_object)
@@ -27,10 +29,18 @@ pub fn routes() -> Router<AppState> {
 
 async fn put_object(
     State(state): State<AppState>,
+    Extension(caller): Extension<ApiKey>,
     Path((bucket, key)): Path<(String, String)>,
     headers: HeaderMap,
     body: Bytes,
 ) -> impl IntoResponse {
+    if let Err(resp) = require_permission(&caller, "write").await {
+        return resp;
+    }
+    if let Err(e) = state.auth.check_bucket_access(&caller, &bucket) {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()}))).into_response();
+    }
+
     let content_type = headers
         .get("content-type")
         .and_then(|v| v.to_str().ok())
@@ -62,14 +72,27 @@ struct GetObjectQuery {
     format: Option<String>,
     quality: Option<u8>,
     fit: Option<String>,
+    // Presigned URL params
+    #[allow(dead_code)]
+    expires: Option<i64>,
+    #[allow(dead_code)]
+    signature: Option<String>,
 }
 
 async fn get_object(
     State(state): State<AppState>,
+    Extension(caller): Extension<ApiKey>,
     Path((bucket, key)): Path<(String, String)>,
     Query(query): Query<GetObjectQuery>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
+    if let Err(resp) = require_permission(&caller, "read").await {
+        return resp;
+    }
+    if let Err(e) = state.auth.check_bucket_access(&caller, &bucket) {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()}))).into_response();
+    }
+
     let (meta, data) = match state.storage.get_object(&bucket, &key).await {
         Ok(result) => result,
         Err(_) => {
@@ -87,7 +110,6 @@ async fn get_object(
         || query.format.is_some()
         || query.quality.is_some();
 
-    // If it's an image and transforms are requested, process it
     if is_image && has_transform {
         let accept = headers
             .get("accept")
@@ -112,7 +134,6 @@ async fn get_object(
             },
         };
 
-        // Check cache first
         let cache_key = format!("{}/{}/{}", bucket, key, params.cache_key());
         if let Some((cached_data, cached_type)) = state.cache.get(&cache_key).await {
             return (
@@ -126,11 +147,9 @@ async fn get_object(
                 .into_response();
         }
 
-        // Transform
         match transform_image(&data, &params) {
             Ok((transformed, content_type)) => {
                 let bytes = Bytes::from(transformed);
-                // Cache the result
                 let _ = state.cache.put(&cache_key, bytes.clone(), &content_type).await;
                 (
                     StatusCode::OK,
@@ -149,7 +168,6 @@ async fn get_object(
                 .into_response(),
         }
     } else {
-        // Serve raw file
         (
             StatusCode::OK,
             [
@@ -165,8 +183,13 @@ async fn get_object(
 
 async fn head_object(
     State(state): State<AppState>,
+    Extension(caller): Extension<ApiKey>,
     Path((bucket, key)): Path<(String, String)>,
 ) -> impl IntoResponse {
+    if let Err(resp) = require_permission(&caller, "read").await {
+        return resp;
+    }
+
     match state.storage.get_object_meta(&bucket, &key) {
         Ok(meta) => (
             StatusCode::OK,
@@ -184,8 +207,16 @@ async fn head_object(
 
 async fn delete_object(
     State(state): State<AppState>,
+    Extension(caller): Extension<ApiKey>,
     Path((bucket, key)): Path<(String, String)>,
 ) -> impl IntoResponse {
+    if let Err(resp) = require_permission(&caller, "delete").await {
+        return resp;
+    }
+    if let Err(e) = state.auth.check_bucket_access(&caller, &bucket) {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()}))).into_response();
+    }
+
     match state.storage.delete_object(&bucket, &key).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(_) => (
@@ -206,9 +237,14 @@ struct ListQuery {
 
 async fn list_objects(
     State(state): State<AppState>,
+    Extension(caller): Extension<ApiKey>,
     Path(bucket): Path<String>,
     Query(query): Query<ListQuery>,
 ) -> impl IntoResponse {
+    if let Err(resp) = require_permission(&caller, "read").await {
+        return resp;
+    }
+
     match state.storage.list_objects(&ListObjectsRequest {
         bucket,
         prefix: query.prefix,

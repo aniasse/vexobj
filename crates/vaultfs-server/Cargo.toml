@@ -24,6 +24,7 @@ chrono = { workspace = true }
 uuid = { workspace = true }
 bytes = { workspace = true }
 mime_guess = { workspace = true }
+rand = { workspace = true }
 
 vaultfs-storage = { workspace = true }
 vaultfs-processing = { workspace = true }

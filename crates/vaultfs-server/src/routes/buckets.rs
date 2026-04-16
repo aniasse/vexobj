@@ -1,4 +1,4 @@
-use axum::extract::{Path, State};
+use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
@@ -6,7 +6,9 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::middleware::require_permission;
 use crate::state::AppState;
+use vaultfs_auth::ApiKey;
 use vaultfs_storage::CreateBucketRequest;
 
 pub fn routes() -> Router<AppState> {
@@ -27,8 +29,13 @@ struct CreateBucketBody {
 
 async fn create_bucket(
     State(state): State<AppState>,
+    Extension(caller): Extension<ApiKey>,
     Json(body): Json<CreateBucketBody>,
 ) -> impl IntoResponse {
+    if let Err(resp) = require_permission(&caller, "admin").await {
+        return resp;
+    }
+
     match state.storage.create_bucket(&CreateBucketRequest {
         name: body.name,
         public: body.public,
@@ -42,7 +49,14 @@ async fn create_bucket(
     }
 }
 
-async fn list_buckets(State(state): State<AppState>) -> impl IntoResponse {
+async fn list_buckets(
+    State(state): State<AppState>,
+    Extension(caller): Extension<ApiKey>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_permission(&caller, "read").await {
+        return resp;
+    }
+
     match state.storage.list_buckets() {
         Ok(buckets) => Json(json!({"buckets": buckets})).into_response(),
         Err(e) => (
@@ -55,8 +69,13 @@ async fn list_buckets(State(state): State<AppState>) -> impl IntoResponse {
 
 async fn get_bucket(
     State(state): State<AppState>,
+    Extension(caller): Extension<ApiKey>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
+    if let Err(resp) = require_permission(&caller, "read").await {
+        return resp;
+    }
+
     match state.storage.get_bucket(&name) {
         Ok(bucket) => Json(json!(bucket)).into_response(),
         Err(_) => (
@@ -69,8 +88,13 @@ async fn get_bucket(
 
 async fn delete_bucket(
     State(state): State<AppState>,
+    Extension(caller): Extension<ApiKey>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
+    if let Err(resp) = require_permission(&caller, "admin").await {
+        return resp;
+    }
+
     match state.storage.delete_bucket(&name) {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => (
