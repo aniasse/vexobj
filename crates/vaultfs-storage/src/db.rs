@@ -80,6 +80,13 @@ impl Database {
             "ALTER TABLE buckets ADD COLUMN versioning_enabled INTEGER NOT NULL DEFAULT 0;",
         );
 
+        // Object-lock columns — retain_until is an ISO-8601 timestamp; NULL means no retention.
+        // legal_hold is 0/1. Lives on the `objects` row for the live object.
+        let _ = conn.execute_batch(
+            "ALTER TABLE objects ADD COLUMN retain_until TEXT;
+             ALTER TABLE objects ADD COLUMN legal_hold INTEGER NOT NULL DEFAULT 0;",
+        );
+
         Ok(())
     }
 
@@ -580,6 +587,92 @@ impl Database {
             params![bucket, key],
         )?;
         Ok(paths)
+    }
+
+    // ── Object lock ─────────────────────────────────────────────────────
+
+    pub fn get_lock(&self, bucket: &str, key: &str) -> Result<ObjectLock, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT retain_until, legal_hold FROM objects WHERE bucket = ?1 AND key = ?2",
+            params![bucket, key],
+            |row| {
+                let retain_until: Option<String> = row.get(0)?;
+                let legal_hold: i32 = row.get(1)?;
+                Ok(ObjectLock {
+                    retain_until: retain_until.and_then(|s| s.parse().ok()),
+                    legal_hold: legal_hold != 0,
+                })
+            },
+        )
+        .map_err(|_| StorageError::ObjectNotFound {
+            bucket: bucket.to_string(),
+            key: key.to_string(),
+        })
+    }
+
+    /// Apply a lock to a live object. `retain_until` can only be extended —
+    /// shortening (or clearing while still in the future) is rejected to
+    /// preserve WORM semantics. `legal_hold` can be toggled freely.
+    pub fn set_lock(
+        &self,
+        bucket: &str,
+        key: &str,
+        retain_until: Option<chrono::DateTime<Utc>>,
+        legal_hold: bool,
+    ) -> Result<ObjectLock, StorageError> {
+        let current = self.get_lock(bucket, key)?;
+        let now = Utc::now();
+
+        // WORM: retention cannot be shortened while still active.
+        if let Some(existing) = current.retain_until {
+            if existing > now {
+                match retain_until {
+                    Some(new) if new < existing => {
+                        return Err(StorageError::ObjectLocked {
+                            bucket: bucket.to_string(),
+                            key: key.to_string(),
+                            reason: "retention cannot be shortened while active".into(),
+                        });
+                    }
+                    None => {
+                        return Err(StorageError::ObjectLocked {
+                            bucket: bucket.to_string(),
+                            key: key.to_string(),
+                            reason: "retention cannot be cleared while active".into(),
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE objects SET retain_until = ?1, legal_hold = ?2 WHERE bucket = ?3 AND key = ?4",
+            params![
+                retain_until.map(|t| t.to_rfc3339()),
+                legal_hold as i32,
+                bucket,
+                key,
+            ],
+        )?;
+        Ok(ObjectLock {
+            retain_until,
+            legal_hold,
+        })
+    }
+
+    /// Clear legal hold on a live object. Separate from `set_lock` so callers
+    /// can toggle the hold without having to re-supply `retain_until`.
+    pub fn clear_legal_hold(&self, bucket: &str, key: &str) -> Result<(), StorageError> {
+        self.get_lock(bucket, key)?;
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE objects SET legal_hold = 0 WHERE bucket = ?1 AND key = ?2",
+            params![bucket, key],
+        )?;
+        Ok(())
     }
 
     /// True if any row in `objects` or `object_versions` still references this blob.

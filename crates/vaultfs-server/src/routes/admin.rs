@@ -27,6 +27,12 @@ pub fn routes() -> Router<AppState> {
         .route("/v1/admin/lifecycle/run", axum::routing::post(run_lifecycle))
         .route("/v1/admin/lifecycle/rule/{id}", axum::routing::delete(delete_lifecycle_rule))
         .route("/v1/admin/migrate/s3", axum::routing::post(migrate_s3_stub))
+        .route(
+            "/v1/admin/lock/{bucket}/{*key}",
+            get(get_object_lock)
+                .put(set_object_lock)
+                .delete(release_legal_hold),
+        )
 }
 
 #[derive(Deserialize)]
@@ -429,6 +435,104 @@ async fn run_lifecycle(
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+// ── Object lock ─────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct SetLockBody {
+    /// ISO-8601 timestamp (UTC). Omit or set null to leave retention unset.
+    #[serde(default)]
+    retain_until: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
+    legal_hold: bool,
+}
+
+async fn get_object_lock(
+    State(state): State<AppState>,
+    Extension(caller): Extension<ApiKey>,
+    Path((bucket, key)): Path<(String, String)>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_permission(&caller, "admin").await {
+        return resp;
+    }
+    match state.storage.get_lock(&bucket, &key) {
+        Ok(lock) => (StatusCode::OK, Json(json!(lock))).into_response(),
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "object not found"})),
+        )
+            .into_response(),
+    }
+}
+
+async fn set_object_lock(
+    State(state): State<AppState>,
+    Extension(caller): Extension<ApiKey>,
+    Path((bucket, key)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(body): Json<SetLockBody>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_permission(&caller, "admin").await {
+        return resp;
+    }
+
+    let ip = extract_ip(&headers);
+
+    match state
+        .storage
+        .set_lock(&bucket, &key, body.retain_until, body.legal_hold)
+    {
+        Ok(lock) => {
+            state.audit.log(
+                &key_prefix(&caller),
+                "object.lock.set",
+                &format!("{}/{}", bucket, key),
+                &json!(lock),
+                &ip,
+            );
+            (StatusCode::OK, Json(json!(lock))).into_response()
+        }
+        Err(e) => {
+            let status = match &e {
+                vaultfs_storage::StorageError::ObjectNotFound { .. } => StatusCode::NOT_FOUND,
+                vaultfs_storage::StorageError::ObjectLocked { .. } => StatusCode::CONFLICT,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            (status, Json(json!({"error": e.to_string()}))).into_response()
+        }
+    }
+}
+
+async fn release_legal_hold(
+    State(state): State<AppState>,
+    Extension(caller): Extension<ApiKey>,
+    Path((bucket, key)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(resp) = require_permission(&caller, "admin").await {
+        return resp;
+    }
+
+    let ip = extract_ip(&headers);
+
+    match state.storage.clear_legal_hold(&bucket, &key) {
+        Ok(()) => {
+            state.audit.log(
+                &key_prefix(&caller),
+                "object.lock.legal_hold.release",
+                &format!("{}/{}", bucket, key),
+                &json!({}),
+                &ip,
+            );
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "object not found"})),
         )
             .into_response(),
     }

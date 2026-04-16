@@ -162,6 +162,21 @@ impl StorageEngine {
     }
 
     pub async fn delete_object(&self, bucket: &str, key: &str) -> Result<(), StorageError> {
+        // Object-lock gate: refuse the delete if retention or legal hold is active.
+        if let Ok(lock) = self.db.get_lock(bucket, key) {
+            if lock.is_active(chrono::Utc::now()) {
+                return Err(StorageError::ObjectLocked {
+                    bucket: bucket.to_string(),
+                    key: key.to_string(),
+                    reason: if lock.legal_hold {
+                        "legal hold is in effect".into()
+                    } else {
+                        "retention period has not elapsed".into()
+                    },
+                });
+            }
+        }
+
         // If versioning is enabled, create a delete marker instead of hard-deleting
         if self.db.is_versioning_enabled(bucket) {
             let version_id = uuid::Uuid::new_v4().to_string();
@@ -346,6 +361,26 @@ impl StorageEngine {
         self.db.enable_versioning(bucket)
     }
 
+    // ── Object lock ─────────────────────────────────────────────────────
+
+    pub fn get_lock(&self, bucket: &str, key: &str) -> Result<ObjectLock, StorageError> {
+        self.db.get_lock(bucket, key)
+    }
+
+    pub fn set_lock(
+        &self,
+        bucket: &str,
+        key: &str,
+        retain_until: Option<chrono::DateTime<chrono::Utc>>,
+        legal_hold: bool,
+    ) -> Result<ObjectLock, StorageError> {
+        self.db.set_lock(bucket, key, retain_until, legal_hold)
+    }
+
+    pub fn clear_legal_hold(&self, bucket: &str, key: &str) -> Result<(), StorageError> {
+        self.db.clear_legal_hold(bucket, key)
+    }
+
     /// Delete a specific version of an object. If the version is a delete-marker,
     /// the row is just removed. Otherwise, the row is deleted and the blob is
     /// removed when no other object or version still references it.
@@ -374,6 +409,18 @@ impl StorageEngine {
     /// Hard-delete every version and delete-marker for a key, including the
     /// live object. Removes any blob that becomes orphaned (when dedup is off).
     pub async fn purge_versions(&self, bucket: &str, key: &str) -> Result<u64, StorageError> {
+        // Object-lock gate — purge is strictly more destructive than delete,
+        // so it must also refuse when the live object is locked.
+        if let Ok(lock) = self.db.get_lock(bucket, key) {
+            if lock.is_active(chrono::Utc::now()) {
+                return Err(StorageError::ObjectLocked {
+                    bucket: bucket.to_string(),
+                    key: key.to_string(),
+                    reason: "purge blocked by active lock".into(),
+                });
+            }
+        }
+
         let live_path = self.db.get_object(bucket, key).ok().map(|(_, p)| p);
         if live_path.is_some() {
             let _ = self.db.delete_object(bucket, key);

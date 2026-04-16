@@ -12,6 +12,13 @@ pub enum StorageError {
     #[error("object too large: {size} bytes (max: {max})")]
     ObjectTooLarge { size: u64, max: u64 },
 
+    #[error("object is locked: {bucket}/{key} ({reason})")]
+    ObjectLocked {
+        bucket: String,
+        key: String,
+        reason: String,
+    },
+
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 

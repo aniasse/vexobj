@@ -59,6 +59,21 @@ pub struct ObjectVersion {
     pub is_delete_marker: bool,
 }
 
+/// Object-lock state for a live object. Either retention (a timestamp until
+/// which the object cannot be deleted) or a legal hold (boolean) or both.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ObjectLock {
+    pub retain_until: Option<DateTime<Utc>>,
+    pub legal_hold: bool,
+}
+
+impl ObjectLock {
+    /// True when retention is still in the future OR legal hold is on.
+    pub fn is_active(&self, now: DateTime<Utc>) -> bool {
+        self.legal_hold || self.retain_until.map(|t| t > now).unwrap_or(false)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LifecycleRule {
     pub id: String,

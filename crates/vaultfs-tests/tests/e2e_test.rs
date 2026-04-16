@@ -1021,6 +1021,383 @@ async fn e2e_delete_version_and_purge() {
 }
 
 #[tokio::test]
+async fn e2e_object_lock() {
+    let srv = TestServer::start();
+    let client = srv.client();
+    let auth = srv.auth_header();
+
+    // Setup: bucket + object
+    client
+        .post(format!("{}/v1/buckets", srv.url))
+        .header("Authorization", &auth)
+        .json(&serde_json::json!({"name": "lock-bucket", "public": false}))
+        .send()
+        .await
+        .unwrap();
+    client
+        .put(format!("{}/v1/objects/lock-bucket/sealed.txt", srv.url))
+        .header("Authorization", &auth)
+        .body("contents")
+        .send()
+        .await
+        .unwrap();
+
+    // Initially no lock: GET returns default (legal_hold=false, retain_until=null)
+    let resp = client
+        .get(format!("{}/v1/admin/lock/lock-bucket/sealed.txt", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let lock: Value = resp.json().await.unwrap();
+    assert_eq!(lock["legal_hold"], false);
+    assert!(lock["retain_until"].is_null());
+
+    // Apply a future retention + legal hold
+    let future = (chrono::Utc::now() + chrono::Duration::days(30))
+        .to_rfc3339();
+    let resp = client
+        .put(format!("{}/v1/admin/lock/lock-bucket/sealed.txt", srv.url))
+        .header("Authorization", &auth)
+        .json(&serde_json::json!({"retain_until": future, "legal_hold": true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // DELETE should now be rejected with 409 and a reason mentioning the lock
+    let resp = client
+        .delete(format!("{}/v1/objects/lock-bucket/sealed.txt", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
+    let body: Value = resp.json().await.unwrap();
+    assert!(body["error"].as_str().unwrap().contains("locked"));
+
+    // purge_versions must also be blocked
+    let resp = client
+        .delete(format!("{}/v1/versions/lock-bucket/sealed.txt", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
+
+    // Shortening retention must be rejected (WORM)
+    let soon = (chrono::Utc::now() + chrono::Duration::seconds(60))
+        .to_rfc3339();
+    let resp = client
+        .put(format!("{}/v1/admin/lock/lock-bucket/sealed.txt", srv.url))
+        .header("Authorization", &auth)
+        .json(&serde_json::json!({"retain_until": soon, "legal_hold": true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
+
+    // Release the legal hold via DELETE; retention is still active so delete still fails
+    let resp = client
+        .delete(format!("{}/v1/admin/lock/lock-bucket/sealed.txt", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 204);
+
+    let resp = client
+        .delete(format!("{}/v1/objects/lock-bucket/sealed.txt", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
+    let body: Value = resp.json().await.unwrap();
+    // Now the reason should cite retention, not legal hold
+    assert!(body["reason"].as_str().unwrap().contains("retention"));
+}
+
+// ---------------------------------------------------------------------------
+// S3-compatible API (/s3/*)
+// ---------------------------------------------------------------------------
+//
+// Our s3-compat layer accepts Bearer tokens as a shortcut in addition to the
+// full AWS4-HMAC-SHA256 Authorization header, so these tests reuse the same
+// `auth_header()` helper as the native-API tests. Each test covers one surface
+// a real S3 client would exercise.
+
+#[tokio::test]
+async fn e2e_s3_compat_bucket_lifecycle() {
+    let srv = TestServer::start();
+    let client = srv.client();
+    let auth = srv.auth_header();
+
+    // PUT bucket
+    let resp = client
+        .put(format!("{}/s3/s3test-bucket", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert!(resp.headers().contains_key("location"));
+
+    // HEAD bucket → 200
+    let resp = client
+        .head(format!("{}/s3/s3test-bucket", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // List buckets (service-level) returns XML with our bucket name.
+    let resp = client
+        .get(format!("{}/s3", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(ct.contains("xml"), "expected xml, got {ct}");
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("<ListAllMyBucketsResult"));
+    assert!(body.contains("<Name>s3test-bucket</Name>"));
+
+    // DELETE empty bucket → 204
+    let resp = client
+        .delete(format!("{}/s3/s3test-bucket", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 204);
+
+    // HEAD on deleted bucket → 404
+    let resp = client
+        .head(format!("{}/s3/s3test-bucket", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+}
+
+#[tokio::test]
+async fn e2e_s3_compat_object_crud() {
+    let srv = TestServer::start();
+    let client = srv.client();
+    let auth = srv.auth_header();
+
+    // Create bucket via S3 route
+    client
+        .put(format!("{}/s3/s3obj", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+
+    // PUT object
+    let resp = client
+        .put(format!("{}/s3/s3obj/hello.txt", srv.url))
+        .header("Authorization", &auth)
+        .header("Content-Type", "text/plain")
+        .body("hello s3")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let etag = resp
+        .headers()
+        .get("etag")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(etag.starts_with('"') && etag.ends_with('"'), "etag quoted: {etag}");
+
+    // HEAD object
+    let resp = client
+        .head(format!("{}/s3/s3obj/hello.txt", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers().get("content-type").unwrap().to_str().unwrap(),
+        "text/plain"
+    );
+    assert_eq!(
+        resp.headers().get("content-length").unwrap().to_str().unwrap(),
+        "8"
+    );
+
+    // GET object
+    let resp = client
+        .get(format!("{}/s3/s3obj/hello.txt", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.text().await.unwrap(), "hello s3");
+
+    // DELETE object → 204
+    let resp = client
+        .delete(format!("{}/s3/s3obj/hello.txt", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 204);
+
+    // GET on deleted object → NoSuchKey XML
+    let resp = client
+        .get(format!("{}/s3/s3obj/hello.txt", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("NoSuchKey"));
+}
+
+#[tokio::test]
+async fn e2e_s3_compat_list_objects_v2() {
+    let srv = TestServer::start();
+    let client = srv.client();
+    let auth = srv.auth_header();
+
+    client
+        .put(format!("{}/s3/s3list", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+
+    for (key, body) in [
+        ("docs/a.txt", "a"),
+        ("docs/b.txt", "b"),
+        ("docs/sub/c.txt", "c"),
+        ("images/x.png", "png"),
+    ] {
+        client
+            .put(format!("{}/s3/s3list/{}", srv.url, key))
+            .header("Authorization", &auth)
+            .body(body.to_string())
+            .send()
+            .await
+            .unwrap();
+    }
+
+    // list-type=2 with prefix
+    let resp = client
+        .get(format!("{}/s3/s3list?list-type=2&prefix=docs/", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("<ListBucketResult"));
+    assert!(body.contains("<Key>docs/a.txt</Key>"));
+    assert!(body.contains("<Key>docs/b.txt</Key>"));
+    assert!(body.contains("<Key>docs/sub/c.txt</Key>"));
+    assert!(!body.contains("<Key>images/x.png</Key>"));
+
+    // prefix + delimiter collapses the `sub/` subtree into a CommonPrefix
+    let resp = client
+        .get(format!(
+            "{}/s3/s3list?list-type=2&prefix=docs/&delimiter=/",
+            srv.url
+        ))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("<Key>docs/a.txt</Key>"));
+    assert!(body.contains("<Key>docs/b.txt</Key>"));
+    assert!(!body.contains("<Key>docs/sub/c.txt</Key>"));
+    assert!(body.contains("<Prefix>docs/sub/</Prefix>"));
+}
+
+#[tokio::test]
+async fn e2e_s3_compat_copy_object() {
+    let srv = TestServer::start();
+    let client = srv.client();
+    let auth = srv.auth_header();
+
+    client
+        .put(format!("{}/s3/s3copy", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+
+    client
+        .put(format!("{}/s3/s3copy/source.txt", srv.url))
+        .header("Authorization", &auth)
+        .body("original payload")
+        .send()
+        .await
+        .unwrap();
+
+    // Copy via x-amz-copy-source
+    let resp = client
+        .put(format!("{}/s3/s3copy/dest.txt", srv.url))
+        .header("Authorization", &auth)
+        .header("x-amz-copy-source", "/s3copy/source.txt")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("<CopyObjectResult"));
+
+    // Dest has the same content as source
+    let resp = client
+        .get(format!("{}/s3/s3copy/dest.txt", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.text().await.unwrap(), "original payload");
+}
+
+#[tokio::test]
+async fn e2e_s3_compat_rejects_missing_auth() {
+    let srv = TestServer::start();
+    let client = srv.client();
+
+    // No Authorization header → AccessDenied
+    let resp = client
+        .get(format!("{}/s3", srv.url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("AccessDenied"));
+
+    // Bad bearer → AccessDenied
+    let resp = client
+        .get(format!("{}/s3", srv.url))
+        .header("Authorization", "Bearer not-a-real-key")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+}
+
+#[tokio::test]
 async fn e2e_migrate_s3_stub() {
     let srv = TestServer::start();
     let client = srv.client();

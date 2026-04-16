@@ -434,6 +434,11 @@ async fn delete_object(
             }
             StatusCode::NO_CONTENT.into_response()
         }
+        Err(vaultfs_storage::StorageError::ObjectLocked { reason, .. }) => (
+            StatusCode::CONFLICT,
+            Json(json!({"error": "object is locked", "reason": reason})),
+        )
+            .into_response(),
         Err(_) => (
             StatusCode::NOT_FOUND,
             Json(json!({"error": "object not found"})),
@@ -525,6 +530,11 @@ async fn purge_versions(
             Json(json!({"bucket": bucket, "key": key, "blobs_removed": blobs_removed}))
                 .into_response()
         }
+        Err(vaultfs_storage::StorageError::ObjectLocked { reason, .. }) => (
+            StatusCode::CONFLICT,
+            Json(json!({"error": "object is locked", "reason": reason})),
+        )
+            .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": e.to_string()})),
