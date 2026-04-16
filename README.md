@@ -4,22 +4,21 @@ High-performance, self-hosted object storage with built-in image processing. A s
 
 ## Features
 
-- **Universal object storage** — store any file type (images, PDFs, videos, documents, archives)
-- **Image processing on the fly** — resize, convert, crop via URL query parameters
-- **Auto format negotiation** — serves WebP based on browser `Accept` header
+- **Universal object storage** — any file type (images, PDFs, videos, archives…)
+- **Image processing on the fly** — resize / crop / convert via URL query parameters
+- **Auto format negotiation** — AVIF / WebP served based on the browser `Accept` header
 - **Content-addressable deduplication** — identical files stored once
-- **Multi-level cache** — in-memory LRU + disk cache for transformed images
-- **API key authentication** — per-key permissions (read/write/delete/admin) and bucket access control
-- **Presigned URLs** — temporary signed URLs for secure upload/download
-- **Multipart upload** — upload multiple files in a single request
-- **Auto bootstrap** — first admin key generated on startup
-- **S3-compatible API** — ListBuckets, GetObject, PutObject, CopyObject, DeleteObject, HeadObject, ListObjectsV2
-- **Admin dashboard** — embedded web UI at `/dashboard` for managing buckets, keys, and monitoring storage
-- **Stats endpoint** — storage metrics, per-bucket stats, disk usage
-- **Docker support** — Dockerfile + docker-compose included
-- **Single binary** — no external dependencies, no Docker required
-- **SQLite metadata** — zero-ops database, backup = copy a file
-- **14 MB binary** — lightweight, fast startup
+- **Versioning & delete-markers** — history per object, with `?version_id=` on GET/DELETE and a one-shot purge endpoint
+- **Object lock (WORM)** — per-object retention + legal hold; blocks deletes with HTTP 409
+- **Lifecycle rules** — expire objects by prefix + age, on-demand or scheduled
+- **Server-side encryption at rest** — AES-256-GCM per-blob keys derived from a master key; dedup still works
+- **Multi-level cache** — in-memory LRU + disk cache (both enforced) for transformed images
+- **API key auth** — per-key permissions (read / write / delete / admin) and bucket scoping
+- **S3-compatible API** with **real AWS Signature V4 verification** — plug in any S3 SDK
+- **Presigned URLs** + **multipart upload**
+- **Admin dashboard** at `/dashboard`, Prometheus **metrics** at `/metrics`, OpenAPI spec at `/openapi.yaml`
+- **Single ~14 MB binary**, SQLite metadata, no external dependencies
+- **Official SDKs** — TypeScript, Python, Go
 
 ## Quick Start
 
@@ -183,9 +182,82 @@ Access the built-in admin dashboard at `http://localhost:8000/dashboard`. Enter 
 |-----------|-------------|---------|
 | `w` | Width in pixels | `?w=300` |
 | `h` | Height in pixels | `?h=200` |
-| `format` | Output format (jpeg, png, webp, gif) | `?format=webp` |
+| `format` | Output format (jpeg, png, webp, avif, gif) | `?format=webp` |
 | `quality` | Compression quality (1-100) | `?quality=80` |
 | `fit` | Resize mode (cover, contain, fill) | `?fit=contain` |
+
+### Versioning
+
+```bash
+# Enable versioning on a bucket (admin)
+curl -X POST http://localhost:8000/v1/admin/versioning/photos \
+  -H "Authorization: Bearer $ADMIN_KEY"
+
+# Every subsequent PUT creates a new version. List them (newest first):
+curl http://localhost:8000/v1/versions/photos/vacation/beach.jpg \
+  -H "Authorization: Bearer $API_KEY"
+
+# Fetch a specific historical version
+curl "http://localhost:8000/v1/objects/photos/vacation/beach.jpg?version_id=<id>" \
+  -H "Authorization: Bearer $API_KEY"
+
+# Remove a single version (newest remaining becomes is_latest)
+curl -X DELETE "http://localhost:8000/v1/objects/photos/vacation/beach.jpg?version_id=<id>" \
+  -H "Authorization: Bearer $API_KEY"
+
+# Purge every version and the live object in one call
+curl -X DELETE http://localhost:8000/v1/versions/photos/vacation/beach.jpg \
+  -H "Authorization: Bearer $API_KEY"
+```
+
+### Object lock (retention + legal hold)
+
+```bash
+# Lock an object for 30 days, also set a legal hold
+curl -X PUT http://localhost:8000/v1/admin/lock/photos/contract.pdf \
+  -H "Authorization: Bearer $ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"retain_until\": \"$(date -u -d '+30 days' +%FT%TZ)\", \"legal_hold\": true}"
+
+# DELETE now returns 409 while the lock is active
+curl -X DELETE http://localhost:8000/v1/objects/photos/contract.pdf \
+  -H "Authorization: Bearer $API_KEY"
+# → HTTP 409 {"error":"object is locked","reason":"legal hold is in effect"}
+
+# Legal hold can be released; retention cannot be shortened while active
+curl -X DELETE http://localhost:8000/v1/admin/lock/photos/contract.pdf \
+  -H "Authorization: Bearer $ADMIN_KEY"
+```
+
+### Lifecycle rules
+
+```bash
+# Expire everything under tmp/ after 7 days
+curl -X POST http://localhost:8000/v1/admin/lifecycle/photos \
+  -H "Authorization: Bearer $ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"prefix": "tmp/", "expire_days": 7}'
+
+# Run the sweep now (instead of waiting for the schedule)
+curl -X POST http://localhost:8000/v1/admin/lifecycle/run \
+  -H "Authorization: Bearer $ADMIN_KEY"
+```
+
+### Migrate from S3 / MinIO
+
+```bash
+# Stream an entire bucket from any S3-compatible source (uses AWS SigV4)
+vaultfsctl migrate s3 \
+  --source-endpoint https://s3.amazonaws.com \
+  --source-bucket old-photos \
+  --source-access-key AKID... \
+  --source-secret-key SECRET... \
+  --dest-bucket photos
+```
+
+### S3-compatible API with SigV4
+
+The `/s3/*` routes verify `AWS4-HMAC-SHA256` signatures (not just the access key) — tampered URLs and mutated signatures are rejected. Point any S3 SDK at the VaultFS endpoint and use a VaultFS API key as both `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. A `Bearer` header is also accepted as a convenience shortcut.
 
 ## Configuration
 
@@ -208,6 +280,13 @@ max_transform_size = "50MB"
 
 [auth]
 enabled = true
+
+# Optional: encrypt blobs at rest. master_key is 64 hex chars (32 bytes).
+# Prefer VAULTFS_SSE_MASTER_KEY env var in production so it stays out of
+# the config file.
+[sse]
+enabled = false
+master_key = ""
 ```
 
 ## Docker
@@ -226,12 +305,21 @@ docker run -p 8000:8000 -v vaultfs-data:/data vaultfs
 ```
 vaultfs/
 ├── crates/
-│   ├── vaultfs-server/       # HTTP server (axum) + auth middleware
-│   ├── vaultfs-storage/      # Storage engine + SQLite metadata
+│   ├── vaultfs-server/       # HTTP server (axum) + middleware + routes
+│   ├── vaultfs-storage/      # Storage engine, SQLite metadata, SSE
 │   ├── vaultfs-processing/   # Image transformation
-│   ├── vaultfs-cache/        # Multi-level LRU cache
+│   ├── vaultfs-cache/        # Multi-level LRU cache (memory + disk)
 │   ├── vaultfs-auth/         # API keys, permissions, presigned URLs
-│   └── vaultfs-s3-compat/    # S3-compatible API layer
+│   ├── vaultfs-s3-compat/    # S3-compatible API with SigV4
+│   ├── vaultfs-cli/          # vaultfsctl admin CLI
+│   └── vaultfs-tests/        # End-to-end integration tests
+├── sdks/
+│   ├── js/                   # TypeScript / JavaScript SDK
+│   ├── python/               # Python SDK (httpx)
+│   └── go/                   # Go SDK (net/http)
+├── openapi.yaml              # OpenAPI 3.1 spec (served at /openapi.yaml)
+├── Dockerfile + docker-compose.yml
+└── deploy/helm/              # Kubernetes deployment
 ```
 
 ## License
