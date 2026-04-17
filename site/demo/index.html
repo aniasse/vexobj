@@ -383,11 +383,31 @@ a:hover { opacity: 0.85; }
   transition: border-color 140ms ease, transform 140ms ease;
 }
 .tile:hover { border-color: var(--emerald); transform: translateY(-1px); }
-.tile img {
+.tile img,
+.tile video {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
+}
+.tile .video-badge {
+  position: absolute;
+  top: 6px; left: 6px;
+  padding: 2px 7px;
+  border-radius: 3px;
+  background: rgba(10, 14, 39, 0.85);
+  color: var(--ink-strong);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  border: 1px solid var(--border);
+}
+.tile .video-badge::before {
+  content: "▶";
+  color: var(--emerald);
+  margin-right: 4px;
+  font-size: 9px;
 }
 .tile .placeholder {
   width: 100%;
@@ -464,7 +484,8 @@ a:hover { opacity: 0.85; }
   padding: 20px;
   min-height: 300px;
 }
-.lightbox-img img {
+.lightbox-img img,
+.lightbox-img video {
   max-width: 100%;
   max-height: 70vh;
   display: block;
@@ -681,9 +702,9 @@ a:hover { opacity: 0.85; }
     <section id="uploader-section" hidden>
       <label class="dropzone" for="file-input" id="dropzone">
         <div class="icon">⬆</div>
-        <div class="title">Glisser des images ici</div>
-        <div class="hint">ou cliquez pour sélectionner · JPEG, PNG, WebP, AVIF</div>
-        <input id="file-input" type="file" accept="image/*" multiple>
+        <div class="title">Glisser des fichiers ici</div>
+        <div class="hint">ou cliquez pour sélectionner · images (JPEG, PNG, WebP, AVIF) · vidéos (MP4, MOV)</div>
+        <input id="file-input" type="file" accept="image/*,video/*" multiple>
       </label>
     </section>
 
@@ -710,7 +731,8 @@ a:hover { opacity: 0.85; }
   <div class="lightbox-dialog">
     <button class="close" id="lightbox-close" aria-label="Fermer">✕</button>
     <div class="lightbox-img">
-      <img id="lightbox-img" alt="">
+      <img id="lightbox-img" alt="" hidden>
+      <video id="lightbox-video" controls playsinline hidden></video>
     </div>
     <div class="lightbox-info">
       <h3 id="lightbox-title">—</h3>
@@ -719,8 +741,12 @@ a:hover { opacity: 0.85; }
         <div class="meta-row"><dt>Type</dt><dd id="lb-type">—</dd></div>
         <div class="meta-row"><dt>SHA-256</dt><dd id="lb-sha" style="font-size: 10px;">—</dd></div>
         <div class="meta-row"><dt>Ajouté le</dt><dd id="lb-date">—</dd></div>
+        <div class="meta-row" id="lb-video-row" hidden>
+          <dt>Vidéo</dt>
+          <dd id="lb-video-details">—</dd>
+        </div>
       </dl>
-      <div class="transform-controls">
+      <div class="transform-controls" id="transform-panel">
         <label>Transformation à la volée</label>
         <div class="row">
           <input type="range" id="lb-width" min="120" max="1200" step="40" value="600">
@@ -996,20 +1022,38 @@ function renderGallery() {
     tile.title = obj.key;
     tile.addEventListener("click", () => openLightbox(obj));
 
-    const isImage = obj.content_type && obj.content_type.startsWith("image/");
+    const ct = obj.content_type || "";
+    const isImage = ct.startsWith("image/");
+    const isVideo = ct.startsWith("video/");
     if (isImage) {
-      // Thumbnail delivered via the same image-transform pipeline the landing
-      // page advertises — proves the CDN/cache story in practice.
+      // Thumbnail delivered via the image-transform pipeline.
       const thumbUrl = objectUrl(obj.key, { w: 320, format: "webp", quality: 70 });
       const img = document.createElement("img");
-      img.src = thumbUrl + `&_auth=${encodeURIComponent(state.apiKey)}`;
       img.alt = obj.key;
       img.loading = "lazy";
-      // The server reads Authorization from header, not query, so we actually
-      // need to fetch via authenticated blob + create object URL. Simplest:
-      // bypass the direct <img src> and load through fetch.
       loadAuthedImage(thumbUrl, img);
       tile.appendChild(img);
+    } else if (isVideo) {
+      // Videos: the server has no thumbnail endpoint in 0.1.x, so the
+      // browser decodes the first frame locally and shows it as the
+      // tile poster. Playback happens in the lightbox.
+      const vid = document.createElement("video");
+      vid.muted = true;
+      vid.preload = "metadata";
+      vid.playsInline = true;
+      loadAuthedVideo(objectUrl(obj.key), vid);
+      tile.appendChild(vid);
+
+      // Video badge: duration pulled from server-side metadata when
+      // available, otherwise left empty until the element loads.
+      const badge = document.createElement("div");
+      badge.className = "video-badge";
+      const durSec = obj.metadata?.video?.duration_secs;
+      if (durSec) badge.textContent = formatDuration(durSec);
+      vid.addEventListener("loadedmetadata", () => {
+        if (!badge.textContent) badge.textContent = formatDuration(vid.duration);
+      });
+      tile.appendChild(badge);
     } else {
       const ph = document.createElement("div");
       ph.className = "placeholder";
@@ -1048,6 +1092,34 @@ async function loadAuthedImage(url, imgEl) {
       textContent: "erreur de chargement",
     }));
   }
+}
+
+// Fetch a video with the auth header and hand the browser a blob URL.
+// With `preload="metadata"` this pulls just enough to decode the
+// first frame — the whole file stays on the server until the user
+// actually opens the lightbox.
+async function loadAuthedVideo(url, videoEl) {
+  try {
+    const resp = await apiFetch("GET", url);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const blob = await resp.blob();
+    videoEl.src = URL.createObjectURL(blob);
+  } catch (_) {
+    videoEl.replaceWith(Object.assign(document.createElement("div"), {
+      className: "placeholder",
+      textContent: "erreur de chargement",
+    }));
+  }
+}
+
+function formatDuration(seconds) {
+  if (!isFinite(seconds) || seconds < 0) return "";
+  const s = Math.round(seconds);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const r = s % 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  return h > 0 ? `${h}:${pad(m)}:${pad(r)}` : `${m}:${pad(r)}`;
 }
 
 // ─── Upload ──────────────────────────────────────────────────────────
@@ -1102,15 +1174,45 @@ function openLightbox(obj) {
   el("lb-type").textContent = obj.content_type || "—";
   el("lb-sha").textContent = obj.sha256 || "—";
   el("lb-date").textContent = formatDate(obj.updated_at || obj.created_at);
+
+  const ct = obj.content_type || "";
+  const isVideo = ct.startsWith("video/");
+  const isImage = ct.startsWith("image/");
+
+  // Show/hide media element, transform panel, and video-info row
+  // depending on what kind of object we're viewing. Transforms only
+  // make sense for images in 0.1.x.
+  el("lightbox-img").hidden = !isImage;
+  el("lightbox-video").hidden = !isVideo;
+  el("transform-panel").hidden = !isImage;
+  const videoRow = el("lb-video-row");
+  if (isVideo && obj.metadata?.video) {
+    const v = obj.metadata.video;
+    el("lb-video-details").textContent =
+      `${v.width}×${v.height} · ${formatDuration(v.duration_secs)}` +
+      (v.codec ? ` · ${v.codec}` : "") +
+      (v.has_audio ? " · audio" : " · muet");
+    videoRow.hidden = false;
+  } else {
+    videoRow.hidden = true;
+  }
+
   el("lightbox").classList.add("open");
-  updateTransform();
+  if (isVideo) {
+    loadAuthedVideo(objectUrl(obj.key), el("lightbox-video"));
+  } else if (isImage) {
+    updateTransform();
+  }
 }
 
 function closeLightbox() {
   el("lightbox").classList.remove("open");
-  const img = el("lightbox-img");
-  if (img.src && img.src.startsWith("blob:")) URL.revokeObjectURL(img.src);
-  img.src = "";
+  for (const id of ["lightbox-img", "lightbox-video"]) {
+    const m = el(id);
+    if (m.src && m.src.startsWith("blob:")) URL.revokeObjectURL(m.src);
+    m.removeAttribute("src");
+    if (m.tagName === "VIDEO") m.load();
+  }
   lightboxObj = null;
 }
 

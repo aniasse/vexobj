@@ -22,6 +22,7 @@ futures = { workspace = true }
 tokio-util = { workspace = true }
 aes-gcm = { workspace = true }
 hkdf = { workspace = true }
+vaultfs-processing = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

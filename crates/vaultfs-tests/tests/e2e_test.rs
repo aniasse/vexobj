@@ -1147,6 +1147,116 @@ async fn e2e_replication_promote_clears_cursor() {
     let _ = std::fs::remove_file(&cursor);
 }
 
+/// Generate a tiny valid MP4 via ffmpeg for the video-metadata test.
+/// Returns None when ffmpeg isn't on PATH so the caller can skip
+/// gracefully on CI hosts that don't ship it.
+fn ffmpeg_small_mp4() -> Option<PathBuf> {
+    let out = std::env::temp_dir().join(format!("vfs-e2e-{}.mp4", uuid::Uuid::new_v4()));
+    let status = Command::new("ffmpeg")
+        .args([
+            "-loglevel", "error",
+            "-f", "lavfi",
+            "-i", "color=c=0x10b981:size=320x240:duration=1",
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            "-y",
+        ])
+        .arg(&out)
+        .status()
+        .ok()?;
+    if !status.success() { return None; }
+    Some(out)
+}
+
+#[tokio::test]
+async fn e2e_video_metadata_on_upload() {
+    let Some(mp4_path) = ffmpeg_small_mp4() else {
+        eprintln!("SKIP: ffmpeg not available");
+        return;
+    };
+
+    let srv = TestServer::start();
+    let client = srv.client();
+    let auth = srv.auth_header();
+
+    client
+        .post(format!("{}/v1/buckets", srv.url))
+        .header("Authorization", &auth)
+        .json(&serde_json::json!({"name": "videos", "public": false}))
+        .send()
+        .await
+        .unwrap();
+
+    let body = std::fs::read(&mp4_path).unwrap();
+    let put = client
+        .put(format!("{}/v1/objects/videos/clip.mp4", srv.url))
+        .header("Authorization", &auth)
+        .header("Content-Type", "video/mp4")
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(put.status(), 201);
+    let meta: Value = put.json().await.unwrap();
+
+    // The server should have parsed and stashed the video metadata in
+    // the object's JSON metadata blob.
+    let video = &meta["metadata"]["video"];
+    assert!(
+        video.is_object(),
+        "expected metadata.video to exist, got: {meta}"
+    );
+    assert_eq!(video["width"], 320);
+    assert_eq!(video["height"], 240);
+    assert!(
+        (video["duration_secs"].as_f64().unwrap() - 1.0).abs() < 0.2,
+        "duration should be ~1.0s, got {}",
+        video["duration_secs"]
+    );
+    assert_eq!(video["codec"], "h264");
+    assert_eq!(video["has_audio"], false);
+
+    // HEAD should surface the same values via x-vaultfs-video-* headers.
+    let head = client
+        .head(format!("{}/v1/objects/videos/clip.mp4", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(head.status(), 200);
+    let h = head.headers();
+    assert_eq!(h.get("x-vaultfs-video-width").unwrap(), "320");
+    assert_eq!(h.get("x-vaultfs-video-height").unwrap(), "240");
+    assert_eq!(h.get("x-vaultfs-video-codec").unwrap(), "h264");
+    assert!(h.get("x-vaultfs-video-duration").is_some());
+
+    // A non-video upload must not grow any video metadata.
+    let png_bytes = [
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
+        0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+        0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xDE, 0x00, 0x00, 0x00,
+        0x0C, 0x49, 0x44, 0x41, 0x54, 0x08, 0x99, 0x63, 0xF8, 0xCF, 0xC0, 0x00,
+        0x00, 0x00, 0x03, 0x00, 0x01, 0x5B, 0x0A, 0x3E, 0x42, 0x00, 0x00, 0x00,
+        0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    ];
+    let resp = client
+        .put(format!("{}/v1/objects/videos/pixel.png", srv.url))
+        .header("Authorization", &auth)
+        .header("Content-Type", "image/png")
+        .body(png_bytes.to_vec())
+        .send()
+        .await
+        .unwrap();
+    let m: Value = resp.json().await.unwrap();
+    assert!(
+        m["metadata"].get("video").is_none() || m["metadata"]["video"].is_null(),
+        "non-video upload must not grow metadata.video, got: {m}"
+    );
+
+    let _ = std::fs::remove_file(&mp4_path);
+}
+
 #[tokio::test]
 async fn e2e_replication_two_node_sync() {
     // Spin up two independent servers and drive a one-shot replicate

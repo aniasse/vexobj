@@ -364,17 +364,46 @@ async fn head_object(
     }
 
     match state.storage.get_object_meta(&bucket, &key) {
-        Ok(meta) => (
-            StatusCode::OK,
-            [
-                ("content-type", meta.content_type),
+        Ok(meta) => {
+            // Build the always-present headers first, then optionally
+            // append video-specific headers when the object carries them.
+            // Axum's tuple-of-array builder wants a fixed shape, so we
+            // collect into a Vec and hand it over at the end.
+            let mut headers: Vec<(&'static str, String)> = vec![
+                ("content-type", meta.content_type.clone()),
                 ("content-length", meta.size.to_string()),
                 ("etag", format!("\"{}\"", meta.sha256)),
                 ("last-modified", meta.updated_at.to_rfc2822()),
                 ("accept-ranges", "bytes".to_string()),
-            ],
-        )
-            .into_response(),
+            ];
+
+            if let Some(video) = meta.metadata.get("video") {
+                if let Some(d) = video.get("duration_secs").and_then(|v| v.as_f64()) {
+                    headers.push(("x-vaultfs-video-duration", format!("{d:.3}")));
+                }
+                if let Some(w) = video.get("width").and_then(|v| v.as_u64()) {
+                    headers.push(("x-vaultfs-video-width", w.to_string()));
+                }
+                if let Some(h) = video.get("height").and_then(|v| v.as_u64()) {
+                    headers.push(("x-vaultfs-video-height", h.to_string()));
+                }
+                if let Some(c) = video.get("codec").and_then(|v| v.as_str()) {
+                    headers.push(("x-vaultfs-video-codec", c.to_string()));
+                }
+                if let Some(a) = video.get("has_audio").and_then(|v| v.as_bool()) {
+                    headers.push(("x-vaultfs-video-has-audio", a.to_string()));
+                }
+            }
+
+            let mut resp = StatusCode::OK.into_response();
+            let h = resp.headers_mut();
+            for (name, value) in headers {
+                if let Ok(v) = axum::http::HeaderValue::from_str(&value) {
+                    h.insert(name, v);
+                }
+            }
+            resp
+        }
         Err(_) => StatusCode::NOT_FOUND.into_response(),
     }
 }

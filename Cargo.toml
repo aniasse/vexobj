@@ -35,8 +35,9 @@ toml = "0.8"
 # Database
 rusqlite = { version = "0.32", features = ["bundled"] }
 
-# Image processing
+# Image / video processing
 image = "0.25"
+mp4 = "0.14"
 
 # Hashing / crypto
 sha2 = "0.10"

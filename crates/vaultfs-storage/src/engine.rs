@@ -57,6 +57,51 @@ impl StorageEngine {
         self.encryptor.is_some()
     }
 
+    /// Merge extracted video metadata into a user-provided metadata blob,
+    /// when the content type looks probeable and the file parses. Returns
+    /// the (possibly-enriched) metadata value ready to hand to the DB.
+    ///
+    /// Probing is best-effort: I/O or parse errors are swallowed so that
+    /// unusual containers never fail an upload — the object just lacks
+    /// video metadata. SSE-encrypted files can't be probed in place (the
+    /// bytes on disk are ciphertext), so we probe from the plaintext
+    /// buffer when one is available, or the decrypted stream in memory
+    /// via `probe_bytes`.
+    fn enrich_with_video_meta(
+        &self,
+        content_type: &str,
+        storage_path: &std::path::Path,
+        plaintext: Option<&[u8]>,
+        user_meta: Option<serde_json::Value>,
+    ) -> serde_json::Value {
+        let base = user_meta.unwrap_or(serde_json::Value::Object(Default::default()));
+        if !vaultfs_processing::is_probable_video(content_type) {
+            return base;
+        }
+
+        // When SSE is on, disk holds ciphertext — `probe_file` would see
+        // random bytes and fail. Fall back to the plaintext buffer if we
+        // have one; otherwise just skip probing. The streaming path
+        // won't have a buffer for large files, which is an acceptable
+        // tradeoff — clients can re-upload smaller tracks to get metadata.
+        let meta = if self.encryptor.is_some() {
+            plaintext.and_then(vaultfs_processing::probe_video_bytes)
+        } else {
+            vaultfs_processing::probe_video_file(storage_path)
+        };
+        let Some(meta) = meta else { return base };
+
+        let mut obj = match base {
+            serde_json::Value::Object(m) => m,
+            _ => serde_json::Map::new(),
+        };
+        obj.insert(
+            "video".to_string(),
+            serde_json::to_value(&meta).unwrap_or(serde_json::Value::Null),
+        );
+        serde_json::Value::Object(obj)
+    }
+
     pub fn create_bucket(&self, req: &CreateBucketRequest) -> Result<Bucket, StorageError> {
         let bucket = self.db.create_bucket(req)?;
         info!(bucket = %bucket.name, "bucket created");
@@ -110,6 +155,12 @@ impl StorageEngine {
                         .map(String::from)
                         .unwrap_or_else(|| Self::guess_content_type(key));
 
+                    let enriched = self.enrich_with_video_meta(
+                        &content_type,
+                        &existing_path,
+                        Some(&data),
+                        metadata,
+                    );
                     let meta = self.db.put_object(
                         bucket,
                         key,
@@ -117,7 +168,7 @@ impl StorageEngine {
                         &content_type,
                         &sha256,
                         &existing,
-                        &metadata.unwrap_or(serde_json::Value::Object(Default::default())),
+                        &enriched,
                     )?;
 
                     info!(bucket, key, size, deduplicated = true, "object stored");
@@ -143,6 +194,12 @@ impl StorageEngine {
             .map(String::from)
             .unwrap_or_else(|| Self::guess_content_type(key));
 
+        let enriched = self.enrich_with_video_meta(
+            &content_type,
+            &full_path,
+            Some(&data),
+            metadata,
+        );
         let meta = self.db.put_object(
             bucket,
             key,
@@ -150,7 +207,7 @@ impl StorageEngine {
             &content_type,
             &sha256,
             &storage_path,
-            &metadata.unwrap_or(serde_json::Value::Object(Default::default())),
+            &enriched,
         )?;
 
         info!(bucket, key, size, "object stored");
@@ -327,9 +384,15 @@ impl StorageEngine {
                     let content_type = content_type
                         .map(String::from)
                         .unwrap_or_else(|| Self::guess_content_type(key));
+                    let enriched = self.enrich_with_video_meta(
+                        &content_type,
+                        &existing_full,
+                        None,
+                        metadata,
+                    );
                     let meta = self.db.put_object(
                         bucket, key, size, &content_type, &sha256, &existing,
-                        &metadata.unwrap_or(serde_json::Value::Object(Default::default())),
+                        &enriched,
                     )?;
                     info!(bucket, key, size, deduplicated = true, "object stored (stream)");
                     return Ok(meta);
@@ -359,9 +422,18 @@ impl StorageEngine {
             .map(String::from)
             .unwrap_or_else(|| Self::guess_content_type(key));
 
+        // Stream path: we may have already removed the plaintext buffer,
+        // so we pass None and rely on probe_file. With SSE on, that reads
+        // ciphertext and returns None — acceptable for 0.1.x.
+        let enriched = self.enrich_with_video_meta(
+            &content_type,
+            &final_path,
+            None,
+            metadata,
+        );
         let meta = self.db.put_object(
             bucket, key, size, &content_type, &sha256, &storage_path,
-            &metadata.unwrap_or(serde_json::Value::Object(Default::default())),
+            &enriched,
         )?;
 
         info!(bucket, key, size, "object stored (stream)");
