@@ -24,6 +24,40 @@ High-performance, self-hosted object storage with built-in image processing. A s
 - **Single ~14 MB binary**, SQLite metadata, no external dependencies
 - **Official SDKs** — TypeScript, Python, Go
 
+## What it does
+
+VaultFS is a self-hosted object storage platform shipped as a single ~14 MB Rust binary. It exposes both a native REST API (`/v1/*`) and an S3-compatible API (`/s3/*`) with real AWS Signature V4 verification, so any standard S3 client — `aws-sdk`, `boto3`, `mc`, `rclone` — talks to it unmodified.
+
+Three things the server does that no single competitor covers in one process:
+
+1. **Object storage** — buckets, versioning, WORM object lock with retention, lifecycle rules, async primary-replica replication, AES-256-GCM encryption at rest, content-addressable deduplication.
+2. **Media processing** — on-the-fly image transforms (resize / crop / format conversion with automatic AVIF/WebP/JPEG negotiation), video metadata extraction, thumbnail generation, and a SQLite-backed transcoding job queue (requires `ffmpeg` on the host).
+3. **Pluggable blob backend** — blobs live on local disk by default, or delegate to any S3-compatible service (AWS S3, Cloudflare R2, Backblaze B2, Wasabi, MinIO) via a one-line config toggle. Metadata stays in SQLite.
+
+## Why use it
+
+- **vs. managed (S3 + Cloudinary + Mux)** — you own the keys, the data, and the logs. No per-gigabyte, per-transformation, per-second-of-transcoding billing.
+- **vs. MinIO / Garage / SeaweedFS** — those are excellent for pure storage but lack media processing. Pairing them with Cloudinary or ImgProxy adds a second service, a second invoice, a second failure point. VaultFS keeps it all in one process.
+- **vs. Ceph / MinIO cluster** — those target distributed multi-node scale and demand serious ops expertise. VaultFS takes the opposite bet: one binary, 4-line config, scale vertically on one machine and then delegate to a cloud blob layer. The operational effort is orders of magnitude lower.
+- **vs. rolling your own** — SigV4, WORM, `is_latest` promotion on versioning, content-addressable dedup, replication with atomic cursors — each of those is weeks of work. VaultFS ships them tested.
+
+## When to use it
+
+Good fit for:
+
+- **B2B / B2C SaaS up to a few million users** — a single binary plus an S3 backend handles the load without custom sharding.
+- **Independent media platforms** — podcasts, video, photo galleries. End-to-end ingestion, transformation, and transcoding in one process.
+- **Federated instances** — Mastodon, Matrix, Peertube, Pixelfed: local media storage with S3 compat for clients and async replication between nodes.
+- **Enterprise document backends** — WORM object lock + audit log + immutable retention. Healthcare, finance, legal archival.
+- **Dev / staging environments** — mimics an S3 instance locally in seconds, same auth model, same SDK compatibility.
+
+Not a fit for:
+
+- **Consumer-social-network scale** (Meta, TikTok, Snap) — SQLite single-writer metadata tops out around ~100 TB / billions of objects; past that you need a distributed metadata layer (FoundationDB, TiKV), which is a separate roadmap item.
+- **Multi-region active-active** with simultaneous writes on both sides — replication is one-way async, no Raft consensus.
+- **Automated moderation pipelines** (NSFW / DMCA / copyright matching) — build those layers alongside, not inside.
+- **Drop-in replacement for the full AWS ecosystem** (fine-grained IAM, JSON policies, multi-account / SCP) — auth here is intentionally simpler.
+
 ## Quick Start
 
 ```bash

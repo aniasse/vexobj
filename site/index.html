@@ -454,6 +454,84 @@ section { position: relative; }
 .bench-foot a { color: var(--emerald); border-color: transparent; }
 .bench-foot a:hover { border-color: var(--emerald); }
 
+/* —————— POSITIONING —————— */
+
+.positioning {
+  padding: 88px 0 56px;
+}
+.positioning-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 28px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.positioning-header h2 {
+  font-size: clamp(28px, 3.2vw, 40px);
+  letter-spacing: -0.025em;
+  max-width: 24ch;
+}
+.positioning-header h2 em { font-style: normal; color: var(--emerald); }
+
+.positioning-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.pos-card {
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-card);
+  transition: border-color 180ms ease;
+}
+.pos-card:hover { border-color: var(--border-soft); }
+.pos-card.fit    { border-top: 2px solid var(--emerald); }
+.pos-card.nofit  { border-top: 2px solid var(--ink-faint); }
+.pos-card h3 {
+  font-size: 15px;
+  font-family: "JetBrains Mono", monospace;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-weight: 600;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pos-card.fit    h3 { color: var(--emerald); }
+.pos-card.nofit  h3 { color: var(--ink-soft); }
+.pos-card ul {
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+.pos-card li {
+  font-size: 13.5px;
+  color: var(--ink);
+  line-height: 1.55;
+  padding-left: 22px;
+  position: relative;
+}
+.pos-card.fit li::before {
+  content: "✓";
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: var(--emerald);
+  font-weight: 700;
+}
+.pos-card.nofit li::before {
+  content: "✕";
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: var(--ink-faint);
+  font-weight: 700;
+}
+.pos-card li strong { color: var(--ink-strong); font-weight: 600; }
+
 /* —————— SPEC —————— */
 
 .spec {
@@ -814,6 +892,7 @@ footer a:hover { color: var(--emerald); border-bottom-color: transparent; }
 @media (max-width: 960px) {
   .hero { grid-template-columns: 1fr; gap: 40px; padding: 56px 0 48px; }
   .bench-grid { grid-template-columns: 1fr; }
+  .positioning-grid { grid-template-columns: 1fr; }
   .spec { grid-template-columns: 1fr; gap: 32px; padding: 56px 0 20px; }
   .spec-title { position: static; }
   .arch { grid-template-columns: 1fr; gap: 32px; padding: 56px 0; }
@@ -846,6 +925,7 @@ footer a:hover { color: var(--emerald); border-bottom-color: transparent; }
   </a>
 
   <nav style="justify-self: center;">
+    <a href="#fit" data-i18n="nav.fit">Pour qui</a>
     <a href="#spec" data-i18n="nav.features">Fonctionnalités</a>
     <a href="#code" data-i18n="nav.api">API</a>
     <a href="#arch" data-i18n="nav.arch">Architecture</a>
@@ -924,6 +1004,35 @@ footer a:hover { color: var(--emerald); border-bottom-color: transparent; }
 </section>
 
 <div class="page">
+
+<!-- —————— POSITIONING —————— -->
+<section class="positioning reveal" id="fit">
+  <header class="positioning-header">
+    <h2 data-i18n-html="positioning.title">À qui s'adresse <em>VaultFS</em>.</h2>
+    <span class="caps" data-i18n="positioning.kicker">Positionnement</span>
+  </header>
+  <div class="positioning-grid">
+    <div class="pos-card fit">
+      <h3 data-i18n="positioning.fit.title">Idéal pour</h3>
+      <ul data-i18n-html="positioning.fit.items">
+        <li><strong>SaaS B2B / B2C jusqu'à quelques millions d'utilisateurs</strong> — binaire + backend S3 tient la charge sans sharding custom.</li>
+        <li><strong>Plateforme média indépendante</strong> — podcasts, vidéos, galeries photo. Pipeline ingestion + transformation + transcoding couverte de bout en bout.</li>
+        <li><strong>Instance fédérée</strong> — Mastodon, Matrix, Peertube, Pixelfed : stockage média local avec compat S3 pour les clients et réplication asynchrone.</li>
+        <li><strong>Backend documentaire d'entreprise</strong> — object lock WORM + audit log + rétention immuable. Santé, finance, archivage légal.</li>
+        <li><strong>Environnement dev / staging</strong> — mime une instance S3 localement en secondes, même auth, même compat SDK.</li>
+      </ul>
+    </div>
+    <div class="pos-card nofit">
+      <h3 data-i18n="positioning.nofit.title">Pas taillé pour</h3>
+      <ul data-i18n-html="positioning.nofit.items">
+        <li><strong>Échelle des réseaux sociaux grand public</strong> (Meta, TikTok, Snap) — SQLite single-writer sature vers ~100 TB, au-delà il faut une couche metadata distribuée.</li>
+        <li><strong>Multi-région actif-actif</strong> avec écritures simultanées des deux côtés — la réplication est asynchrone unidirectionnelle, pas de consensus Raft.</li>
+        <li><strong>Modération automatique</strong> (NSFW, DMCA, copyright matching) — ces couches doivent être construites à côté.</li>
+        <li><strong>Drop-in replacement d'un écosystème AWS complet</strong> — l'auth est plus simple, ce qui est une force pour 95 % des cas et une limite pour les 5 % restants.</li>
+      </ul>
+    </div>
+  </div>
+</section>
 
 <!-- —————— SPEC —————— -->
 <section class="spec reveal" id="spec">
@@ -1194,10 +1303,14 @@ cargo build --release
 <script>
   const I18N = {
     fr: {
+      "nav.fit":          "Pour qui",
       "nav.features":     "Fonctionnalités",
       "nav.api":          "API",
       "nav.arch":         "Architecture",
       "nav.install":      "Installation",
+      "positioning.kicker":    "Positionnement",
+      "positioning.fit.title":   "Idéal pour",
+      "positioning.nofit.title": "Pas taillé pour",
       "hero.kicker":      "Version 0.1.0 · Disponible",
       "hero.desc":        "VaultFS est une plateforme de stockage objet auto-hébergée, compatible avec l'API Amazon S3. Elle fournit le chiffrement au repos (AES-256-GCM), le versioning, l'object lock en mode WORM, et la réplication asynchrone primary-replica. Distribuée sous forme de binaire unique sans dépendances externes.",
       "hero.cta1":        "Télécharger la version 0.1.0",
@@ -1240,10 +1353,14 @@ cargo build --release
       "footer.center":    "VaultFS 0.1.0 · Open source",
     },
     en: {
+      "nav.fit":          "Who it's for",
       "nav.features":     "Features",
       "nav.api":          "API",
       "nav.arch":         "Architecture",
       "nav.install":      "Install",
+      "positioning.kicker":    "Positioning",
+      "positioning.fit.title":   "Good fit",
+      "positioning.nofit.title": "Not a fit",
       "hero.kicker":      "Version 0.1.0 · Available",
       "hero.desc":        "VaultFS is a self-hosted object storage platform, compatible with the Amazon S3 API. It provides server-side encryption at rest (AES-256-GCM), object versioning, WORM object lock, and asynchronous primary-replica replication. Distributed as a single binary with no external dependencies.",
       "hero.cta1":        "Download version 0.1.0",
@@ -1290,6 +1407,9 @@ cargo build --release
   const I18N_HTML = {
     fr: {
       "hero.title":       "Stockage objet<br/><em>compatible S3.</em>",
+      "positioning.title": "\u00c0 qui s\u2019adresse <em>VaultFS</em>.",
+      "positioning.fit.items": "<li><strong>SaaS B2B / B2C jusqu\u2019\u00e0 quelques millions d\u2019utilisateurs</strong> \u2014 binaire + backend S3 tient la charge sans sharding custom.</li><li><strong>Plateforme m\u00e9dia ind\u00e9pendante</strong> \u2014 podcasts, vid\u00e9os, galeries photo. Pipeline ingestion + transformation + transcoding couverte de bout en bout.</li><li><strong>Instance f\u00e9d\u00e9r\u00e9e</strong> \u2014 Mastodon, Matrix, Peertube, Pixelfed : stockage m\u00e9dia local avec compat S3 pour les clients et r\u00e9plication asynchrone.</li><li><strong>Backend documentaire d\u2019entreprise</strong> \u2014 object lock WORM + audit log + r\u00e9tention immuable. Sant\u00e9, finance, archivage l\u00e9gal.</li><li><strong>Environnement dev / staging</strong> \u2014 mime une instance S3 localement en secondes, m\u00eame auth, m\u00eame compat SDK.</li>",
+      "positioning.nofit.items": "<li><strong>\u00c9chelle des r\u00e9seaux sociaux grand public</strong> (Meta, TikTok, Snap) \u2014 SQLite single-writer sature vers ~100 TB, au-del\u00e0 il faut une couche metadata distribu\u00e9e.</li><li><strong>Multi-r\u00e9gion actif-actif</strong> avec \u00e9critures simultan\u00e9es des deux c\u00f4t\u00e9s \u2014 la r\u00e9plication est asynchrone unidirectionnelle, pas de consensus Raft.</li><li><strong>Mod\u00e9ration automatique</strong> (NSFW, DMCA, copyright matching) \u2014 ces couches doivent \u00eatre construites \u00e0 c\u00f4t\u00e9.</li><li><strong>Drop-in replacement d\u2019un \u00e9cosyst\u00e8me AWS complet</strong> \u2014 l\u2019auth est plus simple, ce qui est une force pour 95 % des cas et une limite pour les 5 % restants.</li>",
       "meta.statusVal":   "<span class=\"emerald\">\u2713 Disponible</span>",
       "bench.l1":         "<strong>D\u00e9bit AES-256-GCM.</strong> Le chiffrement au repos n\u2019introduit pas de surco\u00fbt perceptible sur les charges courantes.",
       "bench.l2":         "<strong>V\u00e9rifications SigV4</strong> par c\u0153ur et par seconde. Contr\u00f4le complet de signature, pas uniquement validation de la cl\u00e9 d\u2019acc\u00e8s.",
@@ -1425,6 +1545,9 @@ cargo build --release
     },
     en: {
       "hero.title":       "S3-compatible<br/><em>object storage.</em>",
+      "positioning.title": "Who <em>VaultFS</em> is for.",
+      "positioning.fit.items": "<li><strong>B2B / B2C SaaS up to a few million users</strong> \u2014 a single binary plus an S3 backend handles the load without custom sharding.</li><li><strong>Independent media platforms</strong> \u2014 podcasts, video, photo galleries. End-to-end ingestion, transformation, and transcoding in one process.</li><li><strong>Federated instances</strong> \u2014 Mastodon, Matrix, Peertube, Pixelfed: local media storage with S3 compat for clients and async replication between nodes.</li><li><strong>Enterprise document backend</strong> \u2014 WORM object lock + audit log + immutable retention. Healthcare, finance, legal archival.</li><li><strong>Dev / staging</strong> \u2014 mimics an S3 instance locally in seconds, same auth, same SDK compatibility.</li>",
+      "positioning.nofit.items": "<li><strong>Consumer-social-network scale</strong> (Meta, TikTok, Snap) \u2014 SQLite single-writer metadata tops out around ~100 TB; past that you need a distributed metadata layer.</li><li><strong>Multi-region active-active</strong> with simultaneous writes on both sides \u2014 replication is one-way async, no Raft consensus.</li><li><strong>Automated moderation</strong> (NSFW / DMCA / copyright matching) \u2014 build those layers alongside, not inside.</li><li><strong>Drop-in AWS ecosystem replacement</strong> \u2014 auth is simpler, which is a strength for 95% of cases and a limit for the remaining 5%.</li>",
       "meta.statusVal":   "<span class=\"emerald\">\u2713 Available</span>",
       "bench.l1":         "<strong>AES-256-GCM throughput.</strong> Server-side encryption adds no measurable overhead on typical workloads.",
       "bench.l2":         "<strong>SigV4 verifications</strong> per core per second. Full signature verification, not just access-key lookup.",
