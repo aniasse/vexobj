@@ -84,6 +84,28 @@ impl Database {
             );
             CREATE INDEX IF NOT EXISTS idx_replication_events_id
                 ON replication_events(id);
+
+            CREATE TABLE IF NOT EXISTS transcode_jobs (
+                id TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                bucket TEXT NOT NULL,
+                key TEXT NOT NULL,
+                source_sha256 TEXT NOT NULL,
+                profile TEXT NOT NULL,
+                output_bucket TEXT,
+                output_key TEXT,
+                output_size INTEGER,
+                error TEXT,
+                created_at TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
+                duration_ms INTEGER,
+                requested_by TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_transcode_jobs_status
+                ON transcode_jobs(status, created_at);
+            CREATE INDEX IF NOT EXISTS idx_transcode_jobs_source
+                ON transcode_jobs(bucket, key, profile);
             ",
         )?;
 
@@ -695,6 +717,204 @@ impl Database {
             )
             .unwrap_or(0);
         Ok(id)
+    }
+
+    // ── Transcode jobs ──────────────────────────────────────────────────
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_transcode_job(
+        &self,
+        bucket: &str,
+        key: &str,
+        source_sha256: &str,
+        profile: &str,
+        requested_by: Option<&str>,
+    ) -> Result<TranscodeJob, StorageError> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = Utc::now();
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO transcode_jobs
+               (id, status, bucket, key, source_sha256, profile, created_at, requested_by)
+             VALUES (?1, 'pending', ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                id,
+                bucket,
+                key,
+                source_sha256,
+                profile,
+                now.to_rfc3339(),
+                requested_by,
+            ],
+        )?;
+        Ok(TranscodeJob {
+            id,
+            status: "pending".to_string(),
+            bucket: bucket.to_string(),
+            key: key.to_string(),
+            source_sha256: source_sha256.to_string(),
+            profile: profile.to_string(),
+            output_bucket: None,
+            output_key: None,
+            output_size: None,
+            error: None,
+            created_at: now,
+            started_at: None,
+            completed_at: None,
+            duration_ms: None,
+            requested_by: requested_by.map(String::from),
+        })
+    }
+
+    pub fn get_transcode_job(&self, id: &str) -> Result<TranscodeJob, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT id, status, bucket, key, source_sha256, profile,
+                    output_bucket, output_key, output_size, error,
+                    created_at, started_at, completed_at, duration_ms, requested_by
+             FROM transcode_jobs WHERE id = ?1",
+            params![id],
+            Self::read_transcode_row,
+        )
+        .map_err(|_| StorageError::ObjectNotFound {
+            bucket: "transcode_jobs".to_string(),
+            key: id.to_string(),
+        })
+    }
+
+    pub fn list_transcode_jobs(
+        &self,
+        status: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<TranscodeJob>, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let capped = limit.min(500) as i64;
+        if let Some(s) = status {
+            let mut stmt = conn.prepare(
+                "SELECT id, status, bucket, key, source_sha256, profile,
+                        output_bucket, output_key, output_size, error,
+                        created_at, started_at, completed_at, duration_ms, requested_by
+                 FROM transcode_jobs WHERE status = ?1
+                 ORDER BY created_at DESC LIMIT ?2",
+            )?;
+            let rows = stmt
+                .query_map(params![s, capped], Self::read_transcode_row)?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        } else {
+            let mut stmt = conn.prepare(
+                "SELECT id, status, bucket, key, source_sha256, profile,
+                        output_bucket, output_key, output_size, error,
+                        created_at, started_at, completed_at, duration_ms, requested_by
+                 FROM transcode_jobs
+                 ORDER BY created_at DESC LIMIT ?1",
+            )?;
+            let rows = stmt
+                .query_map(params![capped], Self::read_transcode_row)?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        }
+    }
+
+    /// Atomically claim a pending job: marks the oldest one as
+    /// `running` and returns it. Used by workers to poll the queue
+    /// without races — UPDATE...WHERE status='pending' sees the row
+    /// once and only once.
+    pub fn claim_next_transcode_job(&self) -> Result<Option<TranscodeJob>, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let now = Utc::now().to_rfc3339();
+        // SQLite doesn't support UPDATE ... RETURNING on old versions,
+        // so we do this in two steps inside a single transaction.
+        let tx = conn.unchecked_transaction()?;
+        let id_opt: Option<String> = tx
+            .query_row(
+                "SELECT id FROM transcode_jobs WHERE status = 'pending'
+                 ORDER BY created_at ASC LIMIT 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .ok();
+        let Some(id) = id_opt else {
+            tx.commit()?;
+            return Ok(None);
+        };
+        tx.execute(
+            "UPDATE transcode_jobs SET status = 'running', started_at = ?1 WHERE id = ?2",
+            params![now, id],
+        )?;
+        let job = tx.query_row(
+            "SELECT id, status, bucket, key, source_sha256, profile,
+                    output_bucket, output_key, output_size, error,
+                    created_at, started_at, completed_at, duration_ms, requested_by
+             FROM transcode_jobs WHERE id = ?1",
+            params![id],
+            Self::read_transcode_row,
+        )?;
+        tx.commit()?;
+        Ok(Some(job))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn complete_transcode_job(
+        &self,
+        id: &str,
+        output_bucket: &str,
+        output_key: &str,
+        output_size: u64,
+        duration_ms: i64,
+    ) -> Result<(), StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE transcode_jobs
+             SET status = 'completed',
+                 output_bucket = ?1, output_key = ?2, output_size = ?3,
+                 completed_at = ?4, duration_ms = ?5
+             WHERE id = ?6",
+            params![output_bucket, output_key, output_size as i64, now, duration_ms, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn fail_transcode_job(
+        &self,
+        id: &str,
+        error: &str,
+        duration_ms: i64,
+    ) -> Result<(), StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE transcode_jobs
+             SET status = 'failed', error = ?1, completed_at = ?2, duration_ms = ?3
+             WHERE id = ?4",
+            params![error, now, duration_ms, id],
+        )?;
+        Ok(())
+    }
+
+    fn read_transcode_row(row: &rusqlite::Row) -> rusqlite::Result<TranscodeJob> {
+        Ok(TranscodeJob {
+            id: row.get(0)?,
+            status: row.get(1)?,
+            bucket: row.get(2)?,
+            key: row.get(3)?,
+            source_sha256: row.get(4)?,
+            profile: row.get(5)?,
+            output_bucket: row.get(6)?,
+            output_key: row.get(7)?,
+            output_size: row.get::<_, Option<i64>>(8)?.map(|v| v as u64),
+            error: row.get(9)?,
+            created_at: row.get::<_, String>(10)?.parse().unwrap_or_else(|_| Utc::now()),
+            started_at: row
+                .get::<_, Option<String>>(11)?
+                .and_then(|s| s.parse().ok()),
+            completed_at: row
+                .get::<_, Option<String>>(12)?
+                .and_then(|s| s.parse().ok()),
+            duration_ms: row.get(13)?,
+            requested_by: row.get(14)?,
+        })
     }
 
     // ── Object lock ─────────────────────────────────────────────────────

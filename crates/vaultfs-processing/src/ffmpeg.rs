@@ -30,7 +30,7 @@ impl VideoFeatures {
     pub fn any(&self) -> bool { self.ffmpeg || self.ffprobe }
 }
 
-fn probe_binary(name: &str) -> bool {
+pub(crate) fn probe_binary(name: &str) -> bool {
     Command::new(name)
         .arg("-version")
         .stdout(Stdio::null())

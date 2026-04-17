@@ -6,6 +6,7 @@ mod ratelimit;
 mod routes;
 mod security;
 mod state;
+mod transcode_worker;
 mod webhooks;
 
 use anyhow::Result;
@@ -82,6 +83,9 @@ async fn main() -> Result<()> {
             }
         }
     });
+
+    // Transcode worker — only spins up when ffmpeg is detected on PATH.
+    transcode_worker::spawn(state.storage.clone(), Default::default());
 
     // Rate limiter cleanup task
     if let Some(ref limiter) = state.rate_limiter {

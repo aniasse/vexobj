@@ -13,7 +13,7 @@ useful even without external tools and get more when you install them.
 | MP4 / MOV metadata (duration, codec, resolution) | ✅ (pure Rust) | ✅          | ✅            |
 | WebM / MKV / AVI / MPEG-TS metadata   | —              | ✅             | ✅            |
 | Thumbnail generation                  | —              | —              | ✅            |
-| Transcoding (MP4 ↔ WebM / variants)   | —              | —              | **not yet**   |
+| Transcoding (profiles → variants)     | —              | —              | ✅            |
 
 Capability flags are served at `GET /health`:
 
@@ -123,25 +123,98 @@ The result is merged into `object.metadata.video`:
 
 Same fields are exposed on `HEAD` as `x-vaultfs-video-*` headers.
 
-## Transcoding — deliberately deferred
+## Transcoding
 
-Transcoding is the remaining piece, and it's the hardest one to do
-right at a small-tool scale. Sketch of what a proper implementation
-looks like:
+Submissions go into a SQLite-backed queue that a background tokio
+worker drains. Variants are stored as first-class vaultfs objects, so
+they get versioning, lifecycle, ACLs, and replication for free — the
+same way every other object does.
 
-- **Async job queue** — transcodes take seconds to minutes, not the
-  ~100 ms budget of a request. We need a workers pool, a job table in
-  SQLite, retry semantics, and a client polling endpoint.
-- **Storage of variants** — each transcode produces a new blob
-  content-addressed by its own sha. Versioning applies per variant,
-  and the lifecycle rules need to know how to expire them.
-- **Invalidation** — if the source object is replaced (versioning
-  on), do we re-transcode? Link the variant to `version_id`?
-- **Backpressure** — a naive implementation lets users queue 10 GB
-  of work per request. Queue caps and admin quotas are non-optional.
-- **Cost accounting** — `/v1/admin/jobs` with status, duration, CPU
-  and peak memory per job is what makes this operable at all.
+### Built-in profiles
 
-That's a feature release, not a patch. It's on the roadmap under
-`vaultfs-transcode` — a separate crate so operators who never need it
-don't pay for the code or deps.
+```bash
+curl http://localhost:8000/v1/transcode/profiles
+```
+
+| Profile      | Output  | Use case                                       |
+|--------------|---------|------------------------------------------------|
+| `mp4-480p`   | H.264 + AAC, max 480p, faststart flag | Web-ready compatibility        |
+| `webm-720p`  | VP9 + Opus, max 720p                  | Modern browsers, smaller files |
+| `mp3-audio`  | MP3 192 kbps, video stripped          | Podcasts, voice extraction     |
+
+Custom ffmpeg args aren't exposed in 0.1.x — arbitrary argument
+passthrough is a CVE waiting to happen without sandboxing. Add a new
+preset in `vaultfs-processing/src/transcode.rs` and rebuild instead.
+
+### Submit a job
+
+```bash
+curl -X POST http://localhost:8000/v1/transcode/videos/clip.mp4 \
+  -H "Authorization: Bearer $VFS_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"profile": "mp4-480p"}'
+```
+
+Returns `202 Accepted` with a job row:
+
+```json
+{
+  "id": "47f1...",
+  "status": "pending",
+  "bucket": "videos",
+  "key": "clip.mp4",
+  "profile": "mp4-480p",
+  "created_at": "2026-04-17T12:00:00Z"
+}
+```
+
+### Poll for status
+
+```bash
+curl http://localhost:8000/v1/transcode/jobs/47f1... \
+  -H "Authorization: Bearer $VFS_KEY"
+```
+
+Once `status` is `completed`, the response carries `output_bucket`
+and `output_key` — the variant is a normal object at that location,
+fetched via the standard `/v1/objects/...` route. Output keys follow
+the convention `<source_key>.<profile>.<ext>` so they're
+predictable without polling if the source is already known.
+
+### Failure modes
+
+- **`pending` forever** — check `/health` for `"ffmpeg": true`. The
+  worker skips startup if ffmpeg isn't on PATH.
+- **`failed` with a short error** — the last few lines of ffmpeg's
+  stderr. Usually means the source is corrupt or uses a codec the
+  host's ffmpeg was built without.
+- **Timeout** — each profile has a per-job wall-clock cap (default
+  600 s). A one-hour 4K source will hit it on `webm-720p` — tune the
+  preset's `timeout_secs` if you routinely transcode long files.
+
+### List recent jobs
+
+```bash
+# All states
+curl "http://localhost:8000/v1/transcode/jobs?limit=100" \
+  -H "Authorization: Bearer $VFS_KEY"
+
+# Just the ones currently processing
+curl "http://localhost:8000/v1/transcode/jobs?status=running" \
+  -H "Authorization: Bearer $VFS_KEY"
+```
+
+### What's still on the roadmap
+
+- **Concurrency control** — today the worker runs one job at a time.
+  A bounded pool (N workers, configurable) is the next obvious step.
+- **Priority lanes** — admins should be able to jump a job past
+  long-running batch work.
+- **Per-bucket transcode quotas** — protect against a runaway client
+  queueing 10 GB of work per second.
+- **Re-transcode on source version bump** — currently variants are
+  detached from their source's version_id; a new upload doesn't
+  invalidate them.
+- **SSE support** — transcoding is disabled when `sse.enabled=true`
+  because the on-disk bytes are ciphertext. Fixing this cleanly
+  needs a decrypt-to-scratch step with the right accounting.

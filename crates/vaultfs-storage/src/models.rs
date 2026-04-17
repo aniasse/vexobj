@@ -74,6 +74,30 @@ impl ObjectLock {
     }
 }
 
+/// A video transcoding job tracked in SQLite. Variant output is
+/// stored as a first-class vaultfs object at `output_bucket/output_key`
+/// once the job completes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TranscodeJob {
+    pub id: String,
+    /// `pending`, `running`, `completed`, or `failed`.
+    pub status: String,
+    pub bucket: String,
+    pub key: String,
+    pub source_sha256: String,
+    /// Profile name (see vaultfs-processing::transcode_profiles).
+    pub profile: String,
+    pub output_bucket: Option<String>,
+    pub output_key: Option<String>,
+    pub output_size: Option<u64>,
+    pub error: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub duration_ms: Option<i64>,
+    pub requested_by: Option<String>,
+}
+
 /// A single replication event. Appended to the primary's event log on
 /// every state-changing write; replicas poll `/v1/replication/events`
 /// and advance a cursor as they apply each one.

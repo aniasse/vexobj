@@ -1170,6 +1170,131 @@ fn ffmpeg_small_mp4() -> Option<PathBuf> {
 }
 
 #[tokio::test]
+async fn e2e_video_transcode_job_flow() {
+    let Some(mp4_path) = ffmpeg_small_mp4() else {
+        eprintln!("SKIP: ffmpeg not available");
+        return;
+    };
+
+    let srv = TestServer::start();
+    let client = srv.client();
+    let auth = srv.auth_header();
+
+    client
+        .post(format!("{}/v1/buckets", srv.url))
+        .header("Authorization", &auth)
+        .json(&serde_json::json!({"name": "transcode-test", "public": false}))
+        .send()
+        .await
+        .unwrap();
+
+    // Profiles endpoint advertises at least the three built-ins.
+    let profiles: Value = client
+        .get(format!("{}/v1/transcode/profiles", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let names: Vec<&str> = profiles["profiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"webm-720p"));
+    assert!(names.contains(&"mp4-480p"));
+    assert!(names.contains(&"mp3-audio"));
+
+    client
+        .put(format!("{}/v1/objects/transcode-test/clip.mp4", srv.url))
+        .header("Authorization", &auth)
+        .header("Content-Type", "video/mp4")
+        .body(std::fs::read(&mp4_path).unwrap())
+        .send()
+        .await
+        .unwrap();
+
+    // Submit a transcode to mp4-480p (faster than webm-720p in CI).
+    let submit = client
+        .post(format!("{}/v1/transcode/transcode-test/clip.mp4", srv.url))
+        .header("Authorization", &auth)
+        .json(&serde_json::json!({"profile": "mp4-480p"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(submit.status(), 202);
+    let job: Value = submit.json().await.unwrap();
+    let job_id = job["id"].as_str().unwrap().to_string();
+    assert_eq!(job["status"], "pending");
+
+    // Poll until the worker finishes or times out. 60s is generous;
+    // a 1s 320x240 clip transcodes in well under a second on modern
+    // hardware even at preset=fast.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let final_job = loop {
+        let j: Value = client
+            .get(format!("{}/v1/transcode/jobs/{}", srv.url, job_id))
+            .header("Authorization", &auth)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        if j["status"] == "completed" || j["status"] == "failed" {
+            break j;
+        }
+        if std::time::Instant::now() > deadline {
+            panic!("transcode job never finished: last status = {j}");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    };
+    assert_eq!(
+        final_job["status"], "completed",
+        "job should complete: {final_job}"
+    );
+    let output_key = final_job["output_key"].as_str().unwrap();
+    assert!(output_key.ends_with(".mp4-480p.mp4"));
+
+    // Variant is now a first-class object — fetch it and verify it's
+    // actually an MP4 (starts with an ftyp box at offset 4).
+    let resp = client
+        .get(format!(
+            "{}/v1/objects/transcode-test/{}",
+            srv.url, output_key
+        ))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers().get("content-type").unwrap(),
+        "video/mp4"
+    );
+    let body = resp.bytes().await.unwrap();
+    assert!(body.len() > 200, "variant suspiciously small");
+    // MP4 containers start with a box: [size u32 BE][ftyp].
+    assert_eq!(&body[4..8], b"ftyp", "not an MP4 container");
+
+    // Submitting an unknown profile returns 400 with the list of
+    // available names — no forever-pending job.
+    let bad = client
+        .post(format!("{}/v1/transcode/transcode-test/clip.mp4", srv.url))
+        .header("Authorization", &auth)
+        .json(&serde_json::json!({"profile": "bogus"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad.status(), 400);
+
+    let _ = std::fs::remove_file(&mp4_path);
+}
+
+#[tokio::test]
 async fn e2e_video_thumbnail_endpoint() {
     let Some(mp4_path) = ffmpeg_small_mp4() else {
         eprintln!("SKIP: ffmpeg not available");

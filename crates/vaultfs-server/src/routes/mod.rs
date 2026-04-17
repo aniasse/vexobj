@@ -7,6 +7,7 @@ mod objects;
 mod replication;
 mod stats;
 mod stream;
+mod transcode;
 
 use axum::middleware as axum_mw;
 use axum::Router;
@@ -38,6 +39,7 @@ pub fn create_router(state: AppState) -> Router {
         .merge(stats::routes())
         .merge(stream::routes())
         .merge(replication::routes())
+        .merge(transcode::routes())
         .route_layer(axum_mw::from_fn_with_state(
             state.clone(),
             auth_middleware,

@@ -770,6 +770,19 @@ a:hover { opacity: 0.85; }
         </div>
         <div class="url" id="lb-url">—</div>
       </div>
+      <div id="lb-transcode-panel" class="transform-controls" hidden>
+        <label>Transcoder vers un autre format</label>
+        <div class="row">
+          <select id="lb-transcode-profile" style="flex: 1;">
+            <option value="mp4-480p">mp4-480p — H.264 480p</option>
+            <option value="webm-720p">webm-720p — VP9 720p</option>
+            <option value="mp3-audio">mp3-audio — piste audio seule</option>
+          </select>
+          <button class="btn btn-small" id="lb-transcode-btn" style="padding: 5px 10px;">Lancer</button>
+        </div>
+        <div id="lb-transcode-status" class="url" hidden></div>
+      </div>
+
       <button class="btn btn-danger" id="lb-delete">Supprimer cet objet</button>
     </div>
   </div>
@@ -1205,6 +1218,10 @@ function openLightbox(obj) {
   el("lightbox-img").hidden = !isImage;
   el("lightbox-video").hidden = !isVideo;
   el("transform-panel").hidden = !isImage;
+  // Transcoding only makes sense for videos, and only when ffmpeg
+  // is advertised in /health.
+  el("lb-transcode-panel").hidden = !(isVideo && state.caps.ffmpeg);
+  el("lb-transcode-status").hidden = true;
   const videoRow = el("lb-video-row");
   if (isVideo && obj.metadata?.video) {
     const v = obj.metadata.video;
@@ -1294,6 +1311,61 @@ el("lb-delete").addEventListener("click", async () => {
   const k = lightboxObj.key;
   closeLightbox();
   await deleteObject(k);
+});
+
+el("lb-transcode-btn").addEventListener("click", async () => {
+  if (!lightboxObj) return;
+  const profile = el("lb-transcode-profile").value;
+  const status = el("lb-transcode-status");
+  const btn = el("lb-transcode-btn");
+  status.hidden = false;
+  status.textContent = `Soumission du job ${profile}…`;
+  btn.disabled = true;
+  try {
+    const resp = await apiFetch("POST", `/v1/transcode/${encodeURIComponent(state.bucket)}/${encKey(lightboxObj.key)}`, {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profile }),
+    });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error(body.error || `HTTP ${resp.status}`);
+    }
+    const job = await resp.json();
+    status.textContent = `Job ${job.id.slice(0, 8)}… en attente`;
+
+    // Poll every second until the worker writes a terminal status.
+    // A corrupt source or a slow runner can stretch this, so we cap
+    // at 3 minutes and surface a clear error if we get there.
+    const deadline = Date.now() + 3 * 60_000;
+    while (true) {
+      if (Date.now() > deadline) {
+        status.textContent = "Timeout — job toujours en cours, consulter /v1/transcode/jobs";
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 1000));
+      const poll = await apiFetch("GET", `/v1/transcode/jobs/${job.id}`);
+      if (!poll.ok) {
+        status.textContent = `Erreur de polling : HTTP ${poll.status}`;
+        break;
+      }
+      const j = await poll.json();
+      if (j.status === "completed") {
+        status.textContent = `✓ Terminé en ${(j.duration_ms / 1000).toFixed(1)} s · variante : ${j.output_key}`;
+        // Refresh the gallery so the variant shows up.
+        await refreshGallery();
+        break;
+      }
+      if (j.status === "failed") {
+        status.textContent = `✗ Échec : ${j.error || "erreur inconnue"}`;
+        break;
+      }
+      status.textContent = `Job ${j.id.slice(0, 8)}… statut : ${j.status}`;
+    }
+  } catch (err) {
+    status.textContent = `Erreur : ${err.message}`;
+  } finally {
+    btn.disabled = false;
+  }
 });
 
 loadConfig();
