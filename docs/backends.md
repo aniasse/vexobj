@@ -63,16 +63,50 @@ Running the server in this mode logs `backend: s3` on startup and
 the affected endpoints return `501 Not Implemented` with an
 explanatory message.
 
+## Switching backend
+
+```toml
+# config.toml
+[storage]
+backend = "s3"
+
+[storage.s3]
+endpoint   = "https://<account-id>.r2.cloudflarestorage.com"
+bucket     = "vaultfs-prod"
+access_key = "…"
+secret_key = "…"
+region     = "auto"          # R2 accepts any region, use "auto"
+path_style = true
+```
+
+Or via environment variables (handier for secrets):
+
+```bash
+VAULTFS_STORAGE_BACKEND=s3 \
+VAULTFS_S3_ENDPOINT=https://s3.us-east-1.amazonaws.com \
+VAULTFS_S3_BUCKET=vaultfs-prod \
+VAULTFS_S3_ACCESS_KEY=AKID... \
+VAULTFS_S3_SECRET_KEY=... \
+VAULTFS_S3_REGION=us-east-1 \
+./vaultfs
+```
+
+Switching is a config-only change. Existing SQLite metadata stays
+valid — the engine just routes blob I/O through the new backend.
+Blob SHA-256 paths are identical across backends, so a bucket
+populated by the local backend can be copied straight into S3 with
+`aws s3 sync ./data/blobs s3://bucket/blobs/` and the server
+re-pointed without touching the DB.
+
 ## Roadmap
 
-- **In-engine wiring** — the trait and both backends are shipped and
-  unit-tested. The next step is refactoring `StorageEngine` to hold
-  an `Arc<dyn BlobStore>` and route every filesystem call through it.
 - **Multipart upload for S3** — current `put_blob_from_file` reads
   the whole file into memory before PUTing it. Fine up to ~5 GB.
   Multipart lifts the cap and improves throughput for large videos.
-- **Automatic backend for ffmpeg ops** — download to scratch on
-  demand so thumbnails / transcoding keep working with `backend = "s3"`.
+- **Automatic scratch-download for ffmpeg ops** — thumbnails and
+  transcoding need a local path. Right now they return 501 when the
+  active backend is remote; pulling the blob to a scratch file on
+  demand would close that gap.
 - **Request retries + backoff** — the S3 backend today fails on any
   transient 5xx. A small retry loop with jittered backoff is a ~20
   line add that makes the backend production-grade.
@@ -80,6 +114,10 @@ explanatory message.
   writer bottleneck. To really scale past one node, swap in
   FoundationDB / TiKV / Postgres. Separate roadmap item because it
   touches every query, not just the blob layer.
+- **Backend-aware replication** — replicas currently read blobs
+  through the local filesystem. Routing them through the trait too
+  would let mixed-backend topologies work (primary on S3, replica on
+  local disk for a cheaper read node, or vice-versa).
 
 ## Why not use `aws-sdk-s3`?
 

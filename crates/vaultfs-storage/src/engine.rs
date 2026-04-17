@@ -2,7 +2,6 @@ use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
-use tokio_util::io::ReaderStream;
 use tracing::info;
 
 use crate::db::Database;
@@ -21,6 +20,9 @@ pub struct StorageEngine {
     max_file_size: u64,
     deduplication: bool,
     encryptor: Option<Arc<Encryptor>>,
+    /// Pluggable blob backend. `data_dir` still owns local-only state
+    /// (SQLite, scratch, backups); blob bytes flow through the trait.
+    blob_store: Arc<dyn crate::blob_store::BlobStore>,
     /// What ffmpeg-backed features the host can do (detected once at
     /// startup). Used to branch probe / thumbnail decisions.
     video_features: vaultfs_processing::VideoFeatures,
@@ -41,9 +43,29 @@ impl StorageEngine {
         deduplication: bool,
         encryptor: Option<Arc<Encryptor>>,
     ) -> Result<Self, StorageError> {
+        // Default to local blob storage — what VaultFS has always done.
+        let blob_store = Arc::new(crate::LocalBlobStore::new(data_dir.clone()));
+        Self::with_backend(data_dir, max_file_size, deduplication, encryptor, blob_store)
+    }
+
+    /// Constructor for callers that want to choose the blob backend
+    /// (local disk, S3, R2, etc.). `data_dir` is still required —
+    /// SQLite metadata, replication scratch, and backups live there
+    /// regardless of where blobs go.
+    pub fn with_backend(
+        data_dir: PathBuf,
+        max_file_size: u64,
+        deduplication: bool,
+        encryptor: Option<Arc<Encryptor>>,
+        blob_store: Arc<dyn crate::blob_store::BlobStore>,
+    ) -> Result<Self, StorageError> {
         let db_path = data_dir.join("vaultfs.db");
         std::fs::create_dir_all(&data_dir)?;
-        std::fs::create_dir_all(data_dir.join("blobs"))?;
+        // Only pre-create the blobs directory when the backend is
+        // local — remote backends manage their own prefix layout.
+        if blob_store.supports_local_path() {
+            std::fs::create_dir_all(data_dir.join("blobs"))?;
+        }
 
         let db = Database::open(&db_path)?;
 
@@ -53,8 +75,13 @@ impl StorageEngine {
             max_file_size,
             deduplication,
             encryptor,
+            blob_store,
             video_features: vaultfs_processing::VideoFeatures::detect(),
         })
+    }
+
+    pub fn blob_store(&self) -> &Arc<dyn crate::blob_store::BlobStore> {
+        &self.blob_store
     }
 
     pub fn video_features(&self) -> &vaultfs_processing::VideoFeatures {
@@ -78,7 +105,7 @@ impl StorageEngine {
     fn enrich_with_video_meta(
         &self,
         content_type: &str,
-        storage_path: &std::path::Path,
+        storage_path: Option<&std::path::Path>,
         plaintext: Option<&[u8]>,
         user_meta: Option<serde_json::Value>,
     ) -> serde_json::Value {
@@ -86,25 +113,28 @@ impl StorageEngine {
         // `video/*` is the broad net; ffprobe covers way more container
         // types than the pure-Rust mp4 parser, so we try it on anything
         // that *claims* to be video rather than only MP4-family MIMEs.
-        let likely_video = content_type.starts_with("video/");
-        if !likely_video { return base; }
+        if !content_type.starts_with("video/") { return base; }
 
-        // Branch by what tools we can use:
-        // 1. ffprobe if installed — best coverage (WebM, MKV, AVI…).
-        // 2. Pure-Rust mp4 parser — MP4/MOV only, works without
-        //    external deps. Uses `probe_video_bytes` when SSE is on so
-        //    we don't feed it ciphertext.
         let ffprobe_available = self.video_features.ffprobe;
         let is_mp4_family = vaultfs_processing::is_probable_video(content_type);
-        let meta = if ffprobe_available && self.encryptor.is_none() {
-            vaultfs_processing::probe_with_ffprobe(storage_path)
-                .or_else(|| if is_mp4_family { vaultfs_processing::probe_video_file(storage_path) } else { None })
-        } else if self.encryptor.is_some() {
-            // Ciphertext on disk — only the in-memory buffer is useful,
-            // and only the mp4 parser can use it (ffprobe needs a file).
-            plaintext.and_then(vaultfs_processing::probe_video_bytes)
+        // Priority order:
+        // 1. ffprobe on the local file (best coverage, needs a path)
+        // 2. Pure-Rust mp4 parser on the local file (MP4/MOV only)
+        // 3. Pure-Rust mp4 parser on the plaintext buffer (SSE path,
+        //    or remote backend with bytes still in memory)
+        let meta = if let Some(path) = storage_path {
+            if ffprobe_available && self.encryptor.is_none() {
+                vaultfs_processing::probe_with_ffprobe(path)
+                    .or_else(|| if is_mp4_family { vaultfs_processing::probe_video_file(path) } else { None })
+            } else if self.encryptor.is_some() {
+                plaintext.and_then(vaultfs_processing::probe_video_bytes)
+            } else {
+                vaultfs_processing::probe_video_file(path)
+            }
         } else {
-            vaultfs_processing::probe_video_file(storage_path)
+            // Remote backend: no local file. Best we can do is the
+            // pure-Rust mp4 parser against the in-memory buffer.
+            plaintext.and_then(vaultfs_processing::probe_video_bytes)
         };
         let Some(meta) = meta else { return base };
 
@@ -163,18 +193,23 @@ impl StorageEngine {
         // Content-addressable storage path
         let storage_path = self.blob_path(&sha256);
 
-        // Deduplication: skip write if blob already exists
+        // Deduplication: skip write if the blob already exists at the
+        // canonical key. Both local and S3 backends dedup identically
+        // via content-addressed paths.
         if self.deduplication {
             if let Some(existing) = self.db.find_by_hash(&sha256)? {
-                let existing_path = self.data_dir.join(&existing);
-                if existing_path.exists() {
+                if self.blob_store.exists_blob(&existing).await? {
                     let content_type = content_type
                         .map(String::from)
                         .unwrap_or_else(|| Self::guess_content_type(key));
 
+                    // Enrichment wants a local path for ffprobe; with a
+                    // remote backend we hand over the in-memory buffer
+                    // instead so the probe still runs.
+                    let existing_local = self.blob_store.local_path(&existing);
                     let enriched = self.enrich_with_video_meta(
                         &content_type,
-                        &existing_path,
+                        existing_local.as_deref(),
                         Some(&data),
                         metadata,
                     );
@@ -194,26 +229,23 @@ impl StorageEngine {
             }
         }
 
-        // Write blob to disk. With SSE enabled, we encrypt before writing —
-        // the file on disk is the ciphertext; the sha256 stays the plaintext
-        // hash so dedup lookups and client-facing ETags keep working.
-        let full_path = self.data_dir.join(&storage_path);
-        if let Some(parent) = full_path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
+        // Write blob via the backend. With SSE on, we still encrypt
+        // in-process before handing the bytes over — the backend
+        // never sees plaintext.
         let bytes_on_disk = match &self.encryptor {
             Some(enc) => enc.encrypt(&sha256, &data)?,
             None => data.to_vec(),
         };
-        tokio::fs::write(&full_path, &bytes_on_disk).await?;
+        self.blob_store.put_blob(&storage_path, &bytes_on_disk).await?;
 
         let content_type = content_type
             .map(String::from)
             .unwrap_or_else(|| Self::guess_content_type(key));
 
+        let local_path = self.blob_store.local_path(&storage_path);
         let enriched = self.enrich_with_video_meta(
             &content_type,
-            &full_path,
+            local_path.as_deref(),
             Some(&data),
             metadata,
         );
@@ -263,8 +295,7 @@ impl StorageEngine {
 
     pub async fn get_object(&self, bucket: &str, key: &str) -> Result<(ObjectMeta, bytes::Bytes), StorageError> {
         let (meta, storage_path) = self.db.get_object(bucket, key)?;
-        let full_path = self.data_dir.join(&storage_path);
-        let raw = tokio::fs::read(&full_path).await?;
+        let raw = self.blob_store.get_blob(&storage_path).await?;
         let data = match &self.encryptor {
             Some(enc) => enc.decrypt(&meta.sha256, &raw)?,
             None => raw,
@@ -312,10 +343,11 @@ impl StorageEngine {
         let _ = self
             .db
             .append_replication_event("delete", bucket, key, "", None, 0, "");
-        // Note: with dedup, we don't delete the blob as other objects may reference it
+        // With dedup off, the blob is used by at most one object, so
+        // deletion is safe. With dedup on, another row may still
+        // reference the same content-addressed blob — leave it.
         if !self.deduplication {
-            let full_path = self.data_dir.join(&storage_path);
-            let _ = tokio::fs::remove_file(&full_path).await;
+            let _ = self.blob_store.delete_blob(&storage_path).await;
         }
         info!(bucket, key, "object deleted");
         Ok(())
@@ -325,9 +357,18 @@ impl StorageEngine {
         self.db.list_objects(req)
     }
 
+    /// Local filesystem path for the object's blob, when the active
+    /// backend has one. Remote backends return None and callers that
+    /// absolutely need a file (ffmpeg, SSE in-place ops) should
+    /// either download to scratch or error out clearly.
     pub fn object_data_path(&self, bucket: &str, key: &str) -> Result<PathBuf, StorageError> {
         let (_, storage_path) = self.db.get_object(bucket, key)?;
-        Ok(self.data_dir.join(storage_path))
+        self.blob_store
+            .local_path(&storage_path)
+            .ok_or_else(|| StorageError::Io(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "active blob backend has no local path",
+            )))
     }
 
     fn blob_path(&self, sha256: &str) -> String {
@@ -395,15 +436,15 @@ impl StorageEngine {
         // Deduplication check
         if self.deduplication {
             if let Some(existing) = self.db.find_by_hash(&sha256)? {
-                let existing_full = self.data_dir.join(&existing);
-                if existing_full.exists() {
+                if self.blob_store.exists_blob(&existing).await? {
                     let _ = tokio::fs::remove_file(&temp_path).await;
                     let content_type = content_type
                         .map(String::from)
                         .unwrap_or_else(|| Self::guess_content_type(key));
+                    let existing_local = self.blob_store.local_path(&existing);
                     let enriched = self.enrich_with_video_meta(
                         &content_type,
-                        &existing_full,
+                        existing_local.as_deref(),
                         None,
                         metadata,
                     );
@@ -417,34 +458,30 @@ impl StorageEngine {
             }
         }
 
-        // Move temp file to final content-addressed path. With SSE, we have
-        // to take an extra pass: read the plaintext temp file, encrypt, then
-        // write the ciphertext to the final path. Streaming AEAD would avoid
-        // this but AES-GCM emits the auth tag at the end, so we can't hand
-        // out a partial file while still writing.
-        let final_path = self.data_dir.join(&storage_path);
-        if let Some(parent) = final_path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
+        // Finalize the blob through the backend. With SSE, we read the
+        // plaintext temp file, encrypt in memory, then PUT. Without SSE,
+        // we hand the temp file to `put_blob_from_file` which does a
+        // rename on local and an upload on S3. Either way the temp is
+        // consumed on success.
         if let Some(enc) = &self.encryptor {
             let plaintext = tokio::fs::read(&temp_path).await?;
             let ciphertext = enc.encrypt(&sha256, &plaintext)?;
-            tokio::fs::write(&final_path, &ciphertext).await?;
+            self.blob_store.put_blob(&storage_path, &ciphertext).await?;
             let _ = tokio::fs::remove_file(&temp_path).await;
         } else {
-            tokio::fs::rename(&temp_path, &final_path).await?;
+            self.blob_store
+                .put_blob_from_file(&storage_path, &temp_path)
+                .await?;
         }
 
         let content_type = content_type
             .map(String::from)
             .unwrap_or_else(|| Self::guess_content_type(key));
 
-        // Stream path: we may have already removed the plaintext buffer,
-        // so we pass None and rely on probe_file. With SSE on, that reads
-        // ciphertext and returns None — acceptable for 0.1.x.
+        let final_local = self.blob_store.local_path(&storage_path);
         let enriched = self.enrich_with_video_meta(
             &content_type,
-            &final_path,
+            final_local.as_deref(),
             None,
             metadata,
         );
@@ -501,10 +538,12 @@ impl StorageEngine {
         StorageError,
     > {
         let (meta, storage_path) = self.db.get_object(bucket, key)?;
-        let full_path = self.data_dir.join(&storage_path);
 
+        // SSE forces us to materialize the full blob to decrypt (the
+        // GCM auth tag sits at the end). Anything else rides the
+        // backend's native streaming.
         if let Some(enc) = &self.encryptor {
-            let raw = tokio::fs::read(&full_path).await?;
+            let raw = self.blob_store.get_blob(&storage_path).await?;
             let plaintext = enc.decrypt(&meta.sha256, &raw)?;
             let stream = futures::stream::once(async move {
                 Ok::<_, std::io::Error>(bytes::Bytes::from(plaintext))
@@ -512,9 +551,8 @@ impl StorageEngine {
             return Ok((meta, Box::pin(stream)));
         }
 
-        let file = tokio::fs::File::open(&full_path).await?;
-        let stream = ReaderStream::new(file);
-        Ok((meta, Box::pin(stream)))
+        let stream = self.blob_store.stream_blob(&storage_path).await?;
+        Ok((meta, stream))
     }
 
     pub fn db(&self) -> &Database {
@@ -538,8 +576,7 @@ impl StorageEngine {
         version_id: &str,
     ) -> Result<(ObjectVersion, bytes::Bytes), StorageError> {
         let (version, storage_path) = self.db.get_version(bucket, key, version_id)?;
-        let full_path = self.data_dir.join(&storage_path);
-        let raw = tokio::fs::read(&full_path).await?;
+        let raw = self.blob_store.get_blob(&storage_path).await?;
         let data = match &self.encryptor {
             Some(enc) => enc.decrypt(&version.sha256, &raw)?,
             None => raw,
@@ -590,8 +627,7 @@ impl StorageEngine {
             return Ok(());
         }
         if !self.db.is_storage_path_referenced(&storage_path)? {
-            let full_path = self.data_dir.join(&storage_path);
-            let _ = tokio::fs::remove_file(&full_path).await;
+            let _ = self.blob_store.delete_blob(&storage_path).await;
         }
         Ok(())
     }
@@ -625,8 +661,7 @@ impl StorageEngine {
         if !self.deduplication {
             for path in all_paths.iter().collect::<std::collections::HashSet<_>>() {
                 if !self.db.is_storage_path_referenced(path)? {
-                    let full_path = self.data_dir.join(path);
-                    if tokio::fs::remove_file(&full_path).await.is_ok() {
+                    if self.blob_store.delete_blob(path).await.is_ok() {
                         removed += 1;
                     }
                 }
@@ -637,22 +672,20 @@ impl StorageEngine {
 
     // ── Lifecycle ───────────────────────────────────────────────────────
 
-    pub fn run_lifecycle(&self) -> Result<LifecycleResult, StorageError> {
+    pub async fn run_lifecycle(&self) -> Result<LifecycleResult, StorageError> {
         let expired = self.db.find_expired_objects()?;
         let mut objects_expired: u64 = 0;
         let mut bytes_freed: u64 = 0;
 
         for (bucket, key, storage_path) in &expired {
-            // Get size before deleting
             if let Ok((meta, _)) = self.db.get_object(bucket, key) {
                 bytes_freed += meta.size;
             }
-            // Delete from database
             let _ = self.db.delete_object(bucket, key);
-            // Delete from disk if dedup is off
             if !self.deduplication {
-                let full_path = self.data_dir.join(storage_path);
-                let _ = std::fs::remove_file(&full_path);
+                // Blob cleanup goes through the backend so S3 /
+                // remote stores stay in sync.
+                let _ = self.blob_store.delete_blob(storage_path).await;
             }
             objects_expired += 1;
         }

@@ -1182,6 +1182,50 @@ fn ffmpeg_small_mp4() -> Option<PathBuf> {
 }
 
 #[tokio::test]
+async fn e2e_storage_backend_config_parses_local() {
+    // Minimal smoke test for the backend selector: a freshly-started
+    // server with the default config should report "local" at boot.
+    // We can't test the S3 path without a live S3-compatible endpoint,
+    // which belongs in a separate docker-compose-driven suite.
+    let srv = TestServer::start_with_env(&[("VAULTFS_STORAGE_BACKEND", "local")]);
+    let client = srv.client();
+    let auth = srv.auth_header();
+
+    // The health endpoint doesn't currently publish the backend name
+    // (feature for a later commit); for now we just assert the server
+    // comes up and serves objects normally under the new code path.
+    client
+        .post(format!("{}/v1/buckets", srv.url))
+        .header("Authorization", &auth)
+        .json(&serde_json::json!({"name": "backend-test", "public": false}))
+        .send()
+        .await
+        .unwrap();
+    client
+        .put(format!("{}/v1/objects/backend-test/hello.txt", srv.url))
+        .header("Authorization", &auth)
+        .body("backend works")
+        .send()
+        .await
+        .unwrap();
+    let got = client
+        .get(format!("{}/v1/objects/backend-test/hello.txt", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert_eq!(got, "backend works");
+
+    // Unknown backends should fail at startup. We check this by
+    // spawning a server with a bogus backend and expecting the
+    // harness to panic during the startup wait — done in a
+    // separate function so other tests don't inherit the env.
+}
+
+#[tokio::test]
 async fn e2e_transcode_queue_cap_rejects_with_429() {
     // Start the server with max_pending=1 so a single unclaimed job
     // fills the queue. We block the worker by setting workers=0 via

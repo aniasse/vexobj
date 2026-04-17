@@ -411,7 +411,7 @@ async fn run_lifecycle(
 
     let ip = extract_ip(&headers);
 
-    match state.storage.run_lifecycle() {
+    match state.storage.run_lifecycle().await {
         Ok(result) => {
             state.audit.log(
                 &key_prefix(&caller),

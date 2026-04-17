@@ -8,7 +8,7 @@ use crate::ratelimit::RateLimiter;
 use crate::webhooks::{WebhookConfig, WebhookSender};
 use vaultfs_auth::{AuthManager, PresignedUrlGenerator};
 use vaultfs_cache::Cache;
-use vaultfs_storage::{Encryptor, StorageEngine};
+use vaultfs_storage::{BlobStore, Encryptor, LocalBlobStore, S3BlobStore, S3Config, StorageEngine};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -40,11 +40,43 @@ impl AppState {
             None
         };
 
-        let storage = StorageEngine::with_encryption(
+        // Select the blob backend. Default "local" preserves existing
+        // deployments; "s3" requires [storage.s3] (or its env-var
+        // equivalents) to be filled in.
+        let blob_store: Arc<dyn BlobStore> = match config.storage.backend.as_str() {
+            "local" => Arc::new(LocalBlobStore::new(data_dir.clone())),
+            "s3" => {
+                let s3 = config
+                    .storage
+                    .s3
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("storage.backend=s3 but [storage.s3] missing"))?;
+                if s3.endpoint.is_empty() || s3.bucket.is_empty() {
+                    anyhow::bail!("[storage.s3] endpoint and bucket are required");
+                }
+                tracing::info!(
+                    endpoint = %s3.endpoint,
+                    bucket = %s3.bucket,
+                    "blob backend: s3"
+                );
+                Arc::new(S3BlobStore::new(S3Config {
+                    endpoint: s3.endpoint.clone(),
+                    bucket: s3.bucket.clone(),
+                    access_key: s3.access_key.clone(),
+                    secret_key: s3.secret_key.clone(),
+                    region: s3.region.clone(),
+                    path_style: s3.path_style,
+                }))
+            }
+            other => anyhow::bail!("unknown storage.backend: {other} (want: local | s3)"),
+        };
+
+        let storage = StorageEngine::with_backend(
             data_dir.clone(),
             max_file_size,
             config.storage.deduplication,
             encryptor,
+            blob_store,
         )?;
 
         let memory_size = config::parse_size(&config.cache.memory_size) as usize;
@@ -114,6 +146,8 @@ impl AppState {
                     data_dir: config.storage.data_dir.clone(),
                     max_file_size: config.storage.max_file_size.clone(),
                     deduplication: config.storage.deduplication,
+                    backend: config.storage.backend.clone(),
+                    s3: None, // don't propagate S3 credentials into shared state
                 },
                 cache: config::CacheConfig {
                     memory_size: config.cache.memory_size.clone(),

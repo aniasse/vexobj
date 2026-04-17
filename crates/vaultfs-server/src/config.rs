@@ -49,7 +49,30 @@ pub struct StorageConfig {
     pub max_file_size: String,
     #[serde(default = "default_true")]
     pub deduplication: bool,
+    /// Blob backend. `"local"` (default) stores blobs on disk under
+    /// `data_dir/blobs`. `"s3"` routes blob I/O to an S3-compatible
+    /// endpoint configured in `[storage.s3]`.
+    #[serde(default = "default_backend")]
+    pub backend: String,
+    #[serde(default)]
+    pub s3: Option<StorageS3Config>,
 }
+
+fn default_backend() -> String { "local".into() }
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct StorageS3Config {
+    pub endpoint: String,
+    pub bucket: String,
+    pub access_key: String,
+    pub secret_key: String,
+    #[serde(default = "default_region")]
+    pub region: String,
+    #[serde(default = "default_true")]
+    pub path_style: bool,
+}
+
+fn default_region() -> String { "us-east-1".into() }
 
 impl Default for StorageConfig {
     fn default() -> Self {
@@ -57,6 +80,8 @@ impl Default for StorageConfig {
             data_dir: default_data_dir(),
             max_file_size: default_max_file_size(),
             deduplication: true,
+            backend: default_backend(),
+            s3: None,
         }
     }
 }
@@ -287,6 +312,30 @@ impl Config {
         }
         if let Ok(val) = std::env::var("VAULTFS_DEDUPLICATION") {
             config.storage.deduplication = val.parse().unwrap_or(config.storage.deduplication);
+        }
+        // Storage-backend envs follow the same pattern as the [storage.s3]
+        // block; they're the path used by the test harness and by
+        // operators who don't want credentials in their config file.
+        if let Ok(val) = std::env::var("VAULTFS_STORAGE_BACKEND") {
+            config.storage.backend = val;
+        }
+        if let Ok(val) = std::env::var("VAULTFS_S3_ENDPOINT") {
+            let s3 = config.storage.s3.get_or_insert_with(|| StorageS3Config {
+                endpoint: String::new(),
+                bucket: String::new(),
+                access_key: String::new(),
+                secret_key: String::new(),
+                region: default_region(),
+                path_style: true,
+            });
+            s3.endpoint = val;
+            if let Ok(v) = std::env::var("VAULTFS_S3_BUCKET")     { s3.bucket = v; }
+            if let Ok(v) = std::env::var("VAULTFS_S3_ACCESS_KEY") { s3.access_key = v; }
+            if let Ok(v) = std::env::var("VAULTFS_S3_SECRET_KEY") { s3.secret_key = v; }
+            if let Ok(v) = std::env::var("VAULTFS_S3_REGION")     { s3.region = v; }
+            if let Ok(v) = std::env::var("VAULTFS_S3_PATH_STYLE") {
+                s3.path_style = v.parse().unwrap_or(true);
+            }
         }
         if let Ok(val) = std::env::var("VAULTFS_CACHE_MEMORY_SIZE") {
             config.cache.memory_size = val;
