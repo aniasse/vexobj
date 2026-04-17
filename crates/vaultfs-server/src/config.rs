@@ -23,6 +23,8 @@ pub struct Config {
     pub webhooks: Vec<WebhookConfigEntry>,
     #[serde(default)]
     pub sse: SseConfig,
+    #[serde(default)]
+    pub transcode: TranscodeConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -168,6 +170,36 @@ pub struct SseConfig {
     pub master_key: String,
 }
 
+/// Transcoding backpressure & cleanup. Defaults are conservative:
+/// two workers (most HDDs won't feed more ffmpeg sessions than that
+/// without thrashing) and a generous queue cap that a single misbehaved
+/// client would still hit before causing operational pain.
+#[derive(Debug, Deserialize)]
+pub struct TranscodeConfig {
+    #[serde(default = "default_transcode_workers")]
+    pub workers: u32,
+    #[serde(default = "default_transcode_max_pending")]
+    pub max_pending: u32,
+    /// Rows in `transcode_jobs` with terminal status older than this
+    /// get deleted by a periodic task. 0 = never.
+    #[serde(default = "default_transcode_gc_days")]
+    pub gc_after_days: u32,
+}
+
+impl Default for TranscodeConfig {
+    fn default() -> Self {
+        Self {
+            workers: default_transcode_workers(),
+            max_pending: default_transcode_max_pending(),
+            gc_after_days: default_transcode_gc_days(),
+        }
+    }
+}
+
+fn default_transcode_workers() -> u32     { 2 }
+fn default_transcode_max_pending() -> u32 { 100 }
+fn default_transcode_gc_days() -> u32     { 30 }
+
 #[derive(Debug, Deserialize)]
 pub struct QuotaConfig {
     #[serde(default)]
@@ -294,6 +326,15 @@ impl Config {
         }
         if let Ok(val) = std::env::var("VAULTFS_SSE_MASTER_KEY") {
             config.sse.master_key = val;
+        }
+        if let Ok(val) = std::env::var("VAULTFS_TRANSCODE_WORKERS") {
+            if let Ok(v) = val.parse() { config.transcode.workers = v; }
+        }
+        if let Ok(val) = std::env::var("VAULTFS_TRANSCODE_MAX_PENDING") {
+            if let Ok(v) = val.parse() { config.transcode.max_pending = v; }
+        }
+        if let Ok(val) = std::env::var("VAULTFS_TRANSCODE_GC_DAYS") {
+            if let Ok(v) = val.parse() { config.transcode.gc_after_days = v; }
         }
 
         Ok(config)

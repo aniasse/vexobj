@@ -85,7 +85,14 @@ async fn main() -> Result<()> {
     });
 
     // Transcode worker — only spins up when ffmpeg is detected on PATH.
-    transcode_worker::spawn(state.storage.clone(), Default::default());
+    transcode_worker::spawn(
+        state.storage.clone(),
+        transcode_worker::TranscodeWorkerConfig {
+            workers: config.transcode.workers,
+            gc_after_days: config.transcode.gc_after_days,
+            ..Default::default()
+        },
+    );
 
     // Rate limiter cleanup task
     if let Some(ref limiter) = state.rate_limiter {

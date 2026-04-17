@@ -149,6 +149,11 @@ impl AppState {
                     // plaintext into shared state that may get logged.
                     master_key: String::new(),
                 },
+                transcode: config::TranscodeConfig {
+                    workers: config.transcode.workers,
+                    max_pending: config.transcode.max_pending,
+                    gc_after_days: config.transcode.gc_after_days,
+                },
             }),
             rate_limiter,
             webhooks,

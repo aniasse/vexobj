@@ -69,6 +69,30 @@ async fn submit_job(
             .into_response();
     }
 
+    // Backpressure: reject submissions once the pending queue is full.
+    // Without this, a misbehaved client could queue thousands of jobs
+    // and force the worker pool into permanent overload. 429 is the
+    // right signal — clients are expected to back off and retry.
+    let cap = state.config.transcode.max_pending;
+    if cap > 0 {
+        match state.storage.db().count_transcode_jobs_by_status("pending") {
+            Ok(pending) if pending >= cap as u64 => {
+                return (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    [("retry-after", "30")],
+                    Json(json!({
+                        "error": "transcode queue is full",
+                        "pending": pending,
+                        "max_pending": cap,
+                    })),
+                )
+                    .into_response();
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!("pending-count query failed: {e}"),
+        }
+    }
+
     // Resolve the source so we can capture its sha256 on the job row
     // (survives future edits to the source key).
     let meta = match state.storage.get_object_meta(&bucket, &key) {

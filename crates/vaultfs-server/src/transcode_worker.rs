@@ -14,6 +14,10 @@ use vaultfs_storage::StorageEngine;
 
 #[derive(Clone)]
 pub struct TranscodeWorkerConfig {
+    /// Number of worker tasks to spawn. Each polls the queue
+    /// independently; `claim_next_transcode_job` is an atomic
+    /// transaction so they never take the same job.
+    pub workers: u32,
     /// How often to wake up and poll when the queue is empty. Once a
     /// job is running, the worker loops back to the poll as soon as
     /// it's done, so this only paces the idle case.
@@ -21,20 +25,23 @@ pub struct TranscodeWorkerConfig {
     /// Directory under data_dir where worker-local temp files live.
     /// Cleaned up after each job regardless of outcome.
     pub scratch_subdir: &'static str,
+    /// Terminal jobs (`completed` / `failed`) older than this get GC'd
+    /// on an hourly sweep. 0 disables GC entirely.
+    pub gc_after_days: u32,
 }
 
 impl Default for TranscodeWorkerConfig {
     fn default() -> Self {
         Self {
+            workers: 2,
             poll_interval: Duration::from_secs(2),
             scratch_subdir: "transcode-scratch",
+            gc_after_days: 30,
         }
     }
 }
 
-/// Start the worker loop on the current tokio runtime. Returns a
-/// handle the caller can drop to let the worker exit on the next
-/// poll cycle.
+/// Start the worker pool + periodic GC on the current tokio runtime.
 pub fn spawn(storage: Arc<StorageEngine>, cfg: TranscodeWorkerConfig) {
     // ffmpeg has to be on PATH. Otherwise the worker still starts but
     // fails every job — rather than hide that, we log once and skip.
@@ -42,34 +49,57 @@ pub fn spawn(storage: Arc<StorageEngine>, cfg: TranscodeWorkerConfig) {
         info!("transcode worker: ffmpeg not on PATH, skipping spawn");
         return;
     }
-    tokio::spawn(async move {
-        info!("transcode worker: online");
-        let scratch = storage.data_dir().join(cfg.scratch_subdir);
-        let _ = std::fs::create_dir_all(&scratch);
 
-        loop {
-            match storage.db().claim_next_transcode_job() {
-                Ok(Some(job)) => {
-                    let started = Instant::now();
-                    if let Err(e) = run_job(&storage, &scratch, &job).await {
-                        let ms = started.elapsed().as_millis() as i64;
-                        warn!(job = %job.id, error = %e, "transcode job failed");
-                        let _ = storage
-                            .db()
-                            .fail_transcode_job(&job.id, &e, ms);
+    let scratch = storage.data_dir().join(cfg.scratch_subdir);
+    let _ = std::fs::create_dir_all(&scratch);
+
+    // Spawn N independent worker loops. They share the queue via the
+    // atomic claim method; at most one of them will take any given job.
+    let worker_count = cfg.workers.max(1);
+    info!(workers = worker_count, "transcode worker pool online");
+    for worker_id in 0..worker_count {
+        let storage = storage.clone();
+        let scratch = scratch.clone();
+        let poll = cfg.poll_interval;
+        tokio::spawn(async move {
+            loop {
+                match storage.db().claim_next_transcode_job() {
+                    Ok(Some(job)) => {
+                        let started = Instant::now();
+                        if let Err(e) = run_job(&storage, &scratch, &job).await {
+                            let ms = started.elapsed().as_millis() as i64;
+                            warn!(worker = worker_id, job = %job.id, error = %e, "transcode job failed");
+                            let _ = storage.db().fail_transcode_job(&job.id, &e, ms);
+                        }
                     }
-                    // Loop straight back to check for the next job.
-                }
-                Ok(None) => {
-                    tokio::time::sleep(cfg.poll_interval).await;
-                }
-                Err(e) => {
-                    error!("transcode worker: queue query failed: {e}");
-                    tokio::time::sleep(cfg.poll_interval).await;
+                    Ok(None) => tokio::time::sleep(poll).await,
+                    Err(e) => {
+                        error!(worker = worker_id, "transcode queue query failed: {e}");
+                        tokio::time::sleep(poll).await;
+                    }
                 }
             }
-        }
-    });
+        });
+    }
+
+    // Periodic GC: removes terminal rows older than the configured
+    // retention. Runs hourly; one instance is enough regardless of
+    // worker count.
+    if cfg.gc_after_days > 0 {
+        let storage = storage.clone();
+        let retention_days = cfg.gc_after_days as i64;
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(3600)).await;
+                let cutoff = chrono::Utc::now() - chrono::Duration::days(retention_days);
+                match storage.db().gc_transcode_jobs(cutoff) {
+                    Ok(n) if n > 0 => info!(removed = n, "transcode queue GC"),
+                    Ok(_) => {}
+                    Err(e) => warn!("transcode GC failed: {e}"),
+                }
+            }
+        });
+    }
 }
 
 async fn run_job(

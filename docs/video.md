@@ -204,14 +204,50 @@ curl "http://localhost:8000/v1/transcode/jobs?status=running" \
   -H "Authorization: Bearer $VFS_KEY"
 ```
 
+### Configuration
+
+```toml
+[transcode]
+workers       = 2      # concurrent jobs (default 2)
+max_pending   = 100    # reject new submissions over this count with 429
+gc_after_days = 30     # GC terminal rows older than this; 0 disables
+```
+
+Environment-variable overrides:
+
+- `VAULTFS_TRANSCODE_WORKERS`
+- `VAULTFS_TRANSCODE_MAX_PENDING`
+- `VAULTFS_TRANSCODE_GC_DAYS`
+
+### Backpressure
+
+Submissions that would push `pending` above `max_pending` are
+rejected immediately with `429 Too Many Requests` and a `Retry-After:
+30` header. Clients should implement exponential backoff. The
+underlying `claim_next_transcode_job` DB method is an atomic
+transaction so multiple workers never race on the same row.
+
+### Queue hygiene
+
+A background task runs hourly and deletes rows in `completed` or
+`failed` state whose `completed_at` is older than `gc_after_days`.
+Set it to `0` to disable. Running jobs are never touched.
+
+For on-demand inspection:
+
+```bash
+vaultfsctl transcode jobs --status=running --limit=20
+vaultfsctl transcode get <job-id>
+vaultfsctl transcode profiles
+```
+
 ### What's still on the roadmap
 
-- **Concurrency control** — today the worker runs one job at a time.
-  A bounded pool (N workers, configurable) is the next obvious step.
 - **Priority lanes** — admins should be able to jump a job past
   long-running batch work.
 - **Per-bucket transcode quotas** — protect against a runaway client
-  queueing 10 GB of work per second.
+  queueing 10 GB of work per second (the global `max_pending` cap is
+  a blunt instrument).
 - **Re-transcode on source version bump** — currently variants are
   detached from their source's version_id; a new upload doesn't
   invalidate them.

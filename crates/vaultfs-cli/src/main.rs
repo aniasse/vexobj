@@ -54,6 +54,11 @@ enum Commands {
         #[command(subcommand)]
         source: MigrateSource,
     },
+    /// Transcoding job queue
+    Transcode {
+        #[command(subcommand)]
+        action: TranscodeAction,
+    },
     /// Promote this replica to a new primary after the old primary failed.
     /// Prints the checkpoint cursor, deletes the cursor file so nothing
     /// accidentally reconnects to the dead primary, and runs a sanity
@@ -95,6 +100,31 @@ enum Commands {
         #[arg(long, default_value_t = 100u32)]
         batch_size: u32,
     },
+}
+
+#[derive(Subcommand)]
+enum TranscodeAction {
+    /// List recent jobs
+    Jobs {
+        /// Filter by status: pending / running / completed / failed
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
+    },
+    /// Submit a transcode job for an object
+    Submit {
+        bucket: String,
+        key: String,
+        #[arg(long)]
+        profile: String,
+    },
+    /// Show a specific job
+    Get {
+        id: String,
+    },
+    /// List available profiles
+    Profiles,
 }
 
 #[derive(Subcommand)]
@@ -328,6 +358,16 @@ async fn main() -> Result<()> {
                 )
                 .await
             }
+        },
+        Commands::Transcode { action } => match action {
+            TranscodeAction::Jobs { status, limit } => {
+                cmd_transcode_jobs(&api, status.as_deref(), limit).await
+            }
+            TranscodeAction::Submit { bucket, key, profile } => {
+                cmd_transcode_submit(&api, &bucket, &key, &profile).await
+            }
+            TranscodeAction::Get { id } => cmd_transcode_get(&api, &id).await,
+            TranscodeAction::Profiles => cmd_transcode_profiles(&api).await,
         },
         Commands::Promote {
             cursor_file,
@@ -1724,5 +1764,78 @@ async fn cmd_promote(
     println!("  4. Investigate why the old primary failed before reusing the node.");
     println!();
     println!("See docs/failover.md for the full runbook.");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Transcoding
+// ---------------------------------------------------------------------------
+
+async fn cmd_transcode_profiles(api: &ApiClient) -> Result<()> {
+    let resp = api.get("/v1/transcode/profiles").send().await.context("request failed")?;
+    let body = check_response(resp).await?;
+    let profiles = body.get("profiles").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let rows: Vec<Vec<String>> = profiles
+        .iter()
+        .map(|p| {
+            vec![
+                p.get("name").and_then(|v| v.as_str()).unwrap_or("-").to_string(),
+                p.get("extension").and_then(|v| v.as_str()).unwrap_or("-").to_string(),
+                p.get("content_type").and_then(|v| v.as_str()).unwrap_or("-").to_string(),
+                p.get("description").and_then(|v| v.as_str()).unwrap_or("-").to_string(),
+            ]
+        })
+        .collect();
+    print_table(&["Name", "Ext", "Content-Type", "Description"], &rows);
+    Ok(())
+}
+
+async fn cmd_transcode_submit(api: &ApiClient, bucket: &str, key: &str, profile: &str) -> Result<()> {
+    let path = format!("/v1/transcode/{}/{}", bucket, key);
+    let resp = api
+        .post(&path)
+        .json(&serde_json::json!({"profile": profile}))
+        .send()
+        .await
+        .context("request failed")?;
+    let body = check_response(resp).await?;
+    println!("Job submitted:");
+    println!("{}", serde_json::to_string_pretty(&body)?);
+    Ok(())
+}
+
+async fn cmd_transcode_get(api: &ApiClient, id: &str) -> Result<()> {
+    let resp = api.get(&format!("/v1/transcode/jobs/{}", id)).send().await.context("request failed")?;
+    let body = check_response(resp).await?;
+    println!("{}", serde_json::to_string_pretty(&body)?);
+    Ok(())
+}
+
+async fn cmd_transcode_jobs(api: &ApiClient, status: Option<&str>, limit: u32) -> Result<()> {
+    let mut url = format!("/v1/transcode/jobs?limit={}", limit);
+    if let Some(s) = status { url.push_str(&format!("&status={}", s)); }
+    let resp = api.get(&url).send().await.context("request failed")?;
+    let body = check_response(resp).await?;
+    let jobs = body.get("jobs").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let rows: Vec<Vec<String>> = jobs
+        .iter()
+        .map(|j| {
+            let dur = j.get("duration_ms").and_then(|v| v.as_i64()).map(|ms| format!("{}ms", ms)).unwrap_or_else(|| "-".to_string());
+            vec![
+                j.get("id").and_then(|v| v.as_str()).unwrap_or("-").chars().take(12).collect(),
+                j.get("status").and_then(|v| v.as_str()).unwrap_or("-").to_string(),
+                j.get("profile").and_then(|v| v.as_str()).unwrap_or("-").to_string(),
+                format!(
+                    "{}/{}",
+                    j.get("bucket").and_then(|v| v.as_str()).unwrap_or("-"),
+                    j.get("key").and_then(|v| v.as_str()).unwrap_or("-"),
+                ),
+                dur,
+                j.get("created_at").and_then(|v| v.as_str()).unwrap_or("-").to_string(),
+            ]
+        })
+        .collect();
+    print_table(&["ID", "Status", "Profile", "Source", "Duration", "Created"], &rows);
+    println!("\n{} job(s)", jobs.len());
     Ok(())
 }

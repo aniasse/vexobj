@@ -6,6 +6,50 @@ use std::sync::Mutex;
 use crate::error::StorageError;
 use crate::models::*;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Duration as Cd;
+
+    fn tempdb() -> Database {
+        let p = std::env::temp_dir().join(format!("vfs-db-{}.sqlite", uuid::Uuid::new_v4()));
+        Database::open(&p).unwrap()
+    }
+
+    #[test]
+    fn gc_only_trims_terminal_jobs_past_the_cutoff() {
+        let db = tempdb();
+        db.create_bucket(&CreateBucketRequest { name: "b".into(), public: false }).unwrap();
+
+        // 4 jobs: pending, running, completed recent, completed old.
+        // Only the "completed old" row should go.
+        let _pending = db.create_transcode_job("b", "k1", "sha1", "mp4-480p", None).unwrap();
+        let _running = db.create_transcode_job("b", "k2", "sha2", "mp4-480p", None).unwrap();
+        let recent = db.create_transcode_job("b", "k3", "sha3", "mp4-480p", None).unwrap();
+        let old = db.create_transcode_job("b", "k4", "sha4", "mp4-480p", None).unwrap();
+
+        // Mark two as completed. The recent one stamps as "now",
+        // the old one we nudge by poking the row directly.
+        db.complete_transcode_job(&recent.id, "b", "k3.out", 100, 1).unwrap();
+        db.complete_transcode_job(&old.id, "b", "k4.out", 100, 1).unwrap();
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE transcode_jobs SET completed_at = ?1 WHERE id = ?2",
+                params![(Utc::now() - Cd::days(60)).to_rfc3339(), old.id],
+            ).unwrap();
+        }
+
+        let removed = db.gc_transcode_jobs(Utc::now() - Cd::days(30)).unwrap();
+        assert_eq!(removed, 1, "only the old-completed job should be GC'd");
+
+        // Still 3 rows remain, and none of them is `old`.
+        let all = db.list_transcode_jobs(None, 100).unwrap();
+        assert_eq!(all.len(), 3);
+        assert!(all.iter().all(|j| j.id != old.id));
+    }
+}
+
 pub struct Database {
     conn: Mutex<Connection>,
 }
@@ -891,6 +935,34 @@ impl Database {
             params![error, now, duration_ms, id],
         )?;
         Ok(())
+    }
+
+    pub fn count_transcode_jobs_by_status(&self, status: &str) -> Result<u64, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM transcode_jobs WHERE status = ?1",
+            params![status],
+            |row| row.get(0),
+        )?;
+        Ok(count as u64)
+    }
+
+    /// Delete rows in terminal state (`completed` / `failed`) whose
+    /// `completed_at` is older than `older_than`. Returns the number of
+    /// rows removed. Used by the periodic GC task and the CLI.
+    pub fn gc_transcode_jobs(
+        &self,
+        older_than: chrono::DateTime<Utc>,
+    ) -> Result<u64, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn.execute(
+            "DELETE FROM transcode_jobs
+             WHERE status IN ('completed', 'failed')
+               AND completed_at IS NOT NULL
+               AND datetime(completed_at) < datetime(?1)",
+            params![older_than.to_rfc3339()],
+        )?;
+        Ok(n as u64)
     }
 
     fn read_transcode_row(row: &rusqlite::Row) -> rusqlite::Result<TranscodeJob> {

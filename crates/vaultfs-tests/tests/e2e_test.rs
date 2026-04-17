@@ -35,13 +35,23 @@ impl TestServer {
     /// Spawn a VaultFS server on a random port with a fresh temp directory.
     /// Blocks until the health endpoint responds or a timeout is reached.
     fn start() -> Self {
-        Self::start_with_sse(None)
+        Self::start_with(None, &[])
     }
 
-    /// Variant that enables server-side encryption with the given 64-hex-char
-    /// master key. Used by the SSE integration test; everything else keeps
-    /// calling `start()` for the no-SSE default.
     fn start_with_sse(sse_master_key: Option<&str>) -> Self {
+        Self::start_with(sse_master_key, &[])
+    }
+
+    /// Start a test server with arbitrary env vars — used by tests that
+    /// need to tweak VAULTFS_* knobs (rate limits, worker counts, etc.).
+    fn start_with_env(extra_env: &[(&str, &str)]) -> Self {
+        Self::start_with(None, extra_env)
+    }
+
+    /// Common path: writes a minimal config, spawns the binary with the
+    /// given extra environment overrides, and blocks until /health
+    /// answers.
+    fn start_with(sse_master_key: Option<&str>, extra_env: &[(&str, &str)]) -> Self {
         let temp_dir = std::env::temp_dir().join(format!("vaultfs-e2e-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).expect("create temp dir");
 
@@ -93,14 +103,16 @@ window_secs = 60
 
         // Spawn with stdout piped so we can read the admin key from tracing output.
         // tracing_subscriber::fmt() writes to stdout by default in this project.
-        let mut child = Command::new(&binary)
-            .env("VAULTFS_CONFIG", config_path.to_str().unwrap())
+        let mut cmd = Command::new(&binary);
+        cmd.env("VAULTFS_CONFIG", config_path.to_str().unwrap())
             .env("RUST_LOG", "info")
             .env("NO_COLOR", "1")
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn vaultfs");
+            .stderr(Stdio::null());
+        for (k, v) in extra_env {
+            cmd.env(k, v);
+        }
+        let mut child = cmd.spawn().expect("spawn vaultfs");
 
         // Read stdout in a separate thread so we don't block forever.
         // We collect lines until we see the "listening" message or timeout.
@@ -1167,6 +1179,66 @@ fn ffmpeg_small_mp4() -> Option<PathBuf> {
         .ok()?;
     if !status.success() { return None; }
     Some(out)
+}
+
+#[tokio::test]
+async fn e2e_transcode_queue_cap_rejects_with_429() {
+    // Start the server with max_pending=1 so a single unclaimed job
+    // fills the queue. We block the worker by setting workers=0 via
+    // env var — the pending job never drains, the second submission
+    // sees the cap and gets rejected.
+    let Some(mp4_path) = ffmpeg_small_mp4() else {
+        eprintln!("SKIP: ffmpeg not available");
+        return;
+    };
+
+    let srv = TestServer::start_with_env(&[
+        ("VAULTFS_TRANSCODE_WORKERS", "0"),
+        ("VAULTFS_TRANSCODE_MAX_PENDING", "1"),
+    ]);
+    let client = srv.client();
+    let auth = srv.auth_header();
+
+    client
+        .post(format!("{}/v1/buckets", srv.url))
+        .header("Authorization", &auth)
+        .json(&serde_json::json!({"name": "queue-cap", "public": false}))
+        .send()
+        .await
+        .unwrap();
+    client
+        .put(format!("{}/v1/objects/queue-cap/clip.mp4", srv.url))
+        .header("Authorization", &auth)
+        .header("Content-Type", "video/mp4")
+        .body(std::fs::read(&mp4_path).unwrap())
+        .send()
+        .await
+        .unwrap();
+
+    // First submission goes through.
+    let ok = client
+        .post(format!("{}/v1/transcode/queue-cap/clip.mp4", srv.url))
+        .header("Authorization", &auth)
+        .json(&serde_json::json!({"profile": "mp4-480p"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ok.status(), 202);
+
+    // Second submission hits the 1-job cap → 429 with retry-after.
+    let blocked = client
+        .post(format!("{}/v1/transcode/queue-cap/clip.mp4", srv.url))
+        .header("Authorization", &auth)
+        .json(&serde_json::json!({"profile": "mp4-480p"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(blocked.status(), 429);
+    assert_eq!(blocked.headers().get("retry-after").unwrap(), "30");
+    let body: Value = blocked.json().await.unwrap();
+    assert_eq!(body["max_pending"], 1);
+
+    let _ = std::fs::remove_file(&mp4_path);
 }
 
 #[tokio::test]
