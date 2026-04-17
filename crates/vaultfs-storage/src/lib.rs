@@ -1,15 +1,21 @@
 pub mod backup;
+mod blob_store;
 mod db;
 mod encryption;
 mod engine;
 mod error;
 pub mod gc;
+mod local_blob_store;
 mod models;
+mod s3_blob_store;
 
 pub use backup::BackupManager;
+pub use blob_store::BlobStore;
 pub use db::Database;
 pub use encryption::Encryptor;
 pub use engine::{LifecycleResult, StorageEngine};
 pub use error::StorageError;
 pub use gc::{GarbageCollector, GcResult};
+pub use local_blob_store::LocalBlobStore;
 pub use models::*;
+pub use s3_blob_store::{S3BlobStore, S3Config};
