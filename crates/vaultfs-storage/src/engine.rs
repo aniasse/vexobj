@@ -21,6 +21,9 @@ pub struct StorageEngine {
     max_file_size: u64,
     deduplication: bool,
     encryptor: Option<Arc<Encryptor>>,
+    /// What ffmpeg-backed features the host can do (detected once at
+    /// startup). Used to branch probe / thumbnail decisions.
+    video_features: vaultfs_processing::VideoFeatures,
 }
 
 impl StorageEngine {
@@ -50,7 +53,12 @@ impl StorageEngine {
             max_file_size,
             deduplication,
             encryptor,
+            video_features: vaultfs_processing::VideoFeatures::detect(),
         })
+    }
+
+    pub fn video_features(&self) -> &vaultfs_processing::VideoFeatures {
+        &self.video_features
     }
 
     pub fn encryption_enabled(&self) -> bool {
@@ -75,16 +83,25 @@ impl StorageEngine {
         user_meta: Option<serde_json::Value>,
     ) -> serde_json::Value {
         let base = user_meta.unwrap_or(serde_json::Value::Object(Default::default()));
-        if !vaultfs_processing::is_probable_video(content_type) {
-            return base;
-        }
+        // `video/*` is the broad net; ffprobe covers way more container
+        // types than the pure-Rust mp4 parser, so we try it on anything
+        // that *claims* to be video rather than only MP4-family MIMEs.
+        let likely_video = content_type.starts_with("video/");
+        if !likely_video { return base; }
 
-        // When SSE is on, disk holds ciphertext — `probe_file` would see
-        // random bytes and fail. Fall back to the plaintext buffer if we
-        // have one; otherwise just skip probing. The streaming path
-        // won't have a buffer for large files, which is an acceptable
-        // tradeoff — clients can re-upload smaller tracks to get metadata.
-        let meta = if self.encryptor.is_some() {
+        // Branch by what tools we can use:
+        // 1. ffprobe if installed — best coverage (WebM, MKV, AVI…).
+        // 2. Pure-Rust mp4 parser — MP4/MOV only, works without
+        //    external deps. Uses `probe_video_bytes` when SSE is on so
+        //    we don't feed it ciphertext.
+        let ffprobe_available = self.video_features.ffprobe;
+        let is_mp4_family = vaultfs_processing::is_probable_video(content_type);
+        let meta = if ffprobe_available && self.encryptor.is_none() {
+            vaultfs_processing::probe_with_ffprobe(storage_path)
+                .or_else(|| if is_mp4_family { vaultfs_processing::probe_video_file(storage_path) } else { None })
+        } else if self.encryptor.is_some() {
+            // Ciphertext on disk — only the in-memory buffer is useful,
+            // and only the mp4 parser can use it (ffprobe needs a file).
             plaintext.and_then(vaultfs_processing::probe_video_bytes)
         } else {
             vaultfs_processing::probe_video_file(storage_path)

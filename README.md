@@ -10,6 +10,7 @@ High-performance, self-hosted object storage with built-in image processing. A s
 - **Universal object storage** — any file type (images, PDFs, videos, archives…)
 - **Image processing on the fly** — resize / crop / convert via URL query parameters
 - **Auto format negotiation** — AVIF / WebP served based on the browser `Accept` header
+- **Video support** — metadata extraction (pure Rust for MP4/MOV, `ffprobe` for WebM / MKV / AVI), server-side thumbnails via `ffmpeg` when installed ([docs/video.md](docs/video.md))
 - **Content-addressable deduplication** — identical files stored once
 - **Versioning & delete-markers** — history per object, with `?version_id=` on GET/DELETE and a one-shot purge endpoint
 - **Object lock (WORM)** — per-object retention + legal hold; blocks deletes with HTTP 409

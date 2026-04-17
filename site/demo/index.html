@@ -793,6 +793,9 @@ const state = {
   bucket: "",
   connected: false,
   objects: [],
+  // Filled in from /health on connect. Drives whether we ask the
+  // server for video thumbnails or let the browser decode them.
+  caps: { video_thumbnails: false, ffmpeg: false, ffprobe: false, sse_at_rest: false },
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -927,9 +930,14 @@ async function connect() {
 
   try {
     // Step 1 — healthcheck, unauthenticated. Also confirms the URL is reachable
-    // before we try the authenticated paths.
+    // before we try the authenticated paths. The response includes server
+    // capabilities (ffmpeg / thumbnails / SSE); we use them below.
     const health = await apiFetch("GET", "/health");
     if (!health.ok) throw new Error(`Healthcheck HTTP ${health.status}`);
+    const healthBody = await health.json().catch(() => ({}));
+    if (healthBody.capabilities) {
+      state.caps = { ...state.caps, ...healthBody.capabilities };
+    }
 
     // Step 2 — stats: validates the API key (admin-scoped) and gives us numbers
     // to display in the sidebar.
@@ -1034,25 +1042,37 @@ function renderGallery() {
       loadAuthedImage(thumbUrl, img);
       tile.appendChild(img);
     } else if (isVideo) {
-      // Videos: the server has no thumbnail endpoint in 0.1.x, so the
-      // browser decodes the first frame locally and shows it as the
-      // tile poster. Playback happens in the lightbox.
-      const vid = document.createElement("video");
-      vid.muted = true;
-      vid.preload = "metadata";
-      vid.playsInline = true;
-      loadAuthedVideo(objectUrl(obj.key), vid);
-      tile.appendChild(vid);
+      // When the server advertises thumbnails (ffmpeg present), ask
+      // it for a JPEG poster at t=1s — much cheaper than streaming
+      // the whole video into the browser. Otherwise fall back to
+      // client-side decoding of the first frame.
+      if (state.caps.video_thumbnails) {
+        const img = document.createElement("img");
+        img.alt = obj.key;
+        img.loading = "lazy";
+        const thumbUrl = objectUrl(obj.key, {
+          thumbnail: 1,
+          w: 320,
+          t: 1,
+          format: "jpeg",
+          quality: 75,
+        });
+        loadAuthedImage(thumbUrl, img);
+        tile.appendChild(img);
+      } else {
+        const vid = document.createElement("video");
+        vid.muted = true;
+        vid.preload = "metadata";
+        vid.playsInline = true;
+        loadAuthedVideo(objectUrl(obj.key), vid);
+        tile.appendChild(vid);
+      }
 
-      // Video badge: duration pulled from server-side metadata when
-      // available, otherwise left empty until the element loads.
+      // Duration badge: prefer server-side metadata when present.
       const badge = document.createElement("div");
       badge.className = "video-badge";
       const durSec = obj.metadata?.video?.duration_secs;
       if (durSec) badge.textContent = formatDuration(durSec);
-      vid.addEventListener("loadedmetadata", () => {
-        if (!badge.textContent) badge.textContent = formatDuration(vid.duration);
-      });
       tile.appendChild(badge);
     } else {
       const ph = document.createElement("div");

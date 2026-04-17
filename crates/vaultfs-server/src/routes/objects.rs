@@ -149,6 +149,11 @@ struct GetObjectQuery {
     #[allow(dead_code)]
     signature: Option<String>,
     version_id: Option<String>,
+    /// Video thumbnail request: when "1"/"true", extract a frame at
+    /// `t` seconds (default 1.0), scaled to `w` pixels wide, encoded
+    /// as `format` (jpeg default, webp supported).
+    thumbnail: Option<String>,
+    t: Option<f64>,
 }
 
 /// GET now streams from disk by default for non-image files.
@@ -165,6 +170,13 @@ async fn get_object(
     }
     if let Err(e) = state.auth.check_bucket_access(&caller, &bucket) {
         return (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()}))).into_response();
+    }
+
+    // Video thumbnail request: branch out of the object-serve path
+    // completely. ffmpeg does the work, the result is cached by
+    // (sha256, t, w, format, quality) so repeats hit the LRU.
+    if matches!(query.thumbnail.as_deref(), Some("1") | Some("true")) {
+        return serve_video_thumbnail(&state, &bucket, &key, &query).await;
     }
 
     // If a specific version is requested, serve it directly
@@ -508,6 +520,155 @@ async fn list_objects(
         )
             .into_response(),
     }
+}
+
+/// Serve a video thumbnail via ffmpeg. 501 if ffmpeg isn't on PATH.
+/// Errors from ffmpeg itself (corrupt file, unreadable container) are
+/// surfaced as 422 so callers can distinguish "server missing a tool"
+/// from "this particular video can't be thumbnailed".
+async fn serve_video_thumbnail(
+    state: &AppState,
+    bucket: &str,
+    key: &str,
+    query: &GetObjectQuery,
+) -> axum::response::Response {
+    if !state.storage.video_features().ffmpeg {
+        return (
+            StatusCode::NOT_IMPLEMENTED,
+            Json(json!({
+                "error": "video thumbnails require ffmpeg on the server's PATH",
+                "hint": "install ffmpeg and restart vaultfs; no other config needed",
+            })),
+        )
+            .into_response();
+    }
+
+    // Shape of inputs is sanitized inside ThumbRequest; any out-of-range
+    // values are clamped rather than rejected so clients don't need to
+    // know the limits.
+    let req = vaultfs_processing::ThumbRequest::sanitized(
+        query.t,
+        query.w,
+        query.format.as_deref(),
+        query.quality,
+    );
+
+    // Pull meta first — we need the sha256 for the cache key and the
+    // content_type to reject obvious non-videos before shelling out.
+    let meta = match state.storage.get_object_meta(bucket, key) {
+        Ok(m) => m,
+        Err(_) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "object not found"})),
+            )
+                .into_response();
+        }
+    };
+    if !meta.content_type.starts_with("video/") {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "thumbnail requested on a non-video object",
+                "content_type": meta.content_type,
+            })),
+        )
+            .into_response();
+    }
+
+    let cache_key = req.cache_key(&meta.sha256);
+
+    // Fast path: cache hit.
+    if let Some((bytes, ct)) = state.cache.get(&cache_key).await {
+        return (
+            StatusCode::OK,
+            [
+                ("content-type", ct),
+                ("x-vaultfs-cache", "hit".to_string()),
+            ],
+            bytes,
+        )
+            .into_response();
+    }
+
+    // Cache miss: resolve the file path, generate the thumbnail on a
+    // blocking thread (ffmpeg is synchronous), cache the result.
+    let src_path = match state.storage.object_data_path(bucket, key) {
+        Ok(p) => p,
+        Err(_) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "object not found"})),
+            )
+                .into_response();
+        }
+    };
+
+    // SSE-on stores ciphertext — ffmpeg would choke on that. We could
+    // decrypt to a temp file first, but it's a real perf hit and the
+    // docs already flag video features as plaintext-only. Bail clearly.
+    if state.storage.encryption_enabled() {
+        return (
+            StatusCode::NOT_IMPLEMENTED,
+            Json(json!({
+                "error": "thumbnails aren't available when SSE-at-rest is enabled",
+                "hint": "serve videos from an instance without sse.enabled=true",
+            })),
+        )
+            .into_response();
+    }
+
+    let req_clone = req.clone();
+    let thumbnail_result = tokio::task::spawn_blocking(move || {
+        vaultfs_processing::generate_thumbnail(&src_path, &req_clone)
+    })
+    .await;
+
+    let bytes = match thumbnail_result {
+        Ok(Ok(b)) => b,
+        Ok(Err(vaultfs_processing::ThumbError::FfmpegMissing)) => {
+            return (
+                StatusCode::NOT_IMPLEMENTED,
+                Json(json!({"error": "ffmpeg not available"})),
+            )
+                .into_response();
+        }
+        Ok(Err(vaultfs_processing::ThumbError::Timeout)) => {
+            return (
+                StatusCode::GATEWAY_TIMEOUT,
+                Json(json!({"error": "thumbnail generation timed out"})),
+            )
+                .into_response();
+        }
+        Ok(Err(e)) => {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({"error": format!("{e}")})),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("task panicked: {e}")})),
+            )
+                .into_response();
+        }
+    };
+
+    let body = bytes::Bytes::from(bytes);
+    let ct = req.format.mime().to_string();
+    let _ = state.cache.put(&cache_key, body.clone(), &ct).await;
+
+    (
+        StatusCode::OK,
+        [
+            ("content-type", ct),
+            ("x-vaultfs-cache", "miss".to_string()),
+        ],
+        body,
+    )
+        .into_response()
 }
 
 async fn list_versions(

@@ -1170,6 +1170,119 @@ fn ffmpeg_small_mp4() -> Option<PathBuf> {
 }
 
 #[tokio::test]
+async fn e2e_video_thumbnail_endpoint() {
+    let Some(mp4_path) = ffmpeg_small_mp4() else {
+        eprintln!("SKIP: ffmpeg not available");
+        return;
+    };
+
+    let srv = TestServer::start();
+    let client = srv.client();
+    let auth = srv.auth_header();
+
+    // /health now surfaces capabilities — ffmpeg should be on for the
+    // host that just ran ffmpeg_small_mp4 successfully.
+    let health: Value = client
+        .get(format!("{}/health", srv.url))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(health["capabilities"]["video_thumbnails"], true);
+    assert_eq!(health["capabilities"]["ffmpeg"], true);
+
+    client
+        .post(format!("{}/v1/buckets", srv.url))
+        .header("Authorization", &auth)
+        .json(&serde_json::json!({"name": "thumbs", "public": false}))
+        .send()
+        .await
+        .unwrap();
+    client
+        .put(format!("{}/v1/objects/thumbs/clip.mp4", srv.url))
+        .header("Authorization", &auth)
+        .header("Content-Type", "video/mp4")
+        .body(std::fs::read(&mp4_path).unwrap())
+        .send()
+        .await
+        .unwrap();
+
+    // First request: cache miss, jpeg body, looks like JPEG (FFD8 FF).
+    let r = client
+        .get(format!(
+            "{}/v1/objects/thumbs/clip.mp4?thumbnail=1&w=200&t=0.5",
+            srv.url
+        ))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.headers().get("content-type").unwrap(), "image/jpeg");
+    assert_eq!(r.headers().get("x-vaultfs-cache").unwrap(), "miss");
+    let body = r.bytes().await.unwrap();
+    // A 200×N JPEG of a solid-color test frame compresses to a few
+    // hundred bytes; anything under ~100 B would be a truncated write.
+    assert!(body.len() > 100, "thumbnail suspiciously small: {} bytes", body.len());
+    assert_eq!(&body[..3], &[0xFF, 0xD8, 0xFF], "not a JPEG");
+
+    // Second request with the same params: cache hit.
+    let r2 = client
+        .get(format!(
+            "{}/v1/objects/thumbs/clip.mp4?thumbnail=1&w=200&t=0.5",
+            srv.url
+        ))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r2.headers().get("x-vaultfs-cache").unwrap(), "hit");
+
+    // WebP variant — different cache key, different magic bytes.
+    let r3 = client
+        .get(format!(
+            "{}/v1/objects/thumbs/clip.mp4?thumbnail=1&w=200&t=0.5&format=webp",
+            srv.url
+        ))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r3.status(), 200);
+    assert_eq!(r3.headers().get("content-type").unwrap(), "image/webp");
+    let body3 = r3.bytes().await.unwrap();
+    // WebP starts with RIFF....WEBP.
+    assert_eq!(&body3[..4], b"RIFF");
+    assert_eq!(&body3[8..12], b"WEBP");
+
+    // Thumbnail on a non-video → 400 with a clear error.
+    client
+        .put(format!("{}/v1/objects/thumbs/not-a-video.txt", srv.url))
+        .header("Authorization", &auth)
+        .header("Content-Type", "text/plain")
+        .body("hello")
+        .send()
+        .await
+        .unwrap();
+    let bad = client
+        .get(format!(
+            "{}/v1/objects/thumbs/not-a-video.txt?thumbnail=1",
+            srv.url
+        ))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad.status(), 400);
+    let bad_body: Value = bad.json().await.unwrap();
+    assert!(bad_body["error"].as_str().unwrap().contains("non-video"));
+
+    let _ = std::fs::remove_file(&mp4_path);
+}
+
+#[tokio::test]
 async fn e2e_video_metadata_on_upload() {
     let Some(mp4_path) = ffmpeg_small_mp4() else {
         eprintln!("SKIP: ffmpeg not available");

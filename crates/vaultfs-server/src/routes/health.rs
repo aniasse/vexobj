@@ -1,3 +1,4 @@
+use axum::extract::State;
 use axum::response::{Html, IntoResponse};
 use axum::routing::get;
 use axum::{Json, Router};
@@ -12,11 +13,21 @@ pub fn routes() -> Router<AppState> {
         .route("/docs", get(swagger_ui))
 }
 
-async fn health_check() -> Json<serde_json::Value> {
+async fn health_check(State(state): State<AppState>) -> Json<serde_json::Value> {
+    // Capabilities let clients avoid asking for features the host
+    // can't provide (thumbnails without ffmpeg, etc.).
+    let vf = state.storage.video_features();
     Json(json!({
         "status": "ok",
         "service": "vaultfs",
         "version": env!("CARGO_PKG_VERSION"),
+        "capabilities": {
+            "sse_at_rest":        state.storage.encryption_enabled(),
+            "video_metadata":     true,
+            "video_thumbnails":   vf.ffmpeg,
+            "ffprobe":            vf.ffprobe,
+            "ffmpeg":             vf.ffmpeg,
+        }
     }))
 }
 
