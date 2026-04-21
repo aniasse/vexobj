@@ -69,6 +69,9 @@ async fn stream_put(
                 vexobj_storage::StorageError::ObjectTooLarge { .. } => {
                     StatusCode::PAYLOAD_TOO_LARGE
                 }
+                vexobj_storage::StorageError::QuotaExceeded { .. } => {
+                    StatusCode::INSUFFICIENT_STORAGE
+                }
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             };
             (status, Json(json!({"error": e.to_string()}))).into_response()

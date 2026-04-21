@@ -8,7 +8,9 @@ use crate::ratelimit::RateLimiter;
 use crate::webhooks::{WebhookConfig, WebhookSender};
 use vexobj_auth::{AuthManager, PresignedUrlGenerator};
 use vexobj_cache::Cache;
-use vexobj_storage::{BlobStore, Encryptor, LocalBlobStore, S3BlobStore, S3Config, StorageEngine};
+use vexobj_storage::{
+    BlobStore, Encryptor, LocalBlobStore, QuotaLimits, S3BlobStore, S3Config, StorageEngine,
+};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -69,13 +71,23 @@ impl AppState {
             other => anyhow::bail!("unknown storage.backend: {other} (want: local | s3)"),
         };
 
+        let quota_limits = if config.quotas.enabled {
+            Some(QuotaLimits {
+                max_bucket_bytes: config::parse_size(&config.quotas.default_max_storage),
+                max_bucket_objects: config.quotas.default_max_objects,
+            })
+        } else {
+            None
+        };
+
         let storage = StorageEngine::with_backend(
             data_dir.clone(),
             max_file_size,
             config.storage.deduplication,
             encryptor,
             blob_store,
-        )?;
+        )?
+        .with_quota_limits(quota_limits);
 
         let memory_size = config::parse_size(&config.cache.memory_size) as usize;
         let disk_size = config::parse_size(&config.cache.disk_size);

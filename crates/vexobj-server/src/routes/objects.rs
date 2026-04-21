@@ -10,7 +10,6 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::audit::{extract_ip, key_prefix};
-use crate::config::parse_size;
 use crate::middleware::require_permission;
 use crate::state::AppState;
 use vexobj_auth::ApiKey;
@@ -49,42 +48,6 @@ async fn put_object(
     }
     if let Err(e) = state.auth.check_bucket_access(&caller, &bucket) {
         return (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()}))).into_response();
-    }
-
-    // Quota check before upload
-    if state.config.quotas.enabled {
-        match state.storage.db().bucket_storage_stats(&bucket) {
-            Ok((total_size, object_count)) => {
-                let max_storage = parse_size(&state.config.quotas.default_max_storage);
-                let max_objects = state.config.quotas.default_max_objects;
-
-                if total_size >= max_storage {
-                    return (
-                        StatusCode::INSUFFICIENT_STORAGE,
-                        Json(json!({
-                            "error": "bucket storage quota exceeded",
-                            "current_size": total_size,
-                            "max_size": max_storage,
-                        })),
-                    )
-                        .into_response();
-                }
-                if object_count >= max_objects {
-                    return (
-                        StatusCode::INSUFFICIENT_STORAGE,
-                        Json(json!({
-                            "error": "bucket object count quota exceeded",
-                            "current_objects": object_count,
-                            "max_objects": max_objects,
-                        })),
-                    )
-                        .into_response();
-                }
-            }
-            Err(_) => {
-                // If we can't check quota (e.g. bucket doesn't exist), let the put fail naturally
-            }
-        }
     }
 
     let content_type = headers
@@ -130,6 +93,9 @@ async fn put_object(
                 vexobj_storage::StorageError::BucketNotFound(_) => StatusCode::NOT_FOUND,
                 vexobj_storage::StorageError::ObjectTooLarge { .. } => {
                     StatusCode::PAYLOAD_TOO_LARGE
+                }
+                vexobj_storage::StorageError::QuotaExceeded { .. } => {
+                    StatusCode::INSUFFICIENT_STORAGE
                 }
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             };

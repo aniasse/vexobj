@@ -2449,3 +2449,92 @@ async fn e2e_migrate_s3_stub() {
     assert!(body["hint"].as_str().unwrap().contains("CLI"));
     assert!(body["command"].as_str().unwrap().contains("vexobjctl"));
 }
+
+/// Quota enforcement must apply to every write path — native streaming PUT,
+/// multipart form upload, S3 PUT, and S3 CopyObject. Previously only the
+/// native JSON route checked quotas, so clients using /s3/ or the form
+/// upload could silently bust the cap.
+#[tokio::test]
+async fn e2e_quota_enforced_on_every_write_path() {
+    use serde_json::json;
+
+    let srv = TestServer::start_with_env(&[
+        ("VEXOBJ_QUOTAS_ENABLED", "true"),
+        ("VEXOBJ_QUOTAS_MAX_STORAGE", "2048"),
+        ("VEXOBJ_QUOTAS_MAX_OBJECTS", "100"),
+    ]);
+    let client = srv.client();
+    let auth = srv.auth_header();
+
+    let resp = client
+        .post(format!("{}/v1/buckets", srv.url))
+        .header("Authorization", &auth)
+        .json(&json!({ "name": "qtest", "public": false }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+
+    // Push the bucket above its 2048-byte cap using native streaming PUTs.
+    // Streaming can't know the final size up front, so the engine only
+    // rejects when *already* over the cap — two 1500-byte writes land first
+    // and leave the bucket at 3000 bytes.
+    for i in 0..2 {
+        let resp = client
+            .put(format!("{}/v1/objects/qtest/seed-{i}", srv.url))
+            .header("Authorization", &auth)
+            .header("content-type", "application/octet-stream")
+            .body(vec![b'x'; 1500])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 201, "seed put {i} should succeed");
+    }
+
+    // 1. Native streaming PUT — over cap now, must be rejected with 507.
+    let resp = client
+        .put(format!("{}/v1/objects/qtest/blocked-native", srv.url))
+        .header("Authorization", &auth)
+        .body(vec![b'y'; 100])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 507, "native streaming PUT over quota");
+
+    // 2. Multipart form upload — the outer response surfaces 507 when any
+    //    file in the batch was quota-blocked.
+    let form = reqwest::multipart::Form::new().part(
+        "f",
+        reqwest::multipart::Part::bytes(vec![b'm'; 100]).file_name("blocked.bin"),
+    );
+    let resp = client
+        .post(format!("{}/v1/upload/qtest", srv.url))
+        .header("Authorization", &auth)
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 507, "multipart form over quota");
+
+    // 3. S3 PUT — maps to the `ServiceUnavailable` S3 error code with a
+    //    507 status (storage full is the closest S3 idiom to a quota).
+    let resp = client
+        .put(format!("{}/s3/qtest/blocked-s3", srv.url))
+        .header("Authorization", &auth)
+        .body(vec![b's'; 100])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 507, "S3 PUT over quota");
+
+    // 4. S3 CopyObject — the destination bucket is the same full one, so
+    //    even a zero-payload copy must fail.
+    let resp = client
+        .put(format!("{}/s3/qtest/blocked-copy", srv.url))
+        .header("Authorization", &auth)
+        .header("x-amz-copy-source", "qtest/seed-0")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 507, "S3 copy over quota");
+}

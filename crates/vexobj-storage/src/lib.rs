@@ -13,7 +13,7 @@ pub use backup::BackupManager;
 pub use blob_store::BlobStore;
 pub use db::Database;
 pub use encryption::Encryptor;
-pub use engine::{LifecycleResult, StorageEngine};
+pub use engine::{LifecycleResult, QuotaLimits, StorageEngine};
 pub use error::StorageError;
 pub use gc::{GarbageCollector, GcResult};
 pub use local_blob_store::LocalBlobStore;

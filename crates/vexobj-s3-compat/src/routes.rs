@@ -299,6 +299,9 @@ async fn put_object(
         Err(vexobj_storage::StorageError::ObjectTooLarge { .. }) => {
             S3Error::entity_too_large().into_response()
         }
+        Err(vexobj_storage::StorageError::QuotaExceeded { reason, .. }) => {
+            S3Error::quota_exceeded(&reason).into_response()
+        }
         Err(e) => S3Error::internal(&e.to_string()).into_response(),
     }
 }
@@ -324,6 +327,9 @@ async fn copy_object(state: &S3State, dest_bucket: &str, dest_key: &str, source:
         Ok(meta) => {
             let body = xml::copy_object_xml(&meta);
             (StatusCode::OK, [("content-type", "application/xml")], body).into_response()
+        }
+        Err(vexobj_storage::StorageError::QuotaExceeded { reason, .. }) => {
+            S3Error::quota_exceeded(&reason).into_response()
         }
         Err(e) => S3Error::internal(&e.to_string()).into_response(),
     }

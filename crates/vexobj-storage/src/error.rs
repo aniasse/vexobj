@@ -19,6 +19,9 @@ pub enum StorageError {
         reason: String,
     },
 
+    #[error("bucket quota exceeded: {bucket} ({reason})")]
+    QuotaExceeded { bucket: String, reason: String },
+
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 

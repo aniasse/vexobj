@@ -82,14 +82,31 @@ async fn handle_multipart(
             .await
         {
             Ok(meta) => uploaded.push(json!(meta)),
-            Err(e) => errors.push(json!({
-                "file": file_name,
-                "error": e.to_string(),
-            })),
+            Err(e) => {
+                let kind = match &e {
+                    vexobj_storage::StorageError::QuotaExceeded { .. } => "quota_exceeded",
+                    vexobj_storage::StorageError::ObjectTooLarge { .. } => "too_large",
+                    vexobj_storage::StorageError::BucketNotFound(_) => "bucket_not_found",
+                    _ => "error",
+                };
+                errors.push(json!({
+                    "file": file_name,
+                    "kind": kind,
+                    "error": e.to_string(),
+                }));
+            }
         }
     }
 
-    let status = if errors.is_empty() {
+    // If any file hit a per-bucket quota, the whole request has to stop
+    // making sense (every subsequent file will get the same error). Surface
+    // that as 507 so clients don't retry the same batch.
+    let any_quota = errors
+        .iter()
+        .any(|e| e.get("kind").and_then(|v| v.as_str()) == Some("quota_exceeded"));
+    let status = if any_quota {
+        StatusCode::INSUFFICIENT_STORAGE
+    } else if errors.is_empty() {
         StatusCode::CREATED
     } else if uploaded.is_empty() {
         StatusCode::BAD_REQUEST

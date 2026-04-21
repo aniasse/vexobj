@@ -14,6 +14,16 @@ pub struct LifecycleResult {
     pub bytes_freed: u64,
 }
 
+/// Per-bucket quota limits applied to every write path (native, S3, multipart,
+/// streaming). Checked at the engine boundary so routes can't forget.
+/// Replication writes bypass this — they go through `Database::put_object`
+/// directly so restored data always lands, even if the source breached limits.
+#[derive(Debug, Clone, Copy)]
+pub struct QuotaLimits {
+    pub max_bucket_bytes: u64,
+    pub max_bucket_objects: u64,
+}
+
 pub struct StorageEngine {
     db: Database,
     data_dir: PathBuf,
@@ -26,6 +36,10 @@ pub struct StorageEngine {
     /// What ffmpeg-backed features the host can do (detected once at
     /// startup). Used to branch probe / thumbnail decisions.
     video_features: vexobj_processing::VideoFeatures,
+    /// When `Some`, every put path pre-checks total bucket usage against
+    /// these limits and rejects with `StorageError::QuotaExceeded` → HTTP
+    /// 507. `None` disables enforcement entirely.
+    quotas: Option<QuotaLimits>,
 }
 
 impl StorageEngine {
@@ -83,7 +97,53 @@ impl StorageEngine {
             encryptor,
             blob_store,
             video_features: vexobj_processing::VideoFeatures::detect(),
+            quotas: None,
         })
+    }
+
+    /// Consuming builder that attaches per-bucket quota limits. Pass `None`
+    /// to disable enforcement explicitly. Call once at startup before the
+    /// engine is wrapped in `Arc`.
+    pub fn with_quota_limits(mut self, quotas: Option<QuotaLimits>) -> Self {
+        self.quotas = quotas;
+        self
+    }
+
+    /// Reject the write if the bucket is already at (or would cross) its
+    /// quota. `incoming_bytes = None` for streaming uploads whose final
+    /// size isn't known yet — we still catch the "already full" case, and
+    /// `max_file_size` caps individual stream growth.
+    fn check_quota(&self, bucket: &str, incoming_bytes: Option<u64>) -> Result<(), StorageError> {
+        let Some(q) = self.quotas else { return Ok(()) };
+        let (total_size, object_count) = match self.db.bucket_storage_stats(bucket) {
+            Ok(pair) => pair,
+            // Bucket doesn't exist yet — let the put fail with its own
+            // BucketNotFound error, don't mask it behind a quota message.
+            Err(_) => return Ok(()),
+        };
+
+        let projected = total_size.saturating_add(incoming_bytes.unwrap_or(0));
+        if projected > q.max_bucket_bytes {
+            return Err(StorageError::QuotaExceeded {
+                bucket: bucket.to_string(),
+                reason: format!(
+                    "storage limit: {} + {} > {} bytes",
+                    total_size,
+                    incoming_bytes.unwrap_or(0),
+                    q.max_bucket_bytes
+                ),
+            });
+        }
+        if object_count >= q.max_bucket_objects {
+            return Err(StorageError::QuotaExceeded {
+                bucket: bucket.to_string(),
+                reason: format!(
+                    "object count limit: {} >= {}",
+                    object_count, q.max_bucket_objects
+                ),
+            });
+        }
+        Ok(())
     }
 
     pub fn blob_store(&self) -> &Arc<dyn crate::blob_store::BlobStore> {
@@ -197,6 +257,7 @@ impl StorageEngine {
                 max: self.max_file_size,
             });
         }
+        self.check_quota(bucket, Some(size))?;
 
         // Compute hash
         let mut hasher = Sha256::new();
@@ -432,6 +493,11 @@ impl StorageEngine {
 
         // Verify bucket exists first
         self.db.get_bucket(bucket)?;
+        // Pre-check quota with unknown incoming size — rejects only if the
+        // bucket is already at or over its cap. Mid-stream enforcement
+        // would require buffering; `max_file_size` still caps individual
+        // uploads below.
+        self.check_quota(bucket, None)?;
 
         let temp_path = self.data_dir.join(format!(".tmp-{}", uuid::Uuid::new_v4()));
         let mut file = tokio::fs::File::create(&temp_path).await?;

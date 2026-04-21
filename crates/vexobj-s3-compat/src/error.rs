@@ -74,6 +74,14 @@ impl S3Error {
             status: StatusCode::CONFLICT,
         }
     }
+
+    pub fn quota_exceeded(reason: &str) -> Self {
+        Self {
+            code: "ServiceUnavailable",
+            message: format!("Bucket quota exceeded: {reason}"),
+            status: StatusCode::INSUFFICIENT_STORAGE,
+        }
+    }
 }
 
 impl IntoResponse for S3Error {
