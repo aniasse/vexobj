@@ -32,15 +32,24 @@ pub const PROFILES: &[TranscodeProfile] = &[
         extension: "webm",
         content_type: "video/webm",
         ffmpeg_args: &[
-            "-c:v", "libvpx-vp9",
-            "-b:v", "2M",
-            "-crf", "32",
-            "-vf", "scale=-2:min(720\\,ih)",
-            "-row-mt", "1",
-            "-c:a", "libopus",
-            "-b:a", "96k",
-            "-deadline", "realtime",
-            "-cpu-used", "5",
+            "-c:v",
+            "libvpx-vp9",
+            "-b:v",
+            "2M",
+            "-crf",
+            "32",
+            "-vf",
+            "scale=-2:min(720\\,ih)",
+            "-row-mt",
+            "1",
+            "-c:a",
+            "libopus",
+            "-b:a",
+            "96k",
+            "-deadline",
+            "realtime",
+            "-cpu-used",
+            "5",
         ],
         timeout_secs: 600,
     },
@@ -50,14 +59,22 @@ pub const PROFILES: &[TranscodeProfile] = &[
         extension: "mp4",
         content_type: "video/mp4",
         ffmpeg_args: &[
-            "-c:v", "libx264",
-            "-preset", "fast",
-            "-crf", "23",
-            "-vf", "scale=-2:min(480\\,ih)",
-            "-c:a", "aac",
-            "-b:a", "128k",
-            "-movflags", "+faststart",
-            "-pix_fmt", "yuv420p",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "23",
+            "-vf",
+            "scale=-2:min(480\\,ih)",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-movflags",
+            "+faststart",
+            "-pix_fmt",
+            "yuv420p",
         ],
         timeout_secs: 600,
     },
@@ -66,11 +83,7 @@ pub const PROFILES: &[TranscodeProfile] = &[
         description: "Audio-only MP3 192 kbps — useful for podcasts and voice tracks",
         extension: "mp3",
         content_type: "audio/mpeg",
-        ffmpeg_args: &[
-            "-vn",
-            "-c:a", "libmp3lame",
-            "-b:a", "192k",
-        ],
+        ffmpeg_args: &["-vn", "-c:a", "libmp3lame", "-b:a", "192k"],
         timeout_secs: 300,
     },
 ];
@@ -130,7 +143,9 @@ pub fn transcode(
 
     let deadline = std::time::Instant::now() + Duration::from_secs(profile.timeout_secs);
     let status = loop {
-        if let Ok(Some(s)) = child.try_wait() { break s; }
+        if let Ok(Some(s)) = child.try_wait() {
+            break s;
+        }
         if std::time::Instant::now() > deadline {
             let _ = child.kill();
             let _ = child.wait();
@@ -143,7 +158,15 @@ pub fn transcode(
     if !status.success() {
         // ffmpeg's stderr is usually verbose; keep just the last line or two.
         let err = String::from_utf8_lossy(&stderr_bytes);
-        let tail: String = err.lines().rev().take(3).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join(" | ");
+        let tail: String = err
+            .lines()
+            .rev()
+            .take(3)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>()
+            .join(" | ");
         return Err(TranscodeError::Failed(status.code().unwrap_or(-1), tail));
     }
 

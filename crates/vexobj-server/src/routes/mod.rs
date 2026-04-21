@@ -40,10 +40,7 @@ pub fn create_router(state: AppState) -> Router {
         .merge(stream::routes())
         .merge(replication::routes())
         .merge(transcode::routes())
-        .route_layer(axum_mw::from_fn_with_state(
-            state.clone(),
-            auth_middleware,
-        ));
+        .route_layer(axum_mw::from_fn_with_state(state.clone(), auth_middleware));
 
     // S3-compatible API (has its own state and auth)
     let s3 = vexobj_s3_compat::s3_router(state.storage.clone(), state.auth.clone());

@@ -39,7 +39,8 @@ async fn openapi_spec() -> impl IntoResponse {
 }
 
 async fn swagger_ui() -> Html<&'static str> {
-    Html(r#"<!DOCTYPE html>
+    Html(
+        r#"<!DOCTYPE html>
 <html>
 <head>
 <title>vexobj API Docs</title>
@@ -52,5 +53,6 @@ async fn swagger_ui() -> Html<&'static str> {
 SwaggerUIBundle({ url: '/openapi.yaml', dom_id: '#swagger-ui', deepLinking: true });
 </script>
 </body>
-</html>"#)
+</html>"#,
+    )
 }

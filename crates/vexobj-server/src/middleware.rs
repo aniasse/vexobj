@@ -28,10 +28,7 @@ pub async fn auth_middleware(
         }
     }
 
-    let auth_header = req
-        .headers()
-        .get(AUTH_HEADER)
-        .and_then(|v| v.to_str().ok());
+    let auth_header = req.headers().get(AUTH_HEADER).and_then(|v| v.to_str().ok());
 
     let raw_key = match auth_header {
         Some(h) if h.starts_with(BEARER_PREFIX) => &h[BEARER_PREFIX.len()..],
@@ -59,10 +56,7 @@ pub async fn auth_middleware(
 }
 
 /// Extract the authenticated API key from request extensions
-pub async fn require_permission(
-    key: &ApiKey,
-    permission: &str,
-) -> Result<(), Response> {
+pub async fn require_permission(key: &ApiKey, permission: &str) -> Result<(), Response> {
     let allowed = match permission {
         "read" => key.permissions.read,
         "write" => key.permissions.write,

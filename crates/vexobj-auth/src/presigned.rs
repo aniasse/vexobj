@@ -34,11 +34,7 @@ impl PresignedUrlGenerator {
         }
     }
 
-    pub fn generate(
-        &self,
-        base_url: &str,
-        req: &PresignRequest,
-    ) -> PresignedUrl {
+    pub fn generate(&self, base_url: &str, req: &PresignRequest) -> PresignedUrl {
         let expires_in = req.expires_in.unwrap_or(3600).min(86400);
         let expires_at = Utc::now() + Duration::seconds(expires_in as i64);
         let expires_ts = expires_at.timestamp();

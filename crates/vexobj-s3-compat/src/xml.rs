@@ -11,15 +11,19 @@ pub fn error_xml(code: &str, message: &str) -> String {
 }
 
 pub fn list_buckets_xml(buckets: &[Bucket], owner: &str) -> String {
-    let mut xml = String::from(r#"<?xml version="1.0" encoding="UTF-8"?>
+    let mut xml = String::from(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
   <Owner>
     <ID>vexobj</ID>
-    <DisplayName>"#);
+    <DisplayName>"#,
+    );
     xml.push_str(owner);
-    xml.push_str(r#"</DisplayName>
+    xml.push_str(
+        r#"</DisplayName>
   </Owner>
-  <Buckets>"#);
+  <Buckets>"#,
+    );
 
     for b in buckets {
         xml.push_str(&format!(

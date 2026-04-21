@@ -27,7 +27,9 @@ impl VideoFeatures {
         }
     }
 
-    pub fn any(&self) -> bool { self.ffmpeg || self.ffprobe }
+    pub fn any(&self) -> bool {
+        self.ffmpeg || self.ffprobe
+    }
 }
 
 pub(crate) fn probe_binary(name: &str) -> bool {
@@ -47,8 +49,10 @@ pub(crate) fn probe_binary(name: &str) -> bool {
 pub fn probe_with_ffprobe(path: &Path) -> Option<VideoMetadata> {
     let output = Command::new("ffprobe")
         .args([
-            "-v", "error",
-            "-print_format", "json",
+            "-v",
+            "error",
+            "-print_format",
+            "json",
             "-show_format",
             "-show_streams",
         ])
@@ -59,20 +63,28 @@ pub fn probe_with_ffprobe(path: &Path) -> Option<VideoMetadata> {
         .output()
         .ok()?;
 
-    if !output.status.success() { return None; }
+    if !output.status.success() {
+        return None;
+    }
 
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
 
     let streams = json.get("streams")?.as_array()?;
-    let video_stream = streams.iter().find(|s| {
-        s.get("codec_type").and_then(|v| v.as_str()) == Some("video")
-    })?;
-    let has_audio = streams.iter().any(|s| {
-        s.get("codec_type").and_then(|v| v.as_str()) == Some("audio")
-    });
+    let video_stream = streams
+        .iter()
+        .find(|s| s.get("codec_type").and_then(|v| v.as_str()) == Some("video"))?;
+    let has_audio = streams
+        .iter()
+        .any(|s| s.get("codec_type").and_then(|v| v.as_str()) == Some("audio"));
 
-    let width = video_stream.get("width").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
-    let height = video_stream.get("height").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
+    let width = video_stream
+        .get("width")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u16;
+    let height = video_stream
+        .get("height")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u16;
     let codec = video_stream
         .get("codec_name")
         .and_then(|v| v.as_str())
@@ -92,7 +104,9 @@ pub fn probe_with_ffprobe(path: &Path) -> Option<VideoMetadata> {
         })
         .unwrap_or(0.0);
 
-    if width == 0 && height == 0 && codec.is_none() { return None; }
+    if width == 0 && height == 0 && codec.is_none() {
+        return None;
+    }
 
     Some(VideoMetadata {
         duration_secs: (duration_secs * 1000.0).round() / 1000.0,
@@ -104,13 +118,16 @@ pub fn probe_with_ffprobe(path: &Path) -> Option<VideoMetadata> {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum ThumbFormat { Jpeg, WebP }
+pub enum ThumbFormat {
+    Jpeg,
+    WebP,
+}
 
 impl ThumbFormat {
     pub fn parse(s: &str) -> Self {
         match s.to_ascii_lowercase().as_str() {
             "webp" => ThumbFormat::WebP,
-            _      => ThumbFormat::Jpeg,
+            _ => ThumbFormat::Jpeg,
         }
     }
     pub fn mime(&self) -> &'static str {
@@ -138,9 +155,14 @@ pub struct ThumbRequest {
 }
 
 impl ThumbRequest {
-    pub fn sanitized(at: Option<f64>, width: Option<u32>, format: Option<&str>, quality: Option<u8>) -> Self {
+    pub fn sanitized(
+        at: Option<f64>,
+        width: Option<u32>,
+        format: Option<&str>,
+        quality: Option<u8>,
+    ) -> Self {
         Self {
-            at_seconds: at.unwrap_or(1.0).max(0.0).min(3600.0 * 24.0),
+            at_seconds: at.unwrap_or(1.0).clamp(0.0, 3600.0 * 24.0),
             width: width.unwrap_or(320).clamp(32, 1920),
             format: format.map(ThumbFormat::parse).unwrap_or(ThumbFormat::Jpeg),
             quality: quality.unwrap_or(70).clamp(1, 100),
@@ -153,7 +175,10 @@ impl ThumbRequest {
             ThumbFormat::Jpeg => "jpeg",
             ThumbFormat::WebP => "webp",
         };
-        format!("thumb/{}/t={:.3}/w={}/q={}/{}", sha256, self.at_seconds, self.width, self.quality, fmt)
+        format!(
+            "thumb/{}/t={:.3}/w={}/q={}/{}",
+            sha256, self.at_seconds, self.width, self.quality, fmt
+        )
     }
 }
 
@@ -183,14 +208,22 @@ pub fn generate_thumbnail(src: &Path, req: &ThumbRequest) -> Result<Vec<u8>, Thu
     let mut cmd = Command::new("ffmpeg");
     cmd.args([
         "-nostdin",
-        "-loglevel", "error",
-        "-ss", &format!("{:.3}", req.at_seconds),
+        "-loglevel",
+        "error",
+        "-ss",
+        &format!("{:.3}", req.at_seconds),
         "-i",
-    ]).arg(src).args([
-        "-vframes", "1",
-        "-vf", &format!("scale={}:-2", req.width),
-        "-f", "image2pipe",
-        "-c:v", req.format.codec(),
+    ])
+    .arg(src)
+    .args([
+        "-vframes",
+        "1",
+        "-vf",
+        &format!("scale={}:-2", req.width),
+        "-f",
+        "image2pipe",
+        "-c:v",
+        req.format.codec(),
     ]);
 
     // Quality flags differ between mjpeg and libwebp — mjpeg uses
@@ -232,7 +265,9 @@ pub fn generate_thumbnail(src: &Path, req: &ThumbRequest) -> Result<Vec<u8>, Thu
 
     let deadline = std::time::Instant::now() + Duration::from_secs(15);
     let status = loop {
-        if let Ok(Some(s)) = child.try_wait() { break s; }
+        if let Ok(Some(s)) = child.try_wait() {
+            break s;
+        }
         if std::time::Instant::now() > deadline {
             let _ = child.kill();
             return Err(ThumbError::Timeout);
@@ -269,7 +304,10 @@ mod tests {
     #[test]
     fn thumbreq_cache_key_is_stable() {
         let r = ThumbRequest {
-            at_seconds: 1.5, width: 320, format: ThumbFormat::Jpeg, quality: 70,
+            at_seconds: 1.5,
+            width: 320,
+            format: ThumbFormat::Jpeg,
+            quality: 70,
         };
         let k1 = r.cache_key("abc");
         let k2 = r.cache_key("abc");

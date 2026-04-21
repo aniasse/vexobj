@@ -45,8 +45,12 @@ pub struct S3Config {
     pub path_style: bool,
 }
 
-fn default_region() -> String { "us-east-1".to_string() }
-fn default_true() -> bool { true }
+fn default_region() -> String {
+    "us-east-1".to_string()
+}
+fn default_true() -> bool {
+    true
+}
 
 pub struct S3BlobStore {
     cfg: S3Config,
@@ -68,8 +72,14 @@ impl S3BlobStore {
             format!("{}/{}/{}", base, self.cfg.bucket, key)
         } else {
             // Virtual-hosted style: bucket name moves to the hostname.
-            let host = base.trim_start_matches("https://").trim_start_matches("http://");
-            let scheme = if base.starts_with("https://") { "https" } else { "http" };
+            let host = base
+                .trim_start_matches("https://")
+                .trim_start_matches("http://");
+            let scheme = if base.starts_with("https://") {
+                "https"
+            } else {
+                "http"
+            };
             format!("{}://{}.{}/{}", scheme, self.cfg.bucket, host, key)
         }
     }
@@ -160,18 +170,21 @@ impl BlobStore for S3BlobStore {
 
         let stream = resp
             .bytes_stream()
-            .map(|r| r.map(Bytes::from).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)));
+            .map(|r| r.map_err(std::io::Error::other));
         Ok(Box::pin(stream))
     }
 
-    fn supports_local_path(&self) -> bool { false }
-    fn backend_name(&self) -> &'static str { "s3" }
+    fn supports_local_path(&self) -> bool {
+        false
+    }
+    fn backend_name(&self) -> &'static str {
+        "s3"
+    }
 }
 
 // ─── SigV4 helpers ────────────────────────────────────────────────────
 
-const EMPTY_SHA256: &str =
-    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+const EMPTY_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 fn sha256_hex(data: &[u8]) -> String {
     let mut h = Sha256::new();
@@ -211,7 +224,11 @@ fn sign_request(
     }
     all.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let signed_headers = all.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>().join(";");
+    let signed_headers = all
+        .iter()
+        .map(|(k, _)| k.as_str())
+        .collect::<Vec<_>>()
+        .join(";");
     let canonical_headers: String = all
         .iter()
         .map(|(k, v)| format!("{}:{}\n", k, v.trim()))
@@ -229,7 +246,10 @@ fn sign_request(
         amz_date, credential_scope, cr_hash,
     );
 
-    let k_date = hmac(format!("AWS4{}", cfg.secret_key).as_bytes(), date_stamp.as_bytes());
+    let k_date = hmac(
+        format!("AWS4{}", cfg.secret_key).as_bytes(),
+        date_stamp.as_bytes(),
+    );
     let k_region = hmac(&k_date, cfg.region.as_bytes());
     let k_service = hmac(&k_region, b"s3");
     let k_signing = hmac(&k_service, b"aws4_request");
@@ -255,7 +275,7 @@ fn hmac(key: &[u8], data: &[u8]) -> Vec<u8> {
 }
 
 fn io_err(e: reqwest::Error) -> StorageError {
-    StorageError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+    StorageError::Io(std::io::Error::other(e.to_string()))
 }
 
 async fn check_ok(resp: reqwest::Response) -> Result<(), StorageError> {
@@ -269,15 +289,20 @@ async fn check_ok_ref(resp: reqwest::Response) -> Result<reqwest::Response, Stor
         Ok(resp)
     } else {
         let body = resp.text().await.unwrap_or_default();
-        Err(StorageError::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("S3 HTTP {}: {}", status.as_u16(), truncate(&body, 240)),
-        )))
+        Err(StorageError::Io(std::io::Error::other(format!(
+            "S3 HTTP {}: {}",
+            status.as_u16(),
+            truncate(&body, 240)
+        ))))
     }
 }
 
 fn truncate(s: &str, max: usize) -> &str {
-    if s.len() <= max { s } else { &s[..max] }
+    if s.len() <= max {
+        s
+    } else {
+        &s[..max]
+    }
 }
 
 #[cfg(test)]
@@ -310,10 +335,7 @@ mod tests {
         c.path_style = false;
         c.endpoint = "https://s3.amazonaws.com".into();
         let store = S3BlobStore::new(c);
-        assert_eq!(
-            store.object_url("x/y"),
-            "https://test.s3.amazonaws.com/x/y"
-        );
+        assert_eq!(store.object_url("x/y"), "https://test.s3.amazonaws.com/x/y");
     }
 
     #[test]
@@ -335,7 +357,12 @@ mod tests {
         assert!(names.contains(&"x-amz-content-sha256"));
         assert!(names.contains(&"Host"));
 
-        let auth = headers.iter().find(|(n, _)| n == "Authorization").unwrap().1.clone();
+        let auth = headers
+            .iter()
+            .find(|(n, _)| n == "Authorization")
+            .unwrap()
+            .1
+            .clone();
         assert!(auth.starts_with("AWS4-HMAC-SHA256 Credential=AKID/"));
         assert!(auth.contains("s3/aws4_request"));
         assert!(auth.contains("SignedHeaders=host;x-amz-content-sha256;x-amz-date"));

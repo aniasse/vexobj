@@ -58,7 +58,9 @@ pub struct StorageConfig {
     pub s3: Option<StorageS3Config>,
 }
 
-fn default_backend() -> String { "local".into() }
+fn default_backend() -> String {
+    "local".into()
+}
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct StorageS3Config {
@@ -72,7 +74,9 @@ pub struct StorageS3Config {
     pub path_style: bool,
 }
 
-fn default_region() -> String { "us-east-1".into() }
+fn default_region() -> String {
+    "us-east-1".into()
+}
 
 impl Default for StorageConfig {
     fn default() -> Self {
@@ -135,7 +139,7 @@ impl Default for AuthConfig {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct TlsConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -143,16 +147,6 @@ pub struct TlsConfig {
     pub cert_path: Option<String>,
     #[serde(default)]
     pub key_path: Option<String>,
-}
-
-impl Default for TlsConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            cert_path: None,
-            key_path: None,
-        }
-    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -221,9 +215,15 @@ impl Default for TranscodeConfig {
     }
 }
 
-fn default_transcode_workers() -> u32     { 2 }
-fn default_transcode_max_pending() -> u32 { 100 }
-fn default_transcode_gc_days() -> u32     { 30 }
+fn default_transcode_workers() -> u32 {
+    2
+}
+fn default_transcode_max_pending() -> u32 {
+    100
+}
+fn default_transcode_gc_days() -> u32 {
+    30
+}
 
 #[derive(Debug, Deserialize)]
 pub struct QuotaConfig {
@@ -329,10 +329,18 @@ impl Config {
                 path_style: true,
             });
             s3.endpoint = val;
-            if let Ok(v) = std::env::var("VEXOBJ_S3_BUCKET")     { s3.bucket = v; }
-            if let Ok(v) = std::env::var("VEXOBJ_S3_ACCESS_KEY") { s3.access_key = v; }
-            if let Ok(v) = std::env::var("VEXOBJ_S3_SECRET_KEY") { s3.secret_key = v; }
-            if let Ok(v) = std::env::var("VEXOBJ_S3_REGION")     { s3.region = v; }
+            if let Ok(v) = std::env::var("VEXOBJ_S3_BUCKET") {
+                s3.bucket = v;
+            }
+            if let Ok(v) = std::env::var("VEXOBJ_S3_ACCESS_KEY") {
+                s3.access_key = v;
+            }
+            if let Ok(v) = std::env::var("VEXOBJ_S3_SECRET_KEY") {
+                s3.secret_key = v;
+            }
+            if let Ok(v) = std::env::var("VEXOBJ_S3_REGION") {
+                s3.region = v;
+            }
             if let Ok(v) = std::env::var("VEXOBJ_S3_PATH_STYLE") {
                 s3.path_style = v.parse().unwrap_or(true);
             }
@@ -368,7 +376,8 @@ impl Config {
             config.quotas.default_max_storage = val;
         }
         if let Ok(val) = std::env::var("VEXOBJ_QUOTAS_MAX_OBJECTS") {
-            config.quotas.default_max_objects = val.parse().unwrap_or(config.quotas.default_max_objects);
+            config.quotas.default_max_objects =
+                val.parse().unwrap_or(config.quotas.default_max_objects);
         }
         if let Ok(val) = std::env::var("VEXOBJ_SSE_ENABLED") {
             config.sse.enabled = val.parse().unwrap_or(config.sse.enabled);
@@ -377,13 +386,19 @@ impl Config {
             config.sse.master_key = val;
         }
         if let Ok(val) = std::env::var("VEXOBJ_TRANSCODE_WORKERS") {
-            if let Ok(v) = val.parse() { config.transcode.workers = v; }
+            if let Ok(v) = val.parse() {
+                config.transcode.workers = v;
+            }
         }
         if let Ok(val) = std::env::var("VEXOBJ_TRANSCODE_MAX_PENDING") {
-            if let Ok(v) = val.parse() { config.transcode.max_pending = v; }
+            if let Ok(v) = val.parse() {
+                config.transcode.max_pending = v;
+            }
         }
         if let Ok(val) = std::env::var("VEXOBJ_TRANSCODE_GC_DAYS") {
-            if let Ok(v) = val.parse() { config.transcode.gc_after_days = v; }
+            if let Ok(v) = val.parse() {
+                config.transcode.gc_after_days = v;
+            }
         }
 
         Ok(config)

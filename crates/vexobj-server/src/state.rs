@@ -46,11 +46,9 @@ impl AppState {
         let blob_store: Arc<dyn BlobStore> = match config.storage.backend.as_str() {
             "local" => Arc::new(LocalBlobStore::new(data_dir.clone())),
             "s3" => {
-                let s3 = config
-                    .storage
-                    .s3
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("storage.backend=s3 but [storage.s3] missing"))?;
+                let s3 = config.storage.s3.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("storage.backend=s3 but [storage.s3] missing")
+                })?;
                 if s3.endpoint.is_empty() || s3.bucket.is_empty() {
                     anyhow::bail!("[storage.s3] endpoint and bucket are required");
                 }

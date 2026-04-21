@@ -120,9 +120,7 @@ enum TranscodeAction {
         profile: String,
     },
     /// Show a specific job
-    Get {
-        id: String,
-    },
+    Get { id: String },
     /// List available profiles
     Profiles,
 }
@@ -315,9 +313,7 @@ async fn main() -> Result<()> {
             ObjectAction::Get { bucket, key, dest } => {
                 cmd_object_get(&api, &bucket, &key, dest.as_deref()).await
             }
-            ObjectAction::Delete { bucket, key } => {
-                cmd_object_delete(&api, &bucket, &key).await
-            }
+            ObjectAction::Delete { bucket, key } => cmd_object_delete(&api, &bucket, &key).await,
             ObjectAction::Head { bucket, key } => cmd_object_head(&api, &bucket, &key).await,
         },
         Commands::Key { action } => match action {
@@ -363,9 +359,11 @@ async fn main() -> Result<()> {
             TranscodeAction::Jobs { status, limit } => {
                 cmd_transcode_jobs(&api, status.as_deref(), limit).await
             }
-            TranscodeAction::Submit { bucket, key, profile } => {
-                cmd_transcode_submit(&api, &bucket, &key, &profile).await
-            }
+            TranscodeAction::Submit {
+                bucket,
+                key,
+                profile,
+            } => cmd_transcode_submit(&api, &bucket, &key, &profile).await,
             TranscodeAction::Get { id } => cmd_transcode_get(&api, &id).await,
             TranscodeAction::Profiles => cmd_transcode_profiles(&api).await,
         },
@@ -420,10 +418,7 @@ fn human_size(bytes: u64) -> String {
 async fn check_response(resp: reqwest::Response) -> Result<Value> {
     let status = resp.status();
     if status.is_success() {
-        let body = resp
-            .json::<Value>()
-            .await
-            .unwrap_or(Value::Null);
+        let body = resp.json::<Value>().await.unwrap_or(Value::Null);
         Ok(body)
     } else {
         let body = resp.text().await.unwrap_or_default();
@@ -486,7 +481,11 @@ fn print_table(headers: &[&str], rows: &[Vec<String>]) {
 // ---------------------------------------------------------------------------
 
 async fn cmd_bucket_list(api: &ApiClient) -> Result<()> {
-    let resp = api.get("/v1/buckets").send().await.context("request failed")?;
+    let resp = api
+        .get("/v1/buckets")
+        .send()
+        .await
+        .context("request failed")?;
     let body = check_response(resp).await?;
     let buckets = body
         .get("buckets")
@@ -568,10 +567,7 @@ async fn cmd_object_list(api: &ApiClient, bucket: &str, prefix: Option<&str>) ->
     let rows: Vec<Vec<String>> = objects
         .iter()
         .map(|o| {
-            let size = o
-                .get("size")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
+            let size = o.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
             vec![
                 o.get("key")
                     .and_then(|v| v.as_str())
@@ -612,10 +608,7 @@ async fn cmd_object_put(api: &ApiClient, bucket: &str, key: &str, file: &PathBuf
         .await
         .context("upload failed")?;
     let body = check_response(resp).await?;
-    let sha = body
-        .get("sha256")
-        .and_then(|v| v.as_str())
-        .unwrap_or("-");
+    let sha = body.get("sha256").and_then(|v| v.as_str()).unwrap_or("-");
     println!(
         "Uploaded {}/{} ({}, {})",
         bucket,
@@ -862,17 +855,11 @@ async fn cmd_key_create(
     if let Some(key_obj) = body.get("key") {
         println!(
             "  ID:   {}",
-            key_obj
-                .get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("-")
+            key_obj.get("id").and_then(|v| v.as_str()).unwrap_or("-")
         );
         println!(
             "  Name: {}",
-            key_obj
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("-")
+            key_obj.get("name").and_then(|v| v.as_str()).unwrap_or("-")
         );
     }
     Ok(())
@@ -899,16 +886,18 @@ async fn cmd_key_delete(api: &ApiClient, id: &str) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 async fn cmd_stats(api: &ApiClient) -> Result<()> {
-    let resp = api.get("/v1/stats").send().await.context("request failed")?;
+    let resp = api
+        .get("/v1/stats")
+        .send()
+        .await
+        .context("request failed")?;
     let body = check_response(resp).await?;
 
     println!("vexobj Storage Statistics");
     println!("==========================");
     println!(
         "Buckets:       {}",
-        body.get("buckets")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0)
+        body.get("buckets").and_then(|v| v.as_u64()).unwrap_or(0)
     );
     println!(
         "Total objects: {}",
@@ -930,9 +919,7 @@ async fn cmd_stats(api: &ApiClient) -> Result<()> {
     );
     println!(
         "Version:       {}",
-        body.get("version")
-            .and_then(|v| v.as_str())
-            .unwrap_or("-")
+        body.get("version").and_then(|v| v.as_str()).unwrap_or("-")
     );
 
     if let Some(details) = body.get("bucket_details").and_then(|v| v.as_array()) {
@@ -1003,9 +990,7 @@ async fn cmd_backup(api: &ApiClient) -> Result<()> {
 
     println!(
         "Path:         {}",
-        body.get("path")
-            .and_then(|v| v.as_str())
-            .unwrap_or("-")
+        body.get("path").and_then(|v| v.as_str()).unwrap_or("-")
     );
     let db_size = body.get("db_size").and_then(|v| v.as_u64()).unwrap_or(0);
     println!("DB size:      {}", human_size(db_size));
@@ -1015,10 +1000,7 @@ async fn cmd_backup(api: &ApiClient) -> Result<()> {
             .and_then(|v| v.as_u64())
             .unwrap_or(0)
     );
-    let total = body
-        .get("total_size")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
+    let total = body.get("total_size").and_then(|v| v.as_u64()).unwrap_or(0);
     println!("Total size:   {}", human_size(total));
     Ok(())
 }
@@ -1034,9 +1016,7 @@ async fn cmd_export(api: &ApiClient, bucket: &str) -> Result<()> {
 
     println!(
         "Bucket:           {}",
-        body.get("bucket")
-            .and_then(|v| v.as_str())
-            .unwrap_or("-")
+        body.get("bucket").and_then(|v| v.as_str()).unwrap_or("-")
     );
     println!(
         "Objects exported: {}",
@@ -1046,9 +1026,7 @@ async fn cmd_export(api: &ApiClient, bucket: &str) -> Result<()> {
     );
     println!(
         "Path:             {}",
-        body.get("path")
-            .and_then(|v| v.as_str())
-            .unwrap_or("-")
+        body.get("path").and_then(|v| v.as_str()).unwrap_or("-")
     );
     Ok(())
 }
@@ -1074,7 +1052,10 @@ async fn cmd_health(api: &ApiClient) -> Result<()> {
     if status.is_success() && srv_status == "ok" {
         println!("vexobj is healthy (v{})", version);
     } else {
-        println!("vexobj health check failed (HTTP {}, status={})", status, srv_status);
+        println!(
+            "vexobj health check failed (HTTP {}, status={})",
+            status, srv_status
+        );
         std::process::exit(1);
     }
     Ok(())
@@ -1191,7 +1172,12 @@ fn s3_sign_request(
 
     let canonical_request = format!(
         "{}\n{}\n{}\n{}\n{}\n{}",
-        method, canonical_uri, canonical_querystring, canonical_headers, signed_headers, payload_hash,
+        method,
+        canonical_uri,
+        canonical_querystring,
+        canonical_headers,
+        signed_headers,
+        payload_hash,
     );
 
     let mut hasher = Sha256::new();
@@ -1241,10 +1227,7 @@ fn s3_sign_request(
     vec![
         ("Authorization".to_string(), authorization),
         ("x-amz-date".to_string(), amz_date),
-        (
-            "x-amz-content-sha256".to_string(),
-            payload_hash.to_string(),
-        ),
+        ("x-amz-content-sha256".to_string(), payload_hash.to_string()),
         ("Host".to_string(), host_with_port),
     ]
 }
@@ -1275,7 +1258,7 @@ async fn cmd_migrate_s3(
     let mut continuation_token: Option<String> = None;
 
     loop {
-        let mut query = format!("list-type=2&max-keys=1000");
+        let mut query = "list-type=2&max-keys=1000".to_string();
         if let Some(p) = prefix {
             query.push_str(&format!("&prefix={}", p));
         }
@@ -1286,8 +1269,15 @@ async fn cmd_migrate_s3(
         let list_url = format!("{}/{}?{}", endpoint, source_bucket, query);
         let payload_hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"; // SHA-256 of empty body
 
-        let sig_headers =
-            s3_sign_request("GET", &list_url, access_key, secret_key, region, &[], payload_hash);
+        let sig_headers = s3_sign_request(
+            "GET",
+            &list_url,
+            access_key,
+            secret_key,
+            region,
+            &[],
+            payload_hash,
+        );
 
         let mut req = client.get(&list_url);
         for (k, v) in &sig_headers {
@@ -1305,7 +1295,10 @@ async fn cmd_migrate_s3(
             );
         }
 
-        let xml = resp.text().await.context("failed to read S3 list response")?;
+        let xml = resp
+            .text()
+            .await
+            .context("failed to read S3 list response")?;
         let (objects, next_token) = parse_s3_list_response(&xml);
 
         all_objects.extend(objects);
@@ -1376,13 +1369,7 @@ async fn cmd_migrate_s3(
             Ok(resp) if resp.status().is_success() => match resp.bytes().await {
                 Ok(data) => data,
                 Err(e) => {
-                    eprintln!(
-                        "[{}/{}] FAILED to read {} : {}",
-                        i + 1,
-                        total,
-                        obj.key,
-                        e
-                    );
+                    eprintln!("[{}/{}] FAILED to read {} : {}", i + 1, total, obj.key, e);
                     failed += 1;
                     continue;
                 }
@@ -1452,13 +1439,7 @@ async fn cmd_migrate_s3(
                 failed += 1;
             }
             Err(e) => {
-                eprintln!(
-                    "[{}/{}] FAILED to upload {} : {}",
-                    i + 1,
-                    total,
-                    obj.key,
-                    e
-                );
+                eprintln!("[{}/{}] FAILED to upload {} : {}", i + 1, total, obj.key, e);
                 failed += 1;
             }
         }
@@ -1647,7 +1628,12 @@ async fn cmd_replicate(
     if interval == 0 {
         println!("Replicating {} → {} (one-shot)...", primary, local);
         let (n, cursor) = sync_once(
-            primary, primary_key, local, local_key, cursor_file, batch_size,
+            primary,
+            primary_key,
+            local,
+            local_key,
+            cursor_file,
+            batch_size,
         )
         .await?;
         println!("Applied {} event(s). Cursor at {}.", n, cursor);
@@ -1660,12 +1646,19 @@ async fn cmd_replicate(
     );
     loop {
         match sync_once(
-            primary, primary_key, local, local_key, cursor_file, batch_size,
+            primary,
+            primary_key,
+            local,
+            local_key,
+            cursor_file,
+            batch_size,
         )
         .await
         {
             Ok((0, _)) => {}
-            Ok((n, cursor)) => println!("[{}] +{} events (cursor={})", chrono::Utc::now(), n, cursor),
+            Ok((n, cursor)) => {
+                println!("[{}] +{} events (cursor={})", chrono::Utc::now(), n, cursor)
+            }
             Err(e) => eprintln!("[{}] replication error: {}", chrono::Utc::now(), e),
         }
         tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
@@ -1720,7 +1713,10 @@ async fn cmd_promote(
     println!(
         "  ✓ local admin auth works  buckets={} objects={} disk={}",
         stats.get("buckets").and_then(|v| v.as_u64()).unwrap_or(0),
-        stats.get("total_objects").and_then(|v| v.as_u64()).unwrap_or(0),
+        stats
+            .get("total_objects")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0),
         stats
             .get("disk_usage_human")
             .and_then(|v| v.as_str())
@@ -1743,9 +1739,8 @@ async fn cmd_promote(
     if keep_cursor {
         println!("  — keeping cursor file (you passed --keep-cursor)");
     } else if cursor_file.exists() {
-        std::fs::remove_file(cursor_file).with_context(|| {
-            format!("failed to delete cursor file {}", cursor_file.display())
-        })?;
+        std::fs::remove_file(cursor_file)
+            .with_context(|| format!("failed to delete cursor file {}", cursor_file.display()))?;
         println!("  ✓ cursor file deleted");
     } else {
         println!("  — cursor file already absent");
@@ -1772,17 +1767,37 @@ async fn cmd_promote(
 // ---------------------------------------------------------------------------
 
 async fn cmd_transcode_profiles(api: &ApiClient) -> Result<()> {
-    let resp = api.get("/v1/transcode/profiles").send().await.context("request failed")?;
+    let resp = api
+        .get("/v1/transcode/profiles")
+        .send()
+        .await
+        .context("request failed")?;
     let body = check_response(resp).await?;
-    let profiles = body.get("profiles").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let profiles = body
+        .get("profiles")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
     let rows: Vec<Vec<String>> = profiles
         .iter()
         .map(|p| {
             vec![
-                p.get("name").and_then(|v| v.as_str()).unwrap_or("-").to_string(),
-                p.get("extension").and_then(|v| v.as_str()).unwrap_or("-").to_string(),
-                p.get("content_type").and_then(|v| v.as_str()).unwrap_or("-").to_string(),
-                p.get("description").and_then(|v| v.as_str()).unwrap_or("-").to_string(),
+                p.get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("-")
+                    .to_string(),
+                p.get("extension")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("-")
+                    .to_string(),
+                p.get("content_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("-")
+                    .to_string(),
+                p.get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("-")
+                    .to_string(),
             ]
         })
         .collect();
@@ -1790,7 +1805,12 @@ async fn cmd_transcode_profiles(api: &ApiClient) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_transcode_submit(api: &ApiClient, bucket: &str, key: &str, profile: &str) -> Result<()> {
+async fn cmd_transcode_submit(
+    api: &ApiClient,
+    bucket: &str,
+    key: &str,
+    profile: &str,
+) -> Result<()> {
     let path = format!("/v1/transcode/{}/{}", bucket, key);
     let resp = api
         .post(&path)
@@ -1805,7 +1825,11 @@ async fn cmd_transcode_submit(api: &ApiClient, bucket: &str, key: &str, profile:
 }
 
 async fn cmd_transcode_get(api: &ApiClient, id: &str) -> Result<()> {
-    let resp = api.get(&format!("/v1/transcode/jobs/{}", id)).send().await.context("request failed")?;
+    let resp = api
+        .get(&format!("/v1/transcode/jobs/{}", id))
+        .send()
+        .await
+        .context("request failed")?;
     let body = check_response(resp).await?;
     println!("{}", serde_json::to_string_pretty(&body)?);
     Ok(())
@@ -1813,29 +1837,56 @@ async fn cmd_transcode_get(api: &ApiClient, id: &str) -> Result<()> {
 
 async fn cmd_transcode_jobs(api: &ApiClient, status: Option<&str>, limit: u32) -> Result<()> {
     let mut url = format!("/v1/transcode/jobs?limit={}", limit);
-    if let Some(s) = status { url.push_str(&format!("&status={}", s)); }
+    if let Some(s) = status {
+        url.push_str(&format!("&status={}", s));
+    }
     let resp = api.get(&url).send().await.context("request failed")?;
     let body = check_response(resp).await?;
-    let jobs = body.get("jobs").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let jobs = body
+        .get("jobs")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
     let rows: Vec<Vec<String>> = jobs
         .iter()
         .map(|j| {
-            let dur = j.get("duration_ms").and_then(|v| v.as_i64()).map(|ms| format!("{}ms", ms)).unwrap_or_else(|| "-".to_string());
+            let dur = j
+                .get("duration_ms")
+                .and_then(|v| v.as_i64())
+                .map(|ms| format!("{}ms", ms))
+                .unwrap_or_else(|| "-".to_string());
             vec![
-                j.get("id").and_then(|v| v.as_str()).unwrap_or("-").chars().take(12).collect(),
-                j.get("status").and_then(|v| v.as_str()).unwrap_or("-").to_string(),
-                j.get("profile").and_then(|v| v.as_str()).unwrap_or("-").to_string(),
+                j.get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("-")
+                    .chars()
+                    .take(12)
+                    .collect(),
+                j.get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("-")
+                    .to_string(),
+                j.get("profile")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("-")
+                    .to_string(),
                 format!(
                     "{}/{}",
                     j.get("bucket").and_then(|v| v.as_str()).unwrap_or("-"),
                     j.get("key").and_then(|v| v.as_str()).unwrap_or("-"),
                 ),
                 dur,
-                j.get("created_at").and_then(|v| v.as_str()).unwrap_or("-").to_string(),
+                j.get("created_at")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("-")
+                    .to_string(),
             ]
         })
         .collect();
-    print_table(&["ID", "Status", "Profile", "Source", "Duration", "Created"], &rows);
+    print_table(
+        &["ID", "Status", "Profile", "Source", "Duration", "Created"],
+        &rows,
+    );
     println!("\n{} job(s)", jobs.len());
     Ok(())
 }

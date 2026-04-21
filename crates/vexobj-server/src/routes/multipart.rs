@@ -13,7 +13,10 @@ use vexobj_auth::ApiKey;
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/v1/upload/{bucket}", post(multipart_upload))
-        .route("/v1/upload/{bucket}/{*prefix}", post(multipart_upload_prefix))
+        .route(
+            "/v1/upload/{bucket}/{*prefix}",
+            post(multipart_upload_prefix),
+        )
 }
 
 async fn multipart_upload(

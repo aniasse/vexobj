@@ -41,9 +41,7 @@ async fn stream_put(
         .map(|s| s.to_string());
 
     // Convert axum Body into a Stream<Item = Result<Bytes, _>>
-    let stream = body
-        .into_data_stream()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
+    let stream = body.into_data_stream().map_err(std::io::Error::other);
 
     match state
         .storage
@@ -52,13 +50,16 @@ async fn stream_put(
     {
         Ok(meta) => {
             if let Some(ref wh) = state.webhooks {
-                wh.send("object.created", json!({
-                    "bucket": meta.bucket,
-                    "key": meta.key,
-                    "size": meta.size,
-                    "content_type": meta.content_type,
-                    "sha256": meta.sha256,
-                }));
+                wh.send(
+                    "object.created",
+                    json!({
+                        "bucket": meta.bucket,
+                        "key": meta.key,
+                        "size": meta.size,
+                        "content_type": meta.content_type,
+                        "sha256": meta.sha256,
+                    }),
+                );
             }
             (StatusCode::CREATED, Json(json!(meta))).into_response()
         }

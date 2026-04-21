@@ -80,7 +80,11 @@ fn authenticate(
 
         let header_pairs: Vec<(String, String)> = headers
             .iter()
-            .filter_map(|(n, v)| v.to_str().ok().map(|s| (n.as_str().to_string(), s.to_string())))
+            .filter_map(|(n, v)| {
+                v.to_str()
+                    .ok()
+                    .map(|s| (n.as_str().to_string(), s.to_string()))
+            })
             .collect();
 
         if !verify_sigv4(
@@ -126,12 +130,7 @@ async fn s3_service(
     match state.storage.list_buckets() {
         Ok(buckets) => {
             let body = xml::list_buckets_xml(&buckets, "vexobj");
-            (
-                StatusCode::OK,
-                [("content-type", "application/xml")],
-                body,
-            )
-                .into_response()
+            (StatusCode::OK, [("content-type", "application/xml")], body).into_response()
         }
         Err(e) => S3Error::internal(&e.to_string()).into_response(),
     }
@@ -228,12 +227,7 @@ async fn list_objects_v2(state: &S3State, bucket: &str, query: BucketQuery) -> R
     match state.storage.list_objects(&req) {
         Ok(resp) => {
             let body = xml::list_objects_v2_xml(bucket, prefix, &resp, max_keys, delimiter);
-            (
-                StatusCode::OK,
-                [("content-type", "application/xml")],
-                body,
-            )
-                .into_response()
+            (StatusCode::OK, [("content-type", "application/xml")], body).into_response()
         }
         Err(e) => S3Error::internal(&e.to_string()).into_response(),
     }
@@ -276,7 +270,10 @@ async fn put_object(
     body: Bytes,
 ) -> Response {
     // Check for copy operation
-    if let Some(copy_source) = headers.get("x-amz-copy-source").and_then(|v| v.to_str().ok()) {
+    if let Some(copy_source) = headers
+        .get("x-amz-copy-source")
+        .and_then(|v| v.to_str().ok())
+    {
         return copy_object(state, bucket, key, copy_source).await;
     }
 
@@ -319,15 +316,14 @@ async fn copy_object(state: &S3State, dest_bucket: &str, dest_key: &str, source:
         Err(_) => return S3Error::no_such_key(src_key).into_response(),
     };
 
-    match state.storage.put_object(dest_bucket, dest_key, data, None, None).await {
+    match state
+        .storage
+        .put_object(dest_bucket, dest_key, data, None, None)
+        .await
+    {
         Ok(meta) => {
             let body = xml::copy_object_xml(&meta);
-            (
-                StatusCode::OK,
-                [("content-type", "application/xml")],
-                body,
-            )
-                .into_response()
+            (StatusCode::OK, [("content-type", "application/xml")], body).into_response()
         }
         Err(e) => S3Error::internal(&e.to_string()).into_response(),
     }

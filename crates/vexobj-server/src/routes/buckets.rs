@@ -15,10 +15,7 @@ use vexobj_storage::CreateBucketRequest;
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/v1/buckets", get(list_buckets).post(create_bucket))
-        .route(
-            "/v1/buckets/{name}",
-            get(get_bucket).delete(delete_bucket),
-        )
+        .route("/v1/buckets/{name}", get(get_bucket).delete(delete_bucket))
 }
 
 #[derive(Deserialize)]
@@ -54,11 +51,7 @@ async fn create_bucket(
             );
             (StatusCode::CREATED, Json(json!(bucket))).into_response()
         }
-        Err(e) => (
-            StatusCode::CONFLICT,
-            Json(json!({"error": e.to_string()})),
-        )
-            .into_response(),
+        Err(e) => (StatusCode::CONFLICT, Json(json!({"error": e.to_string()}))).into_response(),
     }
 }
 

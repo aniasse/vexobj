@@ -36,13 +36,9 @@ fn make_signed_request() -> (String, ParsedAuth, Vec<(String, String)>) {
     let scope = format!("{date}/{region}/{service}/aws4_request");
     let signed_headers = "host;x-amz-content-sha256;x-amz-date";
 
-    let canonical_headers: String = headers
-        .iter()
-        .map(|(k, v)| format!("{k}:{v}\n"))
-        .collect();
-    let canonical = format!(
-        "{method}\n{uri}\n{query}\n{canonical_headers}\n{signed_headers}\n{payload_hash}"
-    );
+    let canonical_headers: String = headers.iter().map(|(k, v)| format!("{k}:{v}\n")).collect();
+    let canonical =
+        format!("{method}\n{uri}\n{query}\n{canonical_headers}\n{signed_headers}\n{payload_hash}");
     let mut h = Sha256::new();
     h.update(canonical.as_bytes());
     let cr_hash = hex::encode(h.finalize());

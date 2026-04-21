@@ -31,7 +31,7 @@ pub enum OutputFormat {
 }
 
 impl OutputFormat {
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "jpg" | "jpeg" => Some(Self::Jpeg),
             "png" => Some(Self::Png),
@@ -137,7 +137,10 @@ fn apply_resize(img: &DynamicImage, params: &TransformParams) -> DynamicImage {
 
 impl TransformParams {
     pub fn has_transforms(&self) -> bool {
-        self.width.is_some() || self.height.is_some() || self.format.is_some() || self.quality.is_some()
+        self.width.is_some()
+            || self.height.is_some()
+            || self.format.is_some()
+            || self.quality.is_some()
     }
 
     pub fn cache_key(&self) -> String {

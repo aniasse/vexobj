@@ -57,12 +57,16 @@ pub trait BlobStore: Send + Sync {
     /// the server process can open directly (needed for ffmpeg, SSE
     /// in-place reads, etc.). Remote backends return false and those
     /// features fall back / return 501.
-    fn supports_local_path(&self) -> bool { false }
+    fn supports_local_path(&self) -> bool {
+        false
+    }
 
     /// If `supports_local_path` is true, the absolute path where the
     /// blob lives. Otherwise None. Avoid round-tripping through this
     /// for anything that can use `get_blob` / `stream_blob`.
-    fn local_path(&self, _key: &str) -> Option<std::path::PathBuf> { None }
+    fn local_path(&self, _key: &str) -> Option<std::path::PathBuf> {
+        None
+    }
 
     /// Human-readable tag for logs ("local", "s3", …).
     fn backend_name(&self) -> &'static str;

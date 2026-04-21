@@ -24,11 +24,10 @@ fn test_storage_bucket_crud() {
     assert_eq!(b.name, "test");
 
     // Duplicate bucket fails
-    let err = engine
-        .create_bucket(&vexobj_storage::CreateBucketRequest {
-            name: "test".to_string(),
-            public: false,
-        });
+    let err = engine.create_bucket(&vexobj_storage::CreateBucketRequest {
+        name: "test".to_string(),
+        public: false,
+    });
     assert!(err.is_err());
 
     // Delete bucket
@@ -150,15 +149,33 @@ async fn test_virtual_directories() {
         .unwrap();
 
     engine
-        .put_object("dirs", "docs/readme.md", bytes::Bytes::from("# README"), None, None)
+        .put_object(
+            "dirs",
+            "docs/readme.md",
+            bytes::Bytes::from("# README"),
+            None,
+            None,
+        )
         .await
         .unwrap();
     engine
-        .put_object("dirs", "docs/guide.md", bytes::Bytes::from("# Guide"), None, None)
+        .put_object(
+            "dirs",
+            "docs/guide.md",
+            bytes::Bytes::from("# Guide"),
+            None,
+            None,
+        )
         .await
         .unwrap();
     engine
-        .put_object("dirs", "images/logo.png", bytes::Bytes::from("PNG"), None, None)
+        .put_object(
+            "dirs",
+            "images/logo.png",
+            bytes::Bytes::from("PNG"),
+            None,
+            None,
+        )
         .await
         .unwrap();
     engine
@@ -361,7 +378,13 @@ async fn test_garbage_collection() {
 
     // Create and delete an object (without dedup, blob stays)
     engine
-        .put_object("gc", "temp.txt", bytes::Bytes::from("temporary"), None, None)
+        .put_object(
+            "gc",
+            "temp.txt",
+            bytes::Bytes::from("temporary"),
+            None,
+            None,
+        )
         .await
         .unwrap();
     engine.delete_object("gc", "temp.txt").await.unwrap();
@@ -390,11 +413,23 @@ async fn test_backup_and_restore() {
         .unwrap();
 
     engine
-        .put_object("backup-test", "file1.txt", bytes::Bytes::from("data1"), None, None)
+        .put_object(
+            "backup-test",
+            "file1.txt",
+            bytes::Bytes::from("data1"),
+            None,
+            None,
+        )
         .await
         .unwrap();
     engine
-        .put_object("backup-test", "file2.txt", bytes::Bytes::from("data2"), None, None)
+        .put_object(
+            "backup-test",
+            "file2.txt",
+            bytes::Bytes::from("data2"),
+            None,
+            None,
+        )
         .await
         .unwrap();
 
@@ -418,7 +453,10 @@ async fn test_backup_and_restore() {
 
     // Verify restored data is usable
     let engine2 = vexobj_storage::StorageEngine::new(restore_dir, 1024 * 1024, true).unwrap();
-    let (_, data) = engine2.get_object("backup-test", "file1.txt").await.unwrap();
+    let (_, data) = engine2
+        .get_object("backup-test", "file1.txt")
+        .await
+        .unwrap();
     assert_eq!(data, bytes::Bytes::from("data1"));
 }
 
@@ -435,17 +473,31 @@ async fn test_bucket_export() {
         .unwrap();
 
     engine
-        .put_object("export-test", "a.txt", bytes::Bytes::from("aaa"), None, None)
+        .put_object(
+            "export-test",
+            "a.txt",
+            bytes::Bytes::from("aaa"),
+            None,
+            None,
+        )
         .await
         .unwrap();
     engine
-        .put_object("export-test", "b.txt", bytes::Bytes::from("bbb"), None, None)
+        .put_object(
+            "export-test",
+            "b.txt",
+            bytes::Bytes::from("bbb"),
+            None,
+            None,
+        )
         .await
         .unwrap();
 
     let export_dir = tempdir();
     let bm = vexobj_storage::BackupManager::new(dir);
-    let count = bm.export_bucket(engine.db(), "export-test", &export_dir).unwrap();
+    let count = bm
+        .export_bucket(engine.db(), "export-test", &export_dir)
+        .unwrap();
     assert_eq!(count, 2);
     assert!(export_dir.join("a.txt").exists());
     assert!(export_dir.join("b.txt").exists());

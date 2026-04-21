@@ -61,7 +61,7 @@ fn probe_mp4<R: std::io::Read + std::io::Seek>(reader: R, size: u64) -> Option<V
     let mut codec: Option<String> = None;
     let mut has_audio = false;
 
-    for (_id, track) in mp4.tracks() {
+    for track in mp4.tracks().values() {
         use mp4::TrackType;
         match track.track_type().ok()? {
             TrackType::Video => {

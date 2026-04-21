@@ -77,7 +77,9 @@ impl GarbageCollector {
                             result.orphans_removed += 1;
                             result.bytes_freed += size;
                         }
-                        Err(e) => warn!(path = %path.display(), error = %e, "failed to remove orphan blob"),
+                        Err(e) => {
+                            warn!(path = %path.display(), error = %e, "failed to remove orphan blob")
+                        }
                     }
                 }
             }

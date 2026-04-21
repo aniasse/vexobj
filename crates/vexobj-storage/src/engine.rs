@@ -45,7 +45,13 @@ impl StorageEngine {
     ) -> Result<Self, StorageError> {
         // Default to local blob storage — what vexobj has always done.
         let blob_store = Arc::new(crate::LocalBlobStore::new(data_dir.clone()));
-        Self::with_backend(data_dir, max_file_size, deduplication, encryptor, blob_store)
+        Self::with_backend(
+            data_dir,
+            max_file_size,
+            deduplication,
+            encryptor,
+            blob_store,
+        )
     }
 
     /// Constructor for callers that want to choose the blob backend
@@ -113,7 +119,9 @@ impl StorageEngine {
         // `video/*` is the broad net; ffprobe covers way more container
         // types than the pure-Rust mp4 parser, so we try it on anything
         // that *claims* to be video rather than only MP4-family MIMEs.
-        if !content_type.starts_with("video/") { return base; }
+        if !content_type.starts_with("video/") {
+            return base;
+        }
 
         let ffprobe_available = self.video_features.ffprobe;
         let is_mp4_family = vexobj_processing::is_probable_video(content_type);
@@ -124,8 +132,13 @@ impl StorageEngine {
         //    or remote backend with bytes still in memory)
         let meta = if let Some(path) = storage_path {
             if ffprobe_available && self.encryptor.is_none() {
-                vexobj_processing::probe_with_ffprobe(path)
-                    .or_else(|| if is_mp4_family { vexobj_processing::probe_video_file(path) } else { None })
+                vexobj_processing::probe_with_ffprobe(path).or_else(|| {
+                    if is_mp4_family {
+                        vexobj_processing::probe_video_file(path)
+                    } else {
+                        None
+                    }
+                })
             } else if self.encryptor.is_some() {
                 plaintext.and_then(vexobj_processing::probe_video_bytes)
             } else {
@@ -236,7 +249,9 @@ impl StorageEngine {
             Some(enc) => enc.encrypt(&sha256, &data)?,
             None => data.to_vec(),
         };
-        self.blob_store.put_blob(&storage_path, &bytes_on_disk).await?;
+        self.blob_store
+            .put_blob(&storage_path, &bytes_on_disk)
+            .await?;
 
         let content_type = content_type
             .map(String::from)
@@ -264,7 +279,13 @@ impl StorageEngine {
         // Replication event: one row per put. Appended *after* the
         // metadata write succeeded so replicas never see a ghost event.
         let _ = self.db.append_replication_event(
-            "put", bucket, key, &sha256, None, size, &content_type,
+            "put",
+            bucket,
+            key,
+            &sha256,
+            None,
+            size,
+            &content_type,
         );
 
         // If versioning is enabled, save a version record
@@ -293,7 +314,11 @@ impl StorageEngine {
         Ok(meta)
     }
 
-    pub async fn get_object(&self, bucket: &str, key: &str) -> Result<(ObjectMeta, bytes::Bytes), StorageError> {
+    pub async fn get_object(
+        &self,
+        bucket: &str,
+        key: &str,
+    ) -> Result<(ObjectMeta, bytes::Bytes), StorageError> {
         let (meta, storage_path) = self.db.get_object(bucket, key)?;
         let raw = self.blob_store.get_blob(&storage_path).await?;
         let data = match &self.encryptor {
@@ -353,7 +378,10 @@ impl StorageEngine {
         Ok(())
     }
 
-    pub fn list_objects(&self, req: &ListObjectsRequest) -> Result<ListObjectsResponse, StorageError> {
+    pub fn list_objects(
+        &self,
+        req: &ListObjectsRequest,
+    ) -> Result<ListObjectsResponse, StorageError> {
         self.db.list_objects(req)
     }
 
@@ -363,12 +391,12 @@ impl StorageEngine {
     /// either download to scratch or error out clearly.
     pub fn object_data_path(&self, bucket: &str, key: &str) -> Result<PathBuf, StorageError> {
         let (_, storage_path) = self.db.get_object(bucket, key)?;
-        self.blob_store
-            .local_path(&storage_path)
-            .ok_or_else(|| StorageError::Io(std::io::Error::new(
+        self.blob_store.local_path(&storage_path).ok_or_else(|| {
+            StorageError::Io(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
                 "active blob backend has no local path",
-            )))
+            ))
+        })
     }
 
     fn blob_path(&self, sha256: &str) -> String {
@@ -412,9 +440,8 @@ impl StorageEngine {
 
         // Stream body chunks directly to disk
         while let Some(chunk_result) = stream.next().await {
-            let data = chunk_result.map_err(|e| {
-                StorageError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
-            })?;
+            let data =
+                chunk_result.map_err(|e| StorageError::Io(std::io::Error::other(e.to_string())))?;
             if size + data.len() as u64 > self.max_file_size {
                 drop(file);
                 let _ = tokio::fs::remove_file(&temp_path).await;
@@ -449,10 +476,21 @@ impl StorageEngine {
                         metadata,
                     );
                     let meta = self.db.put_object(
-                        bucket, key, size, &content_type, &sha256, &existing,
+                        bucket,
+                        key,
+                        size,
+                        &content_type,
+                        &sha256,
+                        &existing,
                         &enriched,
                     )?;
-                    info!(bucket, key, size, deduplicated = true, "object stored (stream)");
+                    info!(
+                        bucket,
+                        key,
+                        size,
+                        deduplicated = true,
+                        "object stored (stream)"
+                    );
                     return Ok(meta);
                 }
             }
@@ -479,21 +517,28 @@ impl StorageEngine {
             .unwrap_or_else(|| Self::guess_content_type(key));
 
         let final_local = self.blob_store.local_path(&storage_path);
-        let enriched = self.enrich_with_video_meta(
-            &content_type,
-            final_local.as_deref(),
-            None,
-            metadata,
-        );
+        let enriched =
+            self.enrich_with_video_meta(&content_type, final_local.as_deref(), None, metadata);
         let meta = self.db.put_object(
-            bucket, key, size, &content_type, &sha256, &storage_path,
+            bucket,
+            key,
+            size,
+            &content_type,
+            &sha256,
+            &storage_path,
             &enriched,
         )?;
 
         info!(bucket, key, size, "object stored (stream)");
 
         let _ = self.db.append_replication_event(
-            "put", bucket, key, &sha256, None, size, &content_type,
+            "put",
+            bucket,
+            key,
+            &sha256,
+            None,
+            size,
+            &content_type,
         );
 
         // If versioning is enabled, save a version record
@@ -565,7 +610,11 @@ impl StorageEngine {
 
     // ── Versioning helpers ──────────────────────────────────────────────
 
-    pub fn list_versions(&self, bucket: &str, key: &str) -> Result<Vec<ObjectVersion>, StorageError> {
+    pub fn list_versions(
+        &self,
+        bucket: &str,
+        key: &str,
+    ) -> Result<Vec<ObjectVersion>, StorageError> {
         self.db.list_versions(bucket, key)
     }
 
@@ -660,10 +709,10 @@ impl StorageEngine {
         let mut removed: u64 = 0;
         if !self.deduplication {
             for path in all_paths.iter().collect::<std::collections::HashSet<_>>() {
-                if !self.db.is_storage_path_referenced(path)? {
-                    if self.blob_store.delete_blob(path).await.is_ok() {
-                        removed += 1;
-                    }
+                if !self.db.is_storage_path_referenced(path)?
+                    && self.blob_store.delete_blob(path).await.is_ok()
+                {
+                    removed += 1;
                 }
             }
         }

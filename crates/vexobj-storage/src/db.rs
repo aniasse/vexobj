@@ -7,6 +7,7 @@ use crate::error::StorageError;
 use crate::models::*;
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
     use chrono::Duration as Cd;
@@ -19,25 +20,40 @@ mod tests {
     #[test]
     fn gc_only_trims_terminal_jobs_past_the_cutoff() {
         let db = tempdb();
-        db.create_bucket(&CreateBucketRequest { name: "b".into(), public: false }).unwrap();
+        db.create_bucket(&CreateBucketRequest {
+            name: "b".into(),
+            public: false,
+        })
+        .unwrap();
 
         // 4 jobs: pending, running, completed recent, completed old.
         // Only the "completed old" row should go.
-        let _pending = db.create_transcode_job("b", "k1", "sha1", "mp4-480p", None).unwrap();
-        let _running = db.create_transcode_job("b", "k2", "sha2", "mp4-480p", None).unwrap();
-        let recent = db.create_transcode_job("b", "k3", "sha3", "mp4-480p", None).unwrap();
-        let old = db.create_transcode_job("b", "k4", "sha4", "mp4-480p", None).unwrap();
+        let _pending = db
+            .create_transcode_job("b", "k1", "sha1", "mp4-480p", None)
+            .unwrap();
+        let _running = db
+            .create_transcode_job("b", "k2", "sha2", "mp4-480p", None)
+            .unwrap();
+        let recent = db
+            .create_transcode_job("b", "k3", "sha3", "mp4-480p", None)
+            .unwrap();
+        let old = db
+            .create_transcode_job("b", "k4", "sha4", "mp4-480p", None)
+            .unwrap();
 
         // Mark two as completed. The recent one stamps as "now",
         // the old one we nudge by poking the row directly.
-        db.complete_transcode_job(&recent.id, "b", "k3.out", 100, 1).unwrap();
-        db.complete_transcode_job(&old.id, "b", "k4.out", 100, 1).unwrap();
+        db.complete_transcode_job(&recent.id, "b", "k3.out", 100, 1)
+            .unwrap();
+        db.complete_transcode_job(&old.id, "b", "k4.out", 100, 1)
+            .unwrap();
         {
             let conn = db.conn.lock().unwrap();
             conn.execute(
                 "UPDATE transcode_jobs SET completed_at = ?1 WHERE id = ?2",
                 params![(Utc::now() - Cd::days(60)).to_rfc3339(), old.id],
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         let removed = db.gc_transcode_jobs(Utc::now() - Cd::days(30)).unwrap();
@@ -225,7 +241,8 @@ impl Database {
 
     pub fn list_buckets(&self) -> Result<Vec<Bucket>, StorageError> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT id, name, created_at, public FROM buckets ORDER BY name")?;
+        let mut stmt =
+            conn.prepare("SELECT id, name, created_at, public FROM buckets ORDER BY name")?;
         let buckets = stmt
             .query_map([], |row| {
                 Ok(Bucket {
@@ -261,6 +278,7 @@ impl Database {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn put_object(
         &self,
         bucket: &str,
@@ -315,7 +333,11 @@ impl Database {
         })
     }
 
-    pub fn get_object(&self, bucket: &str, key: &str) -> Result<(ObjectMeta, String), StorageError> {
+    pub fn get_object(
+        &self,
+        bucket: &str,
+        key: &str,
+    ) -> Result<(ObjectMeta, String), StorageError> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
             "SELECT id, bucket, key, size, content_type, sha256, storage_path, created_at, updated_at, metadata
@@ -353,7 +375,10 @@ impl Database {
         Ok(storage_path)
     }
 
-    pub fn list_objects(&self, req: &ListObjectsRequest) -> Result<ListObjectsResponse, StorageError> {
+    pub fn list_objects(
+        &self,
+        req: &ListObjectsRequest,
+    ) -> Result<ListObjectsResponse, StorageError> {
         let conn = self.conn.lock().unwrap();
         let max_keys = req.max_keys.unwrap_or(1000).min(1000) as usize;
         let prefix = req.prefix.as_deref().unwrap_or("");
@@ -368,19 +393,29 @@ impl Database {
         let start = req.continuation_token.as_deref().unwrap_or(prefix);
 
         let objects: Vec<ObjectMeta> = stmt
-            .query_map(params![req.bucket, start, like_pattern, max_keys as i64 + 1], |row| {
-                Ok(ObjectMeta {
-                    id: row.get(0)?,
-                    bucket: row.get(1)?,
-                    key: row.get(2)?,
-                    size: row.get::<_, i64>(3)? as u64,
-                    content_type: row.get(4)?,
-                    sha256: row.get(5)?,
-                    created_at: row.get::<_, String>(6)?.parse().unwrap_or_else(|_| Utc::now()),
-                    updated_at: row.get::<_, String>(7)?.parse().unwrap_or_else(|_| Utc::now()),
-                    metadata: serde_json::from_str(&row.get::<_, String>(8)?).unwrap_or_default(),
-                })
-            })?
+            .query_map(
+                params![req.bucket, start, like_pattern, max_keys as i64 + 1],
+                |row| {
+                    Ok(ObjectMeta {
+                        id: row.get(0)?,
+                        bucket: row.get(1)?,
+                        key: row.get(2)?,
+                        size: row.get::<_, i64>(3)? as u64,
+                        content_type: row.get(4)?,
+                        sha256: row.get(5)?,
+                        created_at: row
+                            .get::<_, String>(6)?
+                            .parse()
+                            .unwrap_or_else(|_| Utc::now()),
+                        updated_at: row
+                            .get::<_, String>(7)?
+                            .parse()
+                            .unwrap_or_else(|_| Utc::now()),
+                        metadata: serde_json::from_str(&row.get::<_, String>(8)?)
+                            .unwrap_or_default(),
+                    })
+                },
+            )?
             .collect::<Result<Vec<_>, _>>()?;
 
         let is_truncated = objects.len() > max_keys;
@@ -489,6 +524,7 @@ impl Database {
         .unwrap_or(false)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn save_version(
         &self,
         bucket: &str,
@@ -547,7 +583,11 @@ impl Database {
         Ok(())
     }
 
-    pub fn list_versions(&self, bucket: &str, key: &str) -> Result<Vec<ObjectVersion>, StorageError> {
+    pub fn list_versions(
+        &self,
+        bucket: &str,
+        key: &str,
+    ) -> Result<Vec<ObjectVersion>, StorageError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, bucket, key, version_id, size, content_type, sha256, created_at, is_latest, is_delete_marker
@@ -915,7 +955,14 @@ impl Database {
                  output_bucket = ?1, output_key = ?2, output_size = ?3,
                  completed_at = ?4, duration_ms = ?5
              WHERE id = ?6",
-            params![output_bucket, output_key, output_size as i64, now, duration_ms, id],
+            params![
+                output_bucket,
+                output_key,
+                output_size as i64,
+                now,
+                duration_ms,
+                id
+            ],
         )?;
         Ok(())
     }
@@ -977,7 +1024,10 @@ impl Database {
             output_key: row.get(7)?,
             output_size: row.get::<_, Option<i64>>(8)?.map(|v| v as u64),
             error: row.get(9)?,
-            created_at: row.get::<_, String>(10)?.parse().unwrap_or_else(|_| Utc::now()),
+            created_at: row
+                .get::<_, String>(10)?
+                .parse()
+                .unwrap_or_else(|_| Utc::now()),
             started_at: row
                 .get::<_, Option<String>>(11)?
                 .and_then(|s| s.parse().ok()),
@@ -1137,10 +1187,7 @@ impl Database {
 
     pub fn delete_lifecycle_rule(&self, id: &str) -> Result<(), StorageError> {
         let conn = self.conn.lock().unwrap();
-        let affected = conn.execute(
-            "DELETE FROM lifecycle_rules WHERE id = ?1",
-            params![id],
-        )?;
+        let affected = conn.execute("DELETE FROM lifecycle_rules WHERE id = ?1", params![id])?;
         if affected == 0 {
             return Err(StorageError::ObjectNotFound {
                 bucket: "lifecycle_rules".to_string(),

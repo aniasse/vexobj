@@ -30,15 +30,17 @@ impl BackupManager {
 
     /// Create a full backup snapshot to the given directory.
     /// Copies the SQLite database (using VACUUM INTO for consistency) and all blobs.
-    pub fn create_snapshot(&self, db: &Database, dest_dir: &Path) -> Result<BackupResult, StorageError> {
+    pub fn create_snapshot(
+        &self,
+        db: &Database,
+        dest_dir: &Path,
+    ) -> Result<BackupResult, StorageError> {
         std::fs::create_dir_all(dest_dir)?;
 
         // Backup SQLite database atomically
         let db_dest = dest_dir.join("vexobj.db");
         db.backup_to(&db_dest)?;
-        let db_size = std::fs::metadata(&db_dest)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let db_size = std::fs::metadata(&db_dest).map(|m| m.len()).unwrap_or(0);
 
         // Copy blobs directory
         let blobs_src = self.data_dir.join("blobs");
@@ -180,7 +182,7 @@ impl BackupManager {
         }
 
         let manifest_json = serde_json::to_string_pretty(&manifest)
-            .map_err(|e| StorageError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            .map_err(|e| StorageError::Io(std::io::Error::other(e)))?;
         std::fs::write(&meta_file, manifest_json)?;
 
         info!(bucket, objects = count, "bucket exported");

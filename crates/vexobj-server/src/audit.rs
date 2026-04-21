@@ -140,7 +140,7 @@ async fn get_audit_log(
         return resp;
     }
 
-    let limit = query.limit.min(1000).max(1);
+    let limit = query.limit.clamp(1, 1000);
     let offset = query.offset.max(0);
 
     match state.audit.query(limit, offset) {

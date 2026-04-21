@@ -79,43 +79,78 @@ impl Metrics {
         self.requests_total.fetch_add(1, Ordering::Relaxed);
 
         match status / 100 {
-            2 => { self.requests_2xx.fetch_add(1, Ordering::Relaxed); }
-            3 => { self.requests_3xx.fetch_add(1, Ordering::Relaxed); }
-            4 => { self.requests_4xx.fetch_add(1, Ordering::Relaxed); }
-            5 => { self.requests_5xx.fetch_add(1, Ordering::Relaxed); }
+            2 => {
+                self.requests_2xx.fetch_add(1, Ordering::Relaxed);
+            }
+            3 => {
+                self.requests_3xx.fetch_add(1, Ordering::Relaxed);
+            }
+            4 => {
+                self.requests_4xx.fetch_add(1, Ordering::Relaxed);
+            }
+            5 => {
+                self.requests_5xx.fetch_add(1, Ordering::Relaxed);
+            }
             _ => {}
         }
 
         match method {
-            "GET" => { self.requests_get.fetch_add(1, Ordering::Relaxed); }
-            "PUT" => { self.requests_put.fetch_add(1, Ordering::Relaxed); }
-            "POST" => { self.requests_post.fetch_add(1, Ordering::Relaxed); }
-            "DELETE" => { self.requests_delete.fetch_add(1, Ordering::Relaxed); }
-            "HEAD" => { self.requests_head.fetch_add(1, Ordering::Relaxed); }
+            "GET" => {
+                self.requests_get.fetch_add(1, Ordering::Relaxed);
+            }
+            "PUT" => {
+                self.requests_put.fetch_add(1, Ordering::Relaxed);
+            }
+            "POST" => {
+                self.requests_post.fetch_add(1, Ordering::Relaxed);
+            }
+            "DELETE" => {
+                self.requests_delete.fetch_add(1, Ordering::Relaxed);
+            }
+            "HEAD" => {
+                self.requests_head.fetch_add(1, Ordering::Relaxed);
+            }
             _ => {}
         }
 
-        self.request_duration_sum_us.fetch_add(duration_us, Ordering::Relaxed);
+        self.request_duration_sum_us
+            .fetch_add(duration_us, Ordering::Relaxed);
         self.request_duration_count.fetch_add(1, Ordering::Relaxed);
 
         // Histogram buckets (cumulative)
-        if duration_us <= 1_000 { self.duration_le_1ms.fetch_add(1, Ordering::Relaxed); }
-        if duration_us <= 10_000 { self.duration_le_10ms.fetch_add(1, Ordering::Relaxed); }
-        if duration_us <= 50_000 { self.duration_le_50ms.fetch_add(1, Ordering::Relaxed); }
-        if duration_us <= 100_000 { self.duration_le_100ms.fetch_add(1, Ordering::Relaxed); }
-        if duration_us <= 500_000 { self.duration_le_500ms.fetch_add(1, Ordering::Relaxed); }
-        if duration_us <= 1_000_000 { self.duration_le_1s.fetch_add(1, Ordering::Relaxed); }
-        if duration_us <= 5_000_000 { self.duration_le_5s.fetch_add(1, Ordering::Relaxed); }
+        if duration_us <= 1_000 {
+            self.duration_le_1ms.fetch_add(1, Ordering::Relaxed);
+        }
+        if duration_us <= 10_000 {
+            self.duration_le_10ms.fetch_add(1, Ordering::Relaxed);
+        }
+        if duration_us <= 50_000 {
+            self.duration_le_50ms.fetch_add(1, Ordering::Relaxed);
+        }
+        if duration_us <= 100_000 {
+            self.duration_le_100ms.fetch_add(1, Ordering::Relaxed);
+        }
+        if duration_us <= 500_000 {
+            self.duration_le_500ms.fetch_add(1, Ordering::Relaxed);
+        }
+        if duration_us <= 1_000_000 {
+            self.duration_le_1s.fetch_add(1, Ordering::Relaxed);
+        }
+        if duration_us <= 5_000_000 {
+            self.duration_le_5s.fetch_add(1, Ordering::Relaxed);
+        }
         self.duration_le_inf.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn record_upload(&self, bytes: u64) {
         self.objects_uploaded_total.fetch_add(1, Ordering::Relaxed);
-        self.bytes_uploaded_total.fetch_add(bytes, Ordering::Relaxed);
+        self.bytes_uploaded_total
+            .fetch_add(bytes, Ordering::Relaxed);
     }
 
     pub fn record_download(&self, bytes: u64) {
-        self.bytes_downloaded_total.fetch_add(bytes, Ordering::Relaxed);
+        self.bytes_downloaded_total
+            .fetch_add(bytes, Ordering::Relaxed);
     }
 
     pub fn render_prometheus(&self) -> String {
@@ -124,7 +159,10 @@ impl Metrics {
         // requests_total by method
         out.push_str("# HELP vexobj_requests_total Total number of HTTP requests.\n");
         out.push_str("# TYPE vexobj_requests_total counter\n");
-        out.push_str(&format!("vexobj_requests_total {{}} {}\n", self.requests_total.load(Ordering::Relaxed)));
+        out.push_str(&format!(
+            "vexobj_requests_total {{}} {}\n",
+            self.requests_total.load(Ordering::Relaxed)
+        ));
 
         out.push_str("# HELP vexobj_requests_by_method_total HTTP requests by method.\n");
         out.push_str("# TYPE vexobj_requests_by_method_total counter\n");
@@ -180,21 +218,36 @@ impl Metrics {
                 counter.load(Ordering::Relaxed),
             ));
         }
-        out.push_str(&format!("vexobj_request_duration_seconds_sum {:.6}\n", sum_secs));
-        out.push_str(&format!("vexobj_request_duration_seconds_count {}\n", count));
+        out.push_str(&format!(
+            "vexobj_request_duration_seconds_sum {:.6}\n",
+            sum_secs
+        ));
+        out.push_str(&format!(
+            "vexobj_request_duration_seconds_count {}\n",
+            count
+        ));
 
         // Upload/download counters
         out.push_str("# HELP vexobj_objects_uploaded_total Total objects uploaded.\n");
         out.push_str("# TYPE vexobj_objects_uploaded_total counter\n");
-        out.push_str(&format!("vexobj_objects_uploaded_total {}\n", self.objects_uploaded_total.load(Ordering::Relaxed)));
+        out.push_str(&format!(
+            "vexobj_objects_uploaded_total {}\n",
+            self.objects_uploaded_total.load(Ordering::Relaxed)
+        ));
 
         out.push_str("# HELP vexobj_bytes_uploaded_total Total bytes uploaded.\n");
         out.push_str("# TYPE vexobj_bytes_uploaded_total counter\n");
-        out.push_str(&format!("vexobj_bytes_uploaded_total {}\n", self.bytes_uploaded_total.load(Ordering::Relaxed)));
+        out.push_str(&format!(
+            "vexobj_bytes_uploaded_total {}\n",
+            self.bytes_uploaded_total.load(Ordering::Relaxed)
+        ));
 
         out.push_str("# HELP vexobj_bytes_downloaded_total Total bytes downloaded.\n");
         out.push_str("# TYPE vexobj_bytes_downloaded_total counter\n");
-        out.push_str(&format!("vexobj_bytes_downloaded_total {}\n", self.bytes_downloaded_total.load(Ordering::Relaxed)));
+        out.push_str(&format!(
+            "vexobj_bytes_downloaded_total {}\n",
+            self.bytes_downloaded_total.load(Ordering::Relaxed)
+        ));
 
         out
     }

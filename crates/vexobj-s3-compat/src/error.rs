@@ -79,11 +79,6 @@ impl S3Error {
 impl IntoResponse for S3Error {
     fn into_response(self) -> Response {
         let body = error_xml(self.code, &self.message);
-        (
-            self.status,
-            [("content-type", "application/xml")],
-            body,
-        )
-            .into_response()
+        (self.status, [("content-type", "application/xml")], body).into_response()
     }
 }

@@ -9,7 +9,6 @@
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::stream::BoxStream;
-use futures::StreamExt;
 use std::path::{Path, PathBuf};
 use tokio_util::io::ReaderStream;
 
@@ -46,11 +45,7 @@ impl BlobStore for LocalBlobStore {
         Ok(())
     }
 
-    async fn put_blob_from_file(
-        &self,
-        key: &str,
-        source: &Path,
-    ) -> Result<(), StorageError> {
+    async fn put_blob_from_file(&self, key: &str, source: &Path) -> Result<(), StorageError> {
         let dest = self.full_path(key);
         Self::ensure_parent(&dest).await?;
         // Try a cheap rename first — works when the temp file was written on
@@ -87,17 +82,21 @@ impl BlobStore for LocalBlobStore {
         key: &str,
     ) -> Result<BoxStream<'static, std::io::Result<Bytes>>, StorageError> {
         let file = tokio::fs::File::open(self.full_path(key)).await?;
-        let stream = ReaderStream::new(file).map(|r| r.map(Bytes::from));
+        let stream = ReaderStream::new(file);
         Ok(Box::pin(stream))
     }
 
-    fn supports_local_path(&self) -> bool { true }
+    fn supports_local_path(&self) -> bool {
+        true
+    }
 
     fn local_path(&self, key: &str) -> Option<PathBuf> {
         Some(self.full_path(key))
     }
 
-    fn backend_name(&self) -> &'static str { "local" }
+    fn backend_name(&self) -> &'static str {
+        "local"
+    }
 }
 
 #[cfg(test)]

@@ -95,9 +95,7 @@ async fn put_object(
     let ip = extract_ip(&headers);
 
     // Stream body to disk (constant RAM)
-    let stream = body
-        .into_data_stream()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
+    let stream = body.into_data_stream().map_err(std::io::Error::other);
 
     match state
         .storage
@@ -114,13 +112,16 @@ async fn put_object(
                 &ip,
             );
             if let Some(ref wh) = state.webhooks {
-                wh.send("object.created", json!({
-                    "bucket": meta.bucket,
-                    "key": meta.key,
-                    "size": meta.size,
-                    "content_type": meta.content_type,
-                    "sha256": meta.sha256,
-                }));
+                wh.send(
+                    "object.created",
+                    json!({
+                        "bucket": meta.bucket,
+                        "key": meta.key,
+                        "size": meta.size,
+                        "content_type": meta.content_type,
+                        "sha256": meta.sha256,
+                    }),
+                );
             }
             (StatusCode::CREATED, Json(json!(meta))).into_response()
         }
@@ -204,10 +205,8 @@ async fn get_object(
         };
     }
 
-    let has_transform = query.w.is_some()
-        || query.h.is_some()
-        || query.format.is_some()
-        || query.quality.is_some();
+    let has_transform =
+        query.w.is_some() || query.h.is_some() || query.format.is_some() || query.quality.is_some();
 
     let has_range = headers.get("range").is_some();
 
@@ -235,7 +234,7 @@ async fn get_object(
             let format = query
                 .format
                 .as_deref()
-                .and_then(OutputFormat::from_str)
+                .and_then(OutputFormat::parse)
                 .or_else(|| best_format_from_accept(accept));
 
             let params = TransformParams {
@@ -266,7 +265,10 @@ async fn get_object(
             match transform_image(&data, &params) {
                 Ok((transformed, content_type)) => {
                     let bytes = Bytes::from(transformed);
-                    let _ = state.cache.put(&cache_key, bytes.clone(), &content_type).await;
+                    let _ = state
+                        .cache
+                        .put(&cache_key, bytes.clone(), &content_type)
+                        .await;
                     return (
                         StatusCode::OK,
                         [
@@ -356,12 +358,16 @@ fn parse_range(header: &str, total: u64) -> Option<(u64, u64)> {
         Some((start, total))
     } else if end_str.is_empty() {
         let start: u64 = start_str.parse().ok()?;
-        if start >= total { return None; }
+        if start >= total {
+            return None;
+        }
         Some((start, total))
     } else {
         let start: u64 = start_str.parse().ok()?;
         let end: u64 = end_str.parse().ok()?;
-        if start >= total { return None; }
+        if start >= total {
+            return None;
+        }
         Some((start, (end + 1).min(total)))
     }
 }
@@ -582,10 +588,7 @@ async fn serve_video_thumbnail(
     if let Some((bytes, ct)) = state.cache.get(&cache_key).await {
         return (
             StatusCode::OK,
-            [
-                ("content-type", ct),
-                ("x-vexobj-cache", "hit".to_string()),
-            ],
+            [("content-type", ct), ("x-vexobj-cache", "hit".to_string())],
             bytes,
         )
             .into_response();
@@ -662,10 +665,7 @@ async fn serve_video_thumbnail(
 
     (
         StatusCode::OK,
-        [
-            ("content-type", ct),
-            ("x-vexobj-cache", "miss".to_string()),
-        ],
+        [("content-type", ct), ("x-vexobj-cache", "miss".to_string())],
         body,
     )
         .into_response()

@@ -32,7 +32,10 @@ impl Encryptor {
         if bytes.len() != 32 {
             return Err(StorageError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                format!("master_key must be 32 bytes (64 hex chars), got {}", bytes.len()),
+                format!(
+                    "master_key must be 32 bytes (64 hex chars), got {}",
+                    bytes.len()
+                ),
             )));
         }
         let mut master_key = [0u8; 32];
@@ -60,12 +63,7 @@ impl Encryptor {
         let cipher = Aes256Gcm::new((&key).into());
         cipher
             .encrypt(Nonce::from_slice(&nonce), plaintext)
-            .map_err(|e| {
-                StorageError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("encryption failed: {e}"),
-                ))
-            })
+            .map_err(|e| StorageError::Io(std::io::Error::other(format!("encryption failed: {e}"))))
     }
 
     pub fn decrypt(&self, sha256_hex: &str, ciphertext: &[u8]) -> Result<Vec<u8>, StorageError> {
@@ -86,8 +84,7 @@ impl Encryptor {
 mod tests {
     use super::*;
 
-    const KEY_HEX: &str =
-        "0011223344556677889900112233445566778899001122334455667788990011";
+    const KEY_HEX: &str = "0011223344556677889900112233445566778899001122334455667788990011";
 
     #[test]
     fn round_trip() {

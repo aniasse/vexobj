@@ -78,7 +78,11 @@ async fn main() -> Result<()> {
             tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
             if let Ok(result) = storage_for_lifecycle.run_lifecycle().await {
                 if result.objects_expired > 0 {
-                    tracing::info!(expired = result.objects_expired, bytes = result.bytes_freed, "lifecycle cleanup");
+                    tracing::info!(
+                        expired = result.objects_expired,
+                        bytes = result.bytes_freed,
+                        "lifecycle cleanup"
+                    );
                 }
             }
         }
@@ -121,8 +125,8 @@ async fn main() -> Result<()> {
 
         info!("vexobj listening on {} (HTTPS)", config.server.bind);
 
-        let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert_path, key_path)
-            .await?;
+        let tls_config =
+            axum_server::tls_rustls::RustlsConfig::from_pem_file(cert_path, key_path).await?;
 
         axum_server::bind_rustls(config.server.bind.parse()?, tls_config)
             .serve(app.into_make_service())

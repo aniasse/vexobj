@@ -206,8 +206,7 @@ window_secs = 60
         use std::io::{Read, Write};
 
         let host_port = self.url.trim_start_matches("http://");
-        let mut stream =
-            std::net::TcpStream::connect(host_port).expect("connect to test server");
+        let mut stream = std::net::TcpStream::connect(host_port).expect("connect to test server");
         stream
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
@@ -548,10 +547,7 @@ async fn e2e_presigned_url() {
         .unwrap();
 
     client
-        .put(format!(
-            "{}/v1/objects/presign-bucket/secret.txt",
-            srv.url
-        ))
+        .put(format!("{}/v1/objects/presign-bucket/secret.txt", srv.url))
         .header("Authorization", &auth)
         .header("Content-Type", "text/plain")
         .body("presigned content")
@@ -976,7 +972,10 @@ async fn e2e_delete_version_and_purge() {
     let versions = body["versions"].as_array().unwrap();
     assert_eq!(versions.len(), 2);
     assert!(!versions.iter().any(|v| v["version_id"] == middle_id));
-    let latest_row = versions.iter().find(|v| v["version_id"] == latest_id).unwrap();
+    let latest_row = versions
+        .iter()
+        .find(|v| v["version_id"] == latest_id)
+        .unwrap();
     assert_eq!(latest_row["is_latest"], true);
 
     // Delete the latest version — the remaining one must be promoted
@@ -1107,7 +1106,10 @@ async fn e2e_replication_promote_clears_cursor() {
         .trim()
         .parse()
         .unwrap();
-    assert!(before >= 1, "cursor should reflect at least one applied event");
+    assert!(
+        before >= 1,
+        "cursor should reflect at least one applied event"
+    );
 
     // Now promote the replica. Cursor file should disappear.
     let promo_out = Command::new(&binary)
@@ -1155,7 +1157,10 @@ async fn e2e_replication_promote_clears_cursor() {
         .output()
         .expect("run promote --keep-cursor");
     assert!(keep_out.status.success());
-    assert!(cursor.exists(), "--keep-cursor must leave the file in place");
+    assert!(
+        cursor.exists(),
+        "--keep-cursor must leave the file in place"
+    );
     let _ = std::fs::remove_file(&cursor);
 }
 
@@ -1166,18 +1171,26 @@ fn ffmpeg_small_mp4() -> Option<PathBuf> {
     let out = std::env::temp_dir().join(format!("vfs-e2e-{}.mp4", uuid::Uuid::new_v4()));
     let status = Command::new("ffmpeg")
         .args([
-            "-loglevel", "error",
-            "-f", "lavfi",
-            "-i", "color=c=0x10b981:size=320x240:duration=1",
-            "-c:v", "libx264",
-            "-pix_fmt", "yuv420p",
-            "-movflags", "+faststart",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=0x10b981:size=320x240:duration=1",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
             "-y",
         ])
         .arg(&out)
         .status()
         .ok()?;
-    if !status.success() { return None; }
+    if !status.success() {
+        return None;
+    }
     Some(out)
 }
 
@@ -1387,10 +1400,7 @@ async fn e2e_video_transcode_job_flow() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
-    assert_eq!(
-        resp.headers().get("content-type").unwrap(),
-        "video/mp4"
-    );
+    assert_eq!(resp.headers().get("content-type").unwrap(), "video/mp4");
     let body = resp.bytes().await.unwrap();
     assert!(body.len() > 200, "variant suspiciously small");
     // MP4 containers start with a box: [size u32 BE][ftyp].
@@ -1466,7 +1476,11 @@ async fn e2e_video_thumbnail_endpoint() {
     let body = r.bytes().await.unwrap();
     // A 200×N JPEG of a solid-color test frame compresses to a few
     // hundred bytes; anything under ~100 B would be a truncated write.
-    assert!(body.len() > 100, "thumbnail suspiciously small: {} bytes", body.len());
+    assert!(
+        body.len() > 100,
+        "thumbnail suspiciously small: {} bytes",
+        body.len()
+    );
     assert_eq!(&body[..3], &[0xFF, 0xD8, 0xFF], "not a JPEG");
 
     // Second request with the same params: cache hit.
@@ -1587,11 +1601,10 @@ async fn e2e_video_metadata_on_upload() {
 
     // A non-video upload must not grow any video metadata.
     let png_bytes = [
-        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
-        0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-        0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xDE, 0x00, 0x00, 0x00,
-        0x0C, 0x49, 0x44, 0x41, 0x54, 0x08, 0x99, 0x63, 0xF8, 0xCF, 0xC0, 0x00,
-        0x00, 0x00, 0x03, 0x00, 0x01, 0x5B, 0x0A, 0x3E, 0x42, 0x00, 0x00, 0x00,
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90,
+        0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08, 0x99, 0x63, 0xF8,
+        0xCF, 0xC0, 0x00, 0x00, 0x00, 0x03, 0x00, 0x01, 0x5B, 0x0A, 0x3E, 0x42, 0x00, 0x00, 0x00,
         0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
     ];
     let resp = client
@@ -1629,7 +1642,11 @@ async fn e2e_replication_two_node_sync() {
         .send()
         .await
         .unwrap();
-    for (key, body) in [("one.txt", "1111"), ("two.txt", "2222"), ("three.txt", "3333")] {
+    for (key, body) in [
+        ("one.txt", "1111"),
+        ("two.txt", "2222"),
+        ("three.txt", "3333"),
+    ] {
         client
             .put(format!("{}/v1/objects/mirror/{}", primary.url, key))
             .header("Authorization", primary.auth_header())
@@ -1791,7 +1808,10 @@ async fn e2e_replication_event_log() {
 
     // Pagination: since=2 should return only the 3rd put and the delete
     let resp = client
-        .get(format!("{}/v1/replication/events?since=2&limit=10", srv.url))
+        .get(format!(
+            "{}/v1/replication/events?since=2&limit=10",
+            srv.url
+        ))
         .header("Authorization", &auth)
         .send()
         .await
@@ -1812,7 +1832,10 @@ async fn e2e_replication_event_log() {
         .json::<Value>()
         .await
         .unwrap();
-    let sha = first_event["events"][0]["sha256"].as_str().unwrap().to_string();
+    let sha = first_event["events"][0]["sha256"]
+        .as_str()
+        .unwrap()
+        .to_string();
     let resp = client
         .get(format!("{}/v1/replication/blob/{}", srv.url, sha))
         .header("Authorization", &auth)
@@ -1894,7 +1917,9 @@ async fn e2e_sse_at_rest() {
         .join(&sha256);
     let on_disk = std::fs::read(&blob_path).expect("blob file exists");
     assert!(
-        !on_disk.windows(payload.len()).any(|w| w == payload.as_bytes()),
+        !on_disk
+            .windows(payload.len())
+            .any(|w| w == payload.as_bytes()),
         "plaintext must not appear on disk"
     );
     // Ciphertext is payload length + 16-byte auth tag
@@ -1936,8 +1961,7 @@ async fn e2e_object_lock() {
     assert!(lock["retain_until"].is_null());
 
     // Apply a future retention + legal hold
-    let future = (chrono::Utc::now() + chrono::Duration::days(30))
-        .to_rfc3339();
+    let future = (chrono::Utc::now() + chrono::Duration::days(30)).to_rfc3339();
     let resp = client
         .put(format!("{}/v1/admin/lock/lock-bucket/sealed.txt", srv.url))
         .header("Authorization", &auth)
@@ -1968,8 +1992,7 @@ async fn e2e_object_lock() {
     assert_eq!(resp.status(), 409);
 
     // Shortening retention must be rejected (WORM)
-    let soon = (chrono::Utc::now() + chrono::Duration::seconds(60))
-        .to_rfc3339();
+    let soon = (chrono::Utc::now() + chrono::Duration::seconds(60)).to_rfc3339();
     let resp = client
         .put(format!("{}/v1/admin/lock/lock-bucket/sealed.txt", srv.url))
         .header("Authorization", &auth)
@@ -2100,7 +2123,10 @@ async fn e2e_s3_compat_object_crud() {
         .get("etag")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    assert!(etag.starts_with('"') && etag.ends_with('"'), "etag quoted: {etag}");
+    assert!(
+        etag.starts_with('"') && etag.ends_with('"'),
+        "etag quoted: {etag}"
+    );
 
     // HEAD object
     let resp = client
@@ -2111,11 +2137,19 @@ async fn e2e_s3_compat_object_crud() {
         .unwrap();
     assert_eq!(resp.status(), 200);
     assert_eq!(
-        resp.headers().get("content-type").unwrap().to_str().unwrap(),
+        resp.headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap(),
         "text/plain"
     );
     assert_eq!(
-        resp.headers().get("content-length").unwrap().to_str().unwrap(),
+        resp.headers()
+            .get("content-length")
+            .unwrap()
+            .to_str()
+            .unwrap(),
         "8"
     );
 
@@ -2280,9 +2314,8 @@ fn sigv4_get_auth(
     let service = "s3";
     let scope = format!("{date}/{region}/{service}/aws4_request");
 
-    let canonical_headers = format!(
-        "host:{host}\nx-amz-content-sha256:{payload_hash}\nx-amz-date:{amz_date}\n"
-    );
+    let canonical_headers =
+        format!("host:{host}\nx-amz-content-sha256:{payload_hash}\nx-amz-date:{amz_date}\n");
     let signed_headers = "host;x-amz-content-sha256;x-amz-date";
 
     let canonical_request = format!(
@@ -2343,7 +2376,11 @@ async fn e2e_s3_compat_sigv4_accepts_valid_and_rejects_tamper() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 200, "valid SigV4 must be accepted");
-    assert!(resp.text().await.unwrap().contains("<ListAllMyBucketsResult"));
+    assert!(resp
+        .text()
+        .await
+        .unwrap()
+        .contains("<ListAllMyBucketsResult"));
 
     // Now tamper with the signature — flip the last hex char to a
     // definitely-different one (0→1, anything-else→0) so we can't
@@ -2379,11 +2416,7 @@ async fn e2e_s3_compat_rejects_missing_auth() {
     let client = srv.client();
 
     // No Authorization header → AccessDenied
-    let resp = client
-        .get(format!("{}/s3", srv.url))
-        .send()
-        .await
-        .unwrap();
+    let resp = client.get(format!("{}/s3", srv.url)).send().await.unwrap();
     assert_eq!(resp.status(), 403);
     let body = resp.text().await.unwrap();
     assert!(body.contains("AccessDenied"));

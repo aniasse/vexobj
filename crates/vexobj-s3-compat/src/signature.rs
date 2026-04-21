@@ -82,20 +82,14 @@ pub fn verify_sigv4(
     for want in &parsed.signed_headers {
         // If a signed header is absent from the request, the signature cannot
         // be valid — short-circuit rather than signing an empty value.
-        let Some((_, v)) = headers
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case(want))
-        else {
+        let Some((_, v)) = headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(want)) else {
             return false;
         };
         picked.push((want.clone(), collapse_whitespace(v.trim())));
     }
     picked.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let canonical_headers: String = picked
-        .iter()
-        .map(|(k, v)| format!("{k}:{v}\n"))
-        .collect();
+    let canonical_headers: String = picked.iter().map(|(k, v)| format!("{k}:{v}\n")).collect();
     let signed_headers_str = parsed.signed_headers.join(";");
 
     let canonical_request = format!(
@@ -260,16 +254,19 @@ mod tests {
     fn rejects_missing_fields() {
         assert!(parse_auth_header("Bearer foo").is_none());
         assert!(parse_auth_header("AWS4-HMAC-SHA256 Credential=k").is_none());
-        assert!(parse_auth_header(
-            "AWS4-HMAC-SHA256 Credential=k/s, SignedHeaders=, Signature=x"
-        )
-        .is_none());
+        assert!(
+            parse_auth_header("AWS4-HMAC-SHA256 Credential=k/s, SignedHeaders=, Signature=x")
+                .is_none()
+        );
     }
 
     #[test]
     fn canonical_query_sorts_and_encodes() {
         assert_eq!(canonical_query("b=2&a=1"), "a=1&b=2");
-        assert_eq!(canonical_query("list-type=2&prefix=d/"), "list-type=2&prefix=d%2F");
+        assert_eq!(
+            canonical_query("list-type=2&prefix=d/"),
+            "list-type=2&prefix=d%2F"
+        );
         assert_eq!(canonical_query(""), "");
     }
 
@@ -307,10 +304,7 @@ mod tests {
         ];
 
         // Build canonical request + string-to-sign same way the verifier does
-        let canonical_headers: String = headers
-            .iter()
-            .map(|(k, v)| format!("{k}:{v}\n"))
-            .collect();
+        let canonical_headers: String = headers.iter().map(|(k, v)| format!("{k}:{v}\n")).collect();
         let canonical = format!(
             "{}\n{}\n{}\n{}\n{}\n{}",
             method,
@@ -341,14 +335,26 @@ mod tests {
         };
 
         assert!(verify_sigv4(
-            method, uri, query, &headers, payload_hash, secret, &parsed
+            method,
+            uri,
+            query,
+            &headers,
+            payload_hash,
+            secret,
+            &parsed
         ));
 
         // A one-byte flip in the signature must cause verification to fail.
         let mut bad = parsed;
         bad.signature = format!("{}x", &signature[..signature.len() - 1]);
         assert!(!verify_sigv4(
-            method, uri, query, &headers, payload_hash, secret, &bad
+            method,
+            uri,
+            query,
+            &headers,
+            payload_hash,
+            secret,
+            &bad
         ));
     }
 }

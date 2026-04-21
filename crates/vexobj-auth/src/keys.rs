@@ -36,19 +36,14 @@ impl Default for Permissions {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(tag = "type")]
 pub enum BucketAccess {
     #[serde(rename = "all")]
+    #[default]
     All,
     #[serde(rename = "specific")]
     Specific { buckets: Vec<String> },
-}
-
-impl Default for BucketAccess {
-    fn default() -> Self {
-        Self::All
-    }
 }
 
 pub struct AuthManager {
@@ -77,9 +72,8 @@ impl AuthManager {
         // SigV4 verification needs the plaintext secret to recompute HMACs.
         // Keys created before this column existed get an empty raw_key and
         // must authenticate via Bearer only — rotate to enable SigV4.
-        let _ = conn.execute_batch(
-            "ALTER TABLE api_keys ADD COLUMN raw_key TEXT NOT NULL DEFAULT '';",
-        );
+        let _ =
+            conn.execute_batch("ALTER TABLE api_keys ADD COLUMN raw_key TEXT NOT NULL DEFAULT '';");
 
         Ok(Self {
             conn: Mutex::new(conn),
@@ -159,10 +153,7 @@ impl AuthManager {
     /// an exact match first, then fall back to matching `key_prefix` for
     /// clients that truncate. Returns the ApiKey plus the stored plaintext
     /// secret (empty for legacy rows — caller must reject SigV4 for those).
-    pub fn find_by_access_key(
-        &self,
-        access_key: &str,
-    ) -> Result<(ApiKey, String), AuthError> {
+    pub fn find_by_access_key(&self, access_key: &str) -> Result<(ApiKey, String), AuthError> {
         let conn = self.conn.lock().unwrap();
         let row = conn
             .query_row(

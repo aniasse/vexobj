@@ -55,9 +55,7 @@ async fn webhook_worker(
 
     while let Some(event) = rx.recv().await {
         for config in &configs {
-            if config.events.contains(&"*".to_string())
-                || config.events.contains(&event.event)
-            {
+            if config.events.contains(&"*".to_string()) || config.events.contains(&event.event) {
                 let body = serde_json::to_string(&event).unwrap_or_default();
                 let mut req = client
                     .post(&config.url)

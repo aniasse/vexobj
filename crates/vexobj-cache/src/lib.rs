@@ -65,11 +65,14 @@ impl LruMap {
         if size <= self.max_size {
             self.current_size += size;
             self.order.push(key.clone());
-            self.entries.insert(key, CacheEntry {
-                data,
-                content_type,
-                size,
-            });
+            self.entries.insert(
+                key,
+                CacheEntry {
+                    data,
+                    content_type,
+                    size,
+                },
+            );
         }
     }
 
@@ -278,16 +281,31 @@ mod tests {
         let cache = Cache::new(100, None, 0);
 
         // Each value is 40 bytes; cap is 100 → 2 fit, 3rd should evict LRU.
-        cache.put("a", Bytes::from(vec![0u8; 40]), "text/plain").await.unwrap();
-        cache.put("b", Bytes::from(vec![0u8; 40]), "text/plain").await.unwrap();
+        cache
+            .put("a", Bytes::from(vec![0u8; 40]), "text/plain")
+            .await
+            .unwrap();
+        cache
+            .put("b", Bytes::from(vec![0u8; 40]), "text/plain")
+            .await
+            .unwrap();
 
         // Touch "a" so "b" becomes the LRU.
         assert!(cache.get("a").await.is_some());
 
-        cache.put("c", Bytes::from(vec![0u8; 40]), "text/plain").await.unwrap();
+        cache
+            .put("c", Bytes::from(vec![0u8; 40]), "text/plain")
+            .await
+            .unwrap();
 
-        assert!(cache.get("a").await.is_some(), "a was touched, should survive");
-        assert!(cache.get("b").await.is_none(), "b was LRU, should be evicted");
+        assert!(
+            cache.get("a").await.is_some(),
+            "a was touched, should survive"
+        );
+        assert!(
+            cache.get("b").await.is_none(),
+            "b was LRU, should be evicted"
+        );
         assert!(cache.get("c").await.is_some(), "c was just inserted");
     }
 
@@ -312,11 +330,7 @@ mod tests {
 
         for i in 0..5u8 {
             cache
-                .put(
-                    &format!("k{}", i),
-                    Bytes::from(vec![i; 60]),
-                    "text/plain",
-                )
+                .put(&format!("k{}", i), Bytes::from(vec![i; 60]), "text/plain")
                 .await
                 .unwrap();
             // Force distinguishable mtimes on fast filesystems.

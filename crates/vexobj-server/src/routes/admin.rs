@@ -18,14 +18,26 @@ pub fn routes() -> Router<AppState> {
         .route("/v1/presign", axum::routing::post(create_presigned_url))
         .route("/v1/admin/gc", axum::routing::post(run_gc))
         .route("/v1/admin/backup", axum::routing::post(create_backup))
-        .route("/v1/admin/backup/export/{bucket}", axum::routing::post(export_bucket))
-        .route("/v1/admin/versioning/{bucket}", axum::routing::post(enable_versioning))
+        .route(
+            "/v1/admin/backup/export/{bucket}",
+            axum::routing::post(export_bucket),
+        )
+        .route(
+            "/v1/admin/versioning/{bucket}",
+            axum::routing::post(enable_versioning),
+        )
         .route(
             "/v1/admin/lifecycle/{bucket}",
             axum::routing::post(create_lifecycle_rule).get(list_lifecycle_rules),
         )
-        .route("/v1/admin/lifecycle/run", axum::routing::post(run_lifecycle))
-        .route("/v1/admin/lifecycle/rule/{id}", axum::routing::delete(delete_lifecycle_rule))
+        .route(
+            "/v1/admin/lifecycle/run",
+            axum::routing::post(run_lifecycle),
+        )
+        .route(
+            "/v1/admin/lifecycle/rule/{id}",
+            axum::routing::delete(delete_lifecycle_rule),
+        )
         .route("/v1/admin/migrate/s3", axum::routing::post(migrate_s3_stub))
         .route(
             "/v1/admin/lock/{bucket}/{*key}",
@@ -58,7 +70,10 @@ async fn create_key(
     let permissions = body.permissions.unwrap_or_default();
     let bucket_access = body.bucket_access.unwrap_or_default();
 
-    match state.auth.create_key(&body.name, permissions, bucket_access) {
+    match state
+        .auth
+        .create_key(&body.name, permissions, bucket_access)
+    {
         Ok((key, raw_key)) => {
             state.audit.log(
                 &key_prefix(&caller),
@@ -117,13 +132,9 @@ async fn delete_key(
 
     match state.auth.delete_key(&id) {
         Ok(()) => {
-            state.audit.log(
-                &key_prefix(&caller),
-                "key.delete",
-                &id,
-                &json!({}),
-                &ip,
-            );
+            state
+                .audit
+                .log(&key_prefix(&caller), "key.delete", &id, &json!({}), &ip);
             StatusCode::NO_CONTENT.into_response()
         }
         Err(_) => (
@@ -159,11 +170,7 @@ async fn create_presigned_url(
 
     // Check bucket access
     if let Err(e) = state.auth.check_bucket_access(&caller, &body.bucket) {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(json!({"error": e.to_string()})),
-        )
-            .into_response();
+        return (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()}))).into_response();
     }
 
     let base_url = format!("http://{}", state.config.server.bind);
@@ -540,9 +547,7 @@ async fn release_legal_hold(
 
 // ── S3 Migration Stub ─────────────────────────────────────────────────
 
-async fn migrate_s3_stub(
-    Extension(caller): Extension<ApiKey>,
-) -> impl IntoResponse {
+async fn migrate_s3_stub(Extension(caller): Extension<ApiKey>) -> impl IntoResponse {
     if let Err(resp) = require_permission(&caller, "admin").await {
         return resp;
     }
