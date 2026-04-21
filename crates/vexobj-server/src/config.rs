@@ -56,6 +56,12 @@ pub struct StorageConfig {
     pub backend: String,
     #[serde(default)]
     pub s3: Option<StorageS3Config>,
+    /// Allow upload-from-URL (POST /v1/objects/.../{key}?source=...) to
+    /// fetch from private-network addresses. Off by default — enabling
+    /// it outside a controlled network exposes VexObj as an SSRF relay.
+    /// Tests flip this on to let localhost sources work.
+    #[serde(default)]
+    pub allow_private_source_urls: bool,
 }
 
 fn default_backend() -> String {
@@ -86,6 +92,7 @@ impl Default for StorageConfig {
             deduplication: true,
             backend: default_backend(),
             s3: None,
+            allow_private_source_urls: false,
         }
     }
 }
@@ -312,6 +319,11 @@ impl Config {
         }
         if let Ok(val) = std::env::var("VEXOBJ_DEDUPLICATION") {
             config.storage.deduplication = val.parse().unwrap_or(config.storage.deduplication);
+        }
+        if let Ok(val) = std::env::var("VEXOBJ_ALLOW_PRIVATE_SOURCE_URLS") {
+            config.storage.allow_private_source_urls = val
+                .parse()
+                .unwrap_or(config.storage.allow_private_source_urls);
         }
         // Storage-backend envs follow the same pattern as the [storage.s3]
         // block; they're the path used by the test harness and by

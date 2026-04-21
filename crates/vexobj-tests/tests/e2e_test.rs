@@ -4364,3 +4364,164 @@ async fn e2e_vexobjctl_migrate_s3_skip_existing_resumes_partial_run() {
         .unwrap();
     assert_eq!(&body[..], b"preserved content");
 }
+
+// ---------------------------------------------------------------------------
+// Upload from URL
+// ---------------------------------------------------------------------------
+
+/// Spawn a tiny HTTP/1.1 server on 127.0.0.1 that responds to every request
+/// with `body` (Content-Type application/octet-stream). Returns the port
+/// and a JoinHandle whose lifetime the caller must hold.
+async fn serve_payload(body: Vec<u8>) -> (u16, tokio::task::JoinHandle<()>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let handle = tokio::spawn(async move {
+        while let Ok((mut sock, _)) = listener.accept().await {
+            let body = body.clone();
+            tokio::spawn(async move {
+                let mut buf = [0u8; 4096];
+                let _ = sock.read(&mut buf).await;
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/octet-stream\r\nConnection: close\r\n\r\n",
+                    body.len(),
+                );
+                let _ = sock.write_all(header.as_bytes()).await;
+                let _ = sock.write_all(&body).await;
+                let _ = sock.shutdown().await;
+            });
+        }
+    });
+    (port, handle)
+}
+
+#[tokio::test]
+async fn e2e_upload_from_url_round_trips_bytes() {
+    // Happy path: admin opts into allow-private (env flag), server fetches
+    // the localhost test URL, bytes land in the bucket verbatim.
+    use serde_json::json;
+
+    let srv = TestServer::start_with_env(&[("VEXOBJ_ALLOW_PRIVATE_SOURCE_URLS", "true")]);
+    let client = srv.client();
+    let auth = srv.auth_header();
+
+    client
+        .post(format!("{}/v1/buckets", srv.url))
+        .header("Authorization", &auth)
+        .json(&json!({ "name": "uurl", "public": false }))
+        .send()
+        .await
+        .unwrap();
+
+    let payload = b"fetched via upload-from-URL".to_vec();
+    let (port, _handle) = serve_payload(payload.clone()).await;
+    let source = format!("http://127.0.0.1:{port}/media.bin");
+
+    let resp = client
+        .post(format!("{}/v1/objects/uurl/from-url.bin", srv.url))
+        .header("Authorization", &auth)
+        .query(&[("source", source.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+
+    let got = client
+        .get(format!("{}/v1/objects/uurl/from-url.bin", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(got.status(), 200);
+    assert_eq!(got.bytes().await.unwrap().to_vec(), payload);
+}
+
+#[tokio::test]
+async fn e2e_upload_from_url_ssrf_blocks_localhost_by_default() {
+    // No env opt-in → loopback must be refused with 403. Default for
+    // any VexObj exposed to the internet.
+    use serde_json::json;
+
+    let srv = TestServer::start();
+    let client = srv.client();
+    let auth = srv.auth_header();
+
+    client
+        .post(format!("{}/v1/buckets", srv.url))
+        .header("Authorization", &auth)
+        .json(&json!({ "name": "ssrf", "public": false }))
+        .send()
+        .await
+        .unwrap();
+
+    let (port, _handle) = serve_payload(b"x".to_vec()).await;
+    let source = format!("http://127.0.0.1:{port}/x");
+
+    let resp = client
+        .post(format!("{}/v1/objects/ssrf/x.bin", srv.url))
+        .header("Authorization", &auth)
+        .query(&[("source", source.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+    let body: Value = resp.json().await.unwrap();
+    assert!(body["error"].as_str().unwrap().contains("private"));
+}
+
+#[tokio::test]
+async fn e2e_upload_from_url_rejects_non_http_scheme() {
+    // file:// and other non-http(s) schemes are rejected up front with 400
+    // (malformed request) rather than 403 (policy) — clear distinction.
+    use serde_json::json;
+
+    let srv = TestServer::start();
+    let client = srv.client();
+    let auth = srv.auth_header();
+    client
+        .post(format!("{}/v1/buckets", srv.url))
+        .header("Authorization", &auth)
+        .json(&json!({ "name": "sch", "public": false }))
+        .send()
+        .await
+        .unwrap();
+
+    let resp = client
+        .post(format!("{}/v1/objects/sch/x.bin", srv.url))
+        .header("Authorization", &auth)
+        .query(&[("source", "file:///etc/passwd")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+}
+
+#[tokio::test]
+async fn e2e_upload_from_url_blocks_cloud_metadata_even_when_private_allowed() {
+    // 169.254.169.254 (AWS / GCP instance metadata) stays blocked even
+    // when the admin opts into private-network sources. An SSRF-relay
+    // escape hatch that doesn't close the metadata hole is worthless.
+    use serde_json::json;
+
+    let srv = TestServer::start_with_env(&[("VEXOBJ_ALLOW_PRIVATE_SOURCE_URLS", "true")]);
+    let client = srv.client();
+    let auth = srv.auth_header();
+    client
+        .post(format!("{}/v1/buckets", srv.url))
+        .header("Authorization", &auth)
+        .json(&json!({ "name": "meta", "public": false }))
+        .send()
+        .await
+        .unwrap();
+
+    let resp = client
+        .post(format!("{}/v1/objects/meta/x.bin", srv.url))
+        .header("Authorization", &auth)
+        .query(&[("source", "http://169.254.169.254/latest/meta-data/")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+    let body: Value = resp.json().await.unwrap();
+    assert!(body["error"].as_str().unwrap().contains("cloud-metadata"));
+}

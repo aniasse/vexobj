@@ -3373,6 +3373,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "url",
  "uuid",
  "vexobj-auth",
  "vexobj-cache",

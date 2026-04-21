@@ -158,6 +158,7 @@ impl AppState {
                     deduplication: config.storage.deduplication,
                     backend: config.storage.backend.clone(),
                     s3: None, // don't propagate S3 credentials into shared state
+                    allow_private_source_urls: config.storage.allow_private_source_urls,
                 },
                 cache: config::CacheConfig {
                     memory_size: config.cache.memory_size.clone(),
