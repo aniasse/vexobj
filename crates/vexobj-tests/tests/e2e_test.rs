@@ -3819,3 +3819,214 @@ async fn e2e_cors_put_on_unknown_bucket_returns_404() {
         .unwrap();
     assert_eq!(resp.status(), 404);
 }
+
+// ---------------------------------------------------------------------------
+// S3 query-string presigned URLs + multipart upload
+// ---------------------------------------------------------------------------
+//
+// "Give the browser a URL, let it PUT directly" for big files: backend
+// initiates multipart with its API key, hands the browser one presigned PUT
+// URL per part, browser uploads each, backend completes. The test walks that
+// full flow with reqwest, asserting the handler accepts presigned PUTs
+// WITHOUT an Authorization header.
+
+fn percent_encode_sigv4(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+/// Build a presigned URL the server's `verify_sigv4_presigned()` will accept.
+/// `extra_query` is the bag of non-signature params the URL carries (e.g.
+/// `"uploadId=abc&partNumber=1"`).
+fn presigned_put_url(
+    srv: &TestServer,
+    path: &str,
+    extra_query: &str,
+    expires_seconds: u32,
+) -> String {
+    use hmac::{Hmac, Mac};
+    use sha2::{Digest, Sha256};
+    type HmacSha256 = Hmac<Sha256>;
+
+    let host = srv.url.trim_start_matches("http://");
+    let access_key = &srv.admin_key;
+    let secret = &srv.admin_key;
+    let now = chrono::Utc::now();
+    let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
+    let date = now.format("%Y%m%d").to_string();
+    let region = "us-east-1";
+    let service = "s3";
+    let scope = format!("{date}/{region}/{service}/aws4_request");
+    let credential = format!("{access_key}/{scope}");
+
+    let mut params: Vec<(String, String)> = Vec::new();
+    for pair in extra_query.split('&').filter(|s| !s.is_empty()) {
+        if let Some((k, v)) = pair.split_once('=') {
+            params.push((k.to_string(), v.to_string()));
+        }
+    }
+    params.push(("X-Amz-Algorithm".into(), "AWS4-HMAC-SHA256".into()));
+    params.push(("X-Amz-Credential".into(), credential.clone()));
+    params.push(("X-Amz-Date".into(), amz_date.clone()));
+    params.push(("X-Amz-Expires".into(), expires_seconds.to_string()));
+    params.push(("X-Amz-SignedHeaders".into(), "host".into()));
+
+    let mut canonical: Vec<(String, String)> = params
+        .iter()
+        .map(|(k, v)| (percent_encode_sigv4(k), percent_encode_sigv4(v)))
+        .collect();
+    canonical.sort();
+    let canonical_query = canonical
+        .iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join("&");
+
+    let canonical_uri = path
+        .split('/')
+        .map(percent_encode_sigv4)
+        .collect::<Vec<_>>()
+        .join("/");
+
+    let canonical_request =
+        format!("PUT\n{canonical_uri}\n{canonical_query}\nhost:{host}\n\nhost\nUNSIGNED-PAYLOAD");
+    let cr_hash = {
+        let mut h = Sha256::new();
+        h.update(canonical_request.as_bytes());
+        hex::encode(h.finalize())
+    };
+    let sts = format!("AWS4-HMAC-SHA256\n{amz_date}\n{scope}\n{cr_hash}");
+
+    let mac = |key: &[u8], data: &[u8]| -> Vec<u8> {
+        let mut m = HmacSha256::new_from_slice(key).unwrap();
+        m.update(data);
+        m.finalize().into_bytes().to_vec()
+    };
+    let k_date = mac(format!("AWS4{secret}").as_bytes(), date.as_bytes());
+    let k_region = mac(&k_date, region.as_bytes());
+    let k_service = mac(&k_region, service.as_bytes());
+    let k_signing = mac(&k_service, b"aws4_request");
+    let signature = hex::encode(mac(&k_signing, sts.as_bytes()));
+
+    format!(
+        "{base}{path}?{canonical_query}&X-Amz-Signature={signature}",
+        base = srv.url,
+    )
+}
+
+/// Full multipart-via-presigned-URL roundtrip, mirroring what a Mastodon
+/// backend would orchestrate for a browser-uploaded large media file:
+///   1. server-side InitiateMultipartUpload (auth'd)
+///   2. server hands the browser one presigned PUT URL per part
+///   3. browser PUTs each part to those URLs with NO Authorization header
+///   4. server-side CompleteMultipartUpload (auth'd)
+///   5. download and verify byte-accurate roundtrip
+#[tokio::test]
+async fn e2e_s3_multipart_with_presigned_put_urls() {
+    let srv = TestServer::start();
+    let auth = srv.auth_header();
+    let client = srv.client();
+    create_bucket(&srv, "mpp").await;
+
+    // 1. Initiate.
+    let resp = client
+        .post(format!("{}/s3/mpp/big.bin?uploads", srv.url))
+        .header("Authorization", &auth)
+        .header("Content-Type", "application/octet-stream")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let upload_id = extract_xml_tag(&resp.text().await.unwrap(), "UploadId").unwrap();
+    assert!(!upload_id.is_empty());
+
+    // 2. Two 5 MiB parts + a small tail, uploaded via presigned URLs.
+    let part1 = vec![b'A'; 5 * 1024 * 1024];
+    let part2 = vec![b'B'; 5 * 1024 * 1024];
+    let tail = b"TAIL!!".to_vec();
+    let mut etags = Vec::new();
+
+    for (pn, data) in [(1u32, &part1), (2u32, &part2), (3u32, &tail)] {
+        let url = presigned_put_url(
+            &srv,
+            "/s3/mpp/big.bin",
+            &format!("uploadId={upload_id}&partNumber={pn}"),
+            900,
+        );
+        // No Authorization header — the URL is its own credential.
+        let resp = client.put(&url).body(data.clone()).send().await.unwrap();
+        assert_eq!(resp.status(), 200, "presigned UploadPart {pn} must succeed");
+        let etag = resp
+            .headers()
+            .get("etag")
+            .and_then(|v| v.to_str().ok())
+            .unwrap()
+            .trim_matches('"')
+            .to_string();
+        etags.push(etag);
+    }
+
+    // 3. Complete.
+    let complete_body = format!(
+        r#"<?xml version="1.0"?>
+<CompleteMultipartUpload>
+  <Part><PartNumber>1</PartNumber><ETag>"{}"</ETag></Part>
+  <Part><PartNumber>2</PartNumber><ETag>"{}"</ETag></Part>
+  <Part><PartNumber>3</PartNumber><ETag>"{}"</ETag></Part>
+</CompleteMultipartUpload>"#,
+        etags[0], etags[1], etags[2]
+    );
+    let resp = client
+        .post(format!("{}/s3/mpp/big.bin?uploadId={}", srv.url, upload_id))
+        .header("Authorization", &auth)
+        .header("content-type", "application/xml")
+        .body(complete_body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // 4. Byte-accurate download. Total size = 2 * 5 MiB + 6 bytes.
+    let resp = client
+        .get(format!("{}/s3/mpp/big.bin", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let bytes = resp.bytes().await.unwrap();
+    assert_eq!(bytes.len(), part1.len() + part2.len() + tail.len());
+    assert!(bytes[..part1.len()].iter().all(|&b| b == b'A'));
+    assert!(bytes[part1.len()..part1.len() + part2.len()]
+        .iter()
+        .all(|&b| b == b'B'));
+    assert_eq!(&bytes[part1.len() + part2.len()..], tail.as_slice());
+}
+
+#[tokio::test]
+async fn e2e_s3_presigned_put_url_rejects_bad_signature() {
+    let srv = TestServer::start();
+    let client = srv.client();
+    create_bucket(&srv, "bpu").await;
+
+    let url = presigned_put_url(&srv, "/s3/bpu/file.bin", "", 300);
+    // Flip one hex character in the signature.
+    let mut bad = url.clone();
+    let last = bad.pop().unwrap();
+    bad.push(if last == '0' { '1' } else { '0' });
+
+    let resp = client.put(&bad).body(b"hi".to_vec()).send().await.unwrap();
+    assert_eq!(resp.status(), 403);
+
+    // The untampered URL must still succeed.
+    let resp = client.put(&url).body(b"hi".to_vec()).send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+}
