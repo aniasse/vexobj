@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>VexObj — stockage objet auto-hébergé compatible S3.</title>
-<meta name="description" content="Stockage objet auto-hébergé compatible S3, avec chiffrement au repos, versioning, object lock, réplication asynchrone, et traitement d'images intégré. Écrit en Rust, distribué en binaire unique.">
-<meta property="og:title" content="VexObj — stockage objet auto-hébergé compatible S3.">
-<meta property="og:description" content="API compatible S3 avec SigV4. Chiffrement AES-256-GCM au repos. Versioning et object lock. Réplication asynchrone. Binaire unique.">
+<title>VexObj — stockage objet S3 pour Mastodon, PeerTube et Pixelfed.</title>
+<meta name="description" content="Binaire Rust unique qui remplace MinIO + Cloudinary dans une stack fédérée. API S3 avec SigV4, chiffrement au repos, réplication asynchrone, image processing à la volée. Guides Mastodon + PeerTube inclus.">
+<meta property="og:title" content="VexObj — stockage objet S3 pour la fédération.">
+<meta property="og:description" content="Binaire Rust unique pour Mastodon, PeerTube, Pixelfed. S3 + image processing + réplication — dans un seul processus. MIT, 14 Mo, zéro dépendance.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://vortex-soft.github.io/vexobj/">
 <meta http-equiv="content-language" content="fr">
@@ -293,6 +293,20 @@ section { position: relative; }
   font-size: 16px;
   line-height: 1.65;
   color: var(--ink-soft);
+}
+
+.hero-guides {
+  margin-top: 16px;
+  font-size: 14px;
+  color: var(--ink-faint);
+}
+.hero-guides a {
+  color: var(--emerald);
+  text-decoration: none;
+  font-weight: 600;
+}
+.hero-guides a:hover {
+  text-decoration: underline;
 }
 
 .cta-row {
@@ -951,8 +965,9 @@ footer a:hover { color: var(--emerald); border-bottom-color: transparent; }
       <span class="dot"></span>
       <span data-i18n="hero.kicker">Version 0.1.0 · Disponible</span>
     </div>
-    <h1 class="hero-heading" data-i18n-html="hero.title">Stockage objet<br/><em>compatible S3.</em></h1>
-    <p class="hero-desc" data-i18n="hero.desc">VexObj est une plateforme de stockage objet auto-hébergée, compatible avec l'API Amazon S3. Elle fournit le chiffrement au repos (AES-256-GCM), le versioning, l'object lock en mode WORM, et la réplication asynchrone primary-replica. Distribuée sous forme de binaire unique sans dépendances externes.</p>
+    <h1 class="hero-heading" data-i18n-html="hero.title">Stockage objet S3,<br/><em>pour les instances fédérées.</em></h1>
+    <p class="hero-desc" data-i18n="hero.desc">VexObj est un binaire Rust unique qui remplace MinIO + Cloudinary dans une stack Mastodon, PeerTube ou Pixelfed. API S3 avec SigV4, chiffrement AES-256-GCM au repos, object lock WORM, réplication asynchrone, et traitement d'images à la volée — dans le même processus.</p>
+    <p class="hero-guides" data-i18n-html="hero.guides">Guides dédiés : <a href="https://github.com/vortex-soft/vexobj/blob/main/docs/guides/mastodon.md" target="_blank" rel="noopener">Mastodon</a> · <a href="https://github.com/vortex-soft/vexobj/blob/main/docs/guides/peertube.md" target="_blank" rel="noopener">PeerTube</a></p>
     <div class="cta-row">
       <a href="#install" class="btn bare btn-primary" data-i18n="hero.cta1">Télécharger la version 0.1.0</a>
       <a href="https://github.com/vortex-soft/vexobj" class="btn bare" target="_blank" rel="noopener" data-i18n="hero.cta2">Voir le code source</a>
@@ -1312,7 +1327,7 @@ cargo build --release
       "positioning.fit.title":   "Idéal pour",
       "positioning.nofit.title": "Pas taillé pour",
       "hero.kicker":      "Version 0.1.0 · Disponible",
-      "hero.desc":        "VexObj est une plateforme de stockage objet auto-hébergée, compatible avec l'API Amazon S3. Elle fournit le chiffrement au repos (AES-256-GCM), le versioning, l'object lock en mode WORM, et la réplication asynchrone primary-replica. Distribuée sous forme de binaire unique sans dépendances externes.",
+      "hero.desc":        "VexObj est un binaire Rust unique qui remplace MinIO + Cloudinary dans une stack Mastodon, PeerTube ou Pixelfed. API S3 avec SigV4, chiffrement AES-256-GCM au repos, object lock WORM, réplication asynchrone, et traitement d'images à la volée — dans le même processus.",
       "hero.cta1":        "Télécharger la version 0.1.0",
       "hero.cta2":        "Voir le code source",
       "hero.cta3":        "Démo interactive →",
@@ -1362,7 +1377,7 @@ cargo build --release
       "positioning.fit.title":   "Good fit",
       "positioning.nofit.title": "Not a fit",
       "hero.kicker":      "Version 0.1.0 · Available",
-      "hero.desc":        "VexObj is a self-hosted object storage platform, compatible with the Amazon S3 API. It provides server-side encryption at rest (AES-256-GCM), object versioning, WORM object lock, and asynchronous primary-replica replication. Distributed as a single binary with no external dependencies.",
+      "hero.desc":        "VexObj is a single Rust binary that replaces MinIO + Cloudinary in a Mastodon, PeerTube, or Pixelfed stack. S3-compatible API with SigV4, AES-256-GCM encryption at rest, WORM object lock, async replication, and on-the-fly image processing — all in one process.",
       "hero.cta1":        "Download version 0.1.0",
       "hero.cta2":        "View source code",
       "hero.cta3":        "Live demo →",
@@ -1406,9 +1421,10 @@ cargo build --release
 
   const I18N_HTML = {
     fr: {
-      "hero.title":       "Stockage objet<br/><em>compatible S3.</em>",
+      "hero.title":       "Stockage objet S3,<br/><em>pour les instances fédérées.</em>",
+      "hero.guides":      "Guides dédiés : <a href=\"https://github.com/vortex-soft/vexobj/blob/main/docs/guides/mastodon.md\" target=\"_blank\" rel=\"noopener\">Mastodon</a> · <a href=\"https://github.com/vortex-soft/vexobj/blob/main/docs/guides/peertube.md\" target=\"_blank\" rel=\"noopener\">PeerTube</a>",
       "positioning.title": "\u00c0 qui s\u2019adresse <em>VexObj</em>.",
-      "positioning.fit.items": "<li><strong>SaaS B2B / B2C jusqu\u2019\u00e0 quelques millions d\u2019utilisateurs</strong> \u2014 binaire + backend S3 tient la charge sans sharding custom.</li><li><strong>Plateforme m\u00e9dia ind\u00e9pendante</strong> \u2014 podcasts, vid\u00e9os, galeries photo. Pipeline ingestion + transformation + transcoding couverte de bout en bout.</li><li><strong>Instance f\u00e9d\u00e9r\u00e9e</strong> \u2014 Mastodon, Matrix, Peertube, Pixelfed : stockage m\u00e9dia local avec compat S3 pour les clients et r\u00e9plication asynchrone.</li><li><strong>Backend documentaire d\u2019entreprise</strong> \u2014 object lock WORM + audit log + r\u00e9tention immuable. Sant\u00e9, finance, archivage l\u00e9gal.</li><li><strong>Environnement dev / staging</strong> \u2014 mime une instance S3 localement en secondes, m\u00eame auth, m\u00eame compat SDK.</li>",
+      "positioning.fit.items": "<li><strong>Instances f\u00e9d\u00e9r\u00e9es (cible principale)</strong> \u2014 Mastodon, PeerTube, Pixelfed, Matrix, Friendica. Les buckets publics laissent les navigateurs r\u00e9cup\u00e9rer les m\u00e9dias directement ; les variantes d\u2019images remplacent une couche Cloudinary ; la r\u00e9plication donne un miroir chaud par instance. Voir les guides <a href=\"https://github.com/vortex-soft/vexobj/blob/main/docs/guides/mastodon.md\" target=\"_blank\" rel=\"noopener\">Mastodon</a> et <a href=\"https://github.com/vortex-soft/vexobj/blob/main/docs/guides/peertube.md\" target=\"_blank\" rel=\"noopener\">PeerTube</a>.</li><li><strong>Plateforme m\u00e9dia ind\u00e9pendante</strong> \u2014 podcasts, vid\u00e9os, galeries photo. Pipeline ingestion + transformation + transcoding couverte de bout en bout.</li><li><strong>SaaS B2B / B2C jusqu\u2019\u00e0 quelques millions d\u2019utilisateurs</strong> \u2014 binaire + backend S3 tient la charge sans sharding custom.</li><li><strong>Backend documentaire d\u2019entreprise</strong> \u2014 object lock WORM + audit log + r\u00e9tention immuable. Sant\u00e9, finance, archivage l\u00e9gal.</li><li><strong>Environnement dev / staging</strong> \u2014 mime une instance S3 localement en secondes, m\u00eame auth, m\u00eame compat SDK.</li>",
       "positioning.nofit.items": "<li><strong>\u00c9chelle des r\u00e9seaux sociaux grand public</strong> (Meta, TikTok, Snap) \u2014 SQLite single-writer sature vers ~100 TB, au-del\u00e0 il faut une couche metadata distribu\u00e9e.</li><li><strong>Multi-r\u00e9gion actif-actif</strong> avec \u00e9critures simultan\u00e9es des deux c\u00f4t\u00e9s \u2014 la r\u00e9plication est asynchrone unidirectionnelle, pas de consensus Raft.</li><li><strong>Mod\u00e9ration automatique</strong> (NSFW, DMCA, copyright matching) \u2014 ces couches doivent \u00eatre construites \u00e0 c\u00f4t\u00e9.</li><li><strong>Drop-in replacement d\u2019un \u00e9cosyst\u00e8me AWS complet</strong> \u2014 l\u2019auth est plus simple, ce qui est une force pour 95 % des cas et une limite pour les 5 % restants.</li>",
       "meta.statusVal":   "<span class=\"emerald\">\u2713 Disponible</span>",
       "bench.l1":         "<strong>D\u00e9bit AES-256-GCM.</strong> Le chiffrement au repos n\u2019introduit pas de surco\u00fbt perceptible sur les charges courantes.",
@@ -1544,9 +1560,10 @@ cargo build --release
                                                                       \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518`,
     },
     en: {
-      "hero.title":       "S3-compatible<br/><em>object storage.</em>",
+      "hero.title":       "S3 object storage,<br/><em>for federated instances.</em>",
+      "hero.guides":      "Dedicated guides: <a href=\"https://github.com/vortex-soft/vexobj/blob/main/docs/guides/mastodon.md\" target=\"_blank\" rel=\"noopener\">Mastodon</a> · <a href=\"https://github.com/vortex-soft/vexobj/blob/main/docs/guides/peertube.md\" target=\"_blank\" rel=\"noopener\">PeerTube</a>",
       "positioning.title": "Who <em>VexObj</em> is for.",
-      "positioning.fit.items": "<li><strong>B2B / B2C SaaS up to a few million users</strong> \u2014 a single binary plus an S3 backend handles the load without custom sharding.</li><li><strong>Independent media platforms</strong> \u2014 podcasts, video, photo galleries. End-to-end ingestion, transformation, and transcoding in one process.</li><li><strong>Federated instances</strong> \u2014 Mastodon, Matrix, Peertube, Pixelfed: local media storage with S3 compat for clients and async replication between nodes.</li><li><strong>Enterprise document backend</strong> \u2014 WORM object lock + audit log + immutable retention. Healthcare, finance, legal archival.</li><li><strong>Dev / staging</strong> \u2014 mimics an S3 instance locally in seconds, same auth, same SDK compatibility.</li>",
+      "positioning.fit.items": "<li><strong>Federated instances (primary target)</strong> \u2014 Mastodon, PeerTube, Pixelfed, Matrix, Friendica. Public buckets let browsers fetch media directly; image variants replace a Cloudinary layer; replication gives a warm mirror per instance. See the <a href=\"https://github.com/vortex-soft/vexobj/blob/main/docs/guides/mastodon.md\" target=\"_blank\" rel=\"noopener\">Mastodon</a> and <a href=\"https://github.com/vortex-soft/vexobj/blob/main/docs/guides/peertube.md\" target=\"_blank\" rel=\"noopener\">PeerTube</a> guides.</li><li><strong>Independent media platforms</strong> \u2014 podcasts, video, photo galleries. End-to-end ingestion, transformation, and transcoding in one process.</li><li><strong>B2B / B2C SaaS up to a few million users</strong> \u2014 a single binary plus an S3 backend handles the load without custom sharding.</li><li><strong>Enterprise document backend</strong> \u2014 WORM object lock + audit log + immutable retention. Healthcare, finance, legal archival.</li><li><strong>Dev / staging</strong> \u2014 mimics an S3 instance locally in seconds, same auth, same SDK compatibility.</li>",
       "positioning.nofit.items": "<li><strong>Consumer-social-network scale</strong> (Meta, TikTok, Snap) \u2014 SQLite single-writer metadata tops out around ~100 TB; past that you need a distributed metadata layer.</li><li><strong>Multi-region active-active</strong> with simultaneous writes on both sides \u2014 replication is one-way async, no Raft consensus.</li><li><strong>Automated moderation</strong> (NSFW / DMCA / copyright matching) \u2014 build those layers alongside, not inside.</li><li><strong>Drop-in AWS ecosystem replacement</strong> \u2014 auth is simpler, which is a strength for 95% of cases and a limit for the remaining 5%.</li>",
       "meta.statusVal":   "<span class=\"emerald\">\u2713 Available</span>",
       "bench.l1":         "<strong>AES-256-GCM throughput.</strong> Server-side encryption adds no measurable overhead on typical workloads.",
