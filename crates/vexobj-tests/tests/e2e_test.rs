@@ -2939,3 +2939,521 @@ async fn e2e_s3_get_honors_range_header() {
         .unwrap();
     assert_eq!(resp.status(), 416);
 }
+
+// ---------------------------------------------------------------------------
+// S3 presigned-POST (browser-style upload)
+// ---------------------------------------------------------------------------
+//
+// The presigned-POST flow is how Mastodon / Pixelfed / Cloudinary-style
+// browser uploaders send files to S3 without exposing the secret key: the
+// backend hands the browser a base64 policy + signature, the browser POSTs
+// multipart/form-data to /s3/<bucket> with those fields + the file, and the
+// server verifies everything before writing. No Authorization header.
+//
+// Spec reference: AWS "Creating a POST Policy"; our impl lives in
+// crates/vexobj-s3-compat/src/presigned_post.rs.
+
+/// Build a multipart/form-data body for a presigned POST. Returns a ready-to-send
+/// `reqwest::multipart::Form`. Field order matches the AWS spec — `file` is the
+/// last part so the server knows where the policy fields end.
+///
+/// `override_signature` and `override_algorithm` are for negative tests that
+/// need to break exactly one piece without re-deriving everything.
+#[allow(clippy::too_many_arguments)]
+fn presigned_post_form(
+    key: &str,
+    access_key: &str,
+    secret: &str,
+    conditions: Vec<Value>,
+    expiration: chrono::DateTime<chrono::Utc>,
+    file_bytes: Vec<u8>,
+    override_signature: Option<String>,
+    override_algorithm: Option<&str>,
+    override_amz_date: Option<String>,
+) -> reqwest::multipart::Form {
+    use base64::Engine;
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    type HmacSha256 = Hmac<Sha256>;
+
+    let now = chrono::Utc::now();
+    let amz_date = override_amz_date.unwrap_or_else(|| now.format("%Y%m%dT%H%M%SZ").to_string());
+    let scope_date = now.format("%Y%m%d").to_string();
+    let region = "us-east-1";
+    let service = "s3";
+    let credential = format!("{access_key}/{scope_date}/{region}/{service}/aws4_request");
+    let algorithm = override_algorithm.unwrap_or("AWS4-HMAC-SHA256");
+
+    let policy_json = serde_json::json!({
+        "expiration": expiration.to_rfc3339(),
+        "conditions": conditions,
+    });
+    let policy_str = serde_json::to_string(&policy_json).unwrap();
+    let policy_b64 = base64::engine::general_purpose::STANDARD.encode(policy_str.as_bytes());
+
+    let signature = override_signature.unwrap_or_else(|| {
+        let mac = |k: &[u8], d: &[u8]| -> Vec<u8> {
+            let mut m = HmacSha256::new_from_slice(k).unwrap();
+            m.update(d);
+            m.finalize().into_bytes().to_vec()
+        };
+        let k_date = mac(format!("AWS4{secret}").as_bytes(), scope_date.as_bytes());
+        let k_region = mac(&k_date, region.as_bytes());
+        let k_service = mac(&k_region, service.as_bytes());
+        let k_signing = mac(&k_service, b"aws4_request");
+        hex::encode(mac(&k_signing, policy_b64.as_bytes()))
+    });
+
+    reqwest::multipart::Form::new()
+        .text("key", key.to_string())
+        .text("x-amz-algorithm", algorithm.to_string())
+        .text("x-amz-credential", credential)
+        .text("x-amz-date", amz_date)
+        .text("policy", policy_b64)
+        .text("x-amz-signature", signature)
+        .part(
+            "file",
+            reqwest::multipart::Part::bytes(file_bytes).file_name("upload.bin"),
+        )
+}
+
+/// Ensure a bucket exists so each test starts from a clean slate without
+/// duplicating the native-API boilerplate.
+async fn create_bucket(srv: &TestServer, name: &str) {
+    use serde_json::json;
+    let resp = srv
+        .client()
+        .post(format!("{}/v1/buckets", srv.url))
+        .header("Authorization", srv.auth_header())
+        .json(&json!({ "name": name, "public": false }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201, "create bucket {name}");
+}
+
+#[tokio::test]
+async fn e2e_s3_presigned_post_happy_path() {
+    let srv = TestServer::start();
+    let client = srv.client();
+    create_bucket(&srv, "ppost").await;
+
+    let body = b"hello from presigned POST".to_vec();
+    let form = presigned_post_form(
+        "uploads/hello.txt",
+        &srv.admin_key,
+        &srv.admin_key,
+        vec![
+            serde_json::json!({ "bucket": "ppost" }),
+            serde_json::json!(["starts-with", "$key", "uploads/"]),
+            serde_json::json!(["content-length-range", 1, body.len() as u64 + 10]),
+        ],
+        chrono::Utc::now() + chrono::Duration::minutes(15),
+        body.clone(),
+        None,
+        None,
+        None,
+    );
+
+    let resp = client
+        .post(format!("{}/s3/ppost", srv.url))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 204, "valid presigned POST should 204");
+    assert_eq!(
+        resp.headers().get("location").unwrap(),
+        "/ppost/uploads/hello.txt"
+    );
+
+    // The object must really exist with the right bytes.
+    let dl = client
+        .get(format!("{}/s3/ppost/uploads/hello.txt", srv.url))
+        .header("Authorization", srv.auth_header())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(dl.status(), 200);
+    assert_eq!(dl.bytes().await.unwrap().to_vec(), body);
+}
+
+#[tokio::test]
+async fn e2e_s3_presigned_post_rejects_bad_signature() {
+    let srv = TestServer::start();
+    let client = srv.client();
+    create_bucket(&srv, "ppost-bad-sig").await;
+
+    let form = presigned_post_form(
+        "f.txt",
+        &srv.admin_key,
+        &srv.admin_key,
+        vec![
+            serde_json::json!({ "bucket": "ppost-bad-sig" }),
+            serde_json::json!(["starts-with", "$key", ""]),
+        ],
+        chrono::Utc::now() + chrono::Duration::minutes(15),
+        b"anything".to_vec(),
+        Some("0".repeat(64)),
+        None,
+        None,
+    );
+
+    let resp = client
+        .post(format!("{}/s3/ppost-bad-sig", srv.url))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403, "tampered signature must be rejected");
+    assert!(resp.text().await.unwrap().contains("AccessDenied"));
+}
+
+#[tokio::test]
+async fn e2e_s3_presigned_post_rejects_expired_policy() {
+    let srv = TestServer::start();
+    let client = srv.client();
+    create_bucket(&srv, "ppost-expired").await;
+
+    let form = presigned_post_form(
+        "f.txt",
+        &srv.admin_key,
+        &srv.admin_key,
+        vec![
+            serde_json::json!({ "bucket": "ppost-expired" }),
+            serde_json::json!(["starts-with", "$key", ""]),
+        ],
+        // Well in the past.
+        chrono::Utc::now() - chrono::Duration::hours(1),
+        b"anything".to_vec(),
+        None,
+        None,
+        None,
+    );
+
+    let resp = client
+        .post(format!("{}/s3/ppost-expired", srv.url))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403, "expired policy must be rejected");
+}
+
+#[tokio::test]
+async fn e2e_s3_presigned_post_rejects_bucket_mismatch() {
+    let srv = TestServer::start();
+    let client = srv.client();
+    create_bucket(&srv, "ppost-mismatch").await;
+    create_bucket(&srv, "ppost-other").await;
+
+    // Policy says "ppost-other", URL targets "ppost-mismatch".
+    let form = presigned_post_form(
+        "f.txt",
+        &srv.admin_key,
+        &srv.admin_key,
+        vec![
+            serde_json::json!({ "bucket": "ppost-other" }),
+            serde_json::json!(["starts-with", "$key", ""]),
+        ],
+        chrono::Utc::now() + chrono::Duration::minutes(15),
+        b"anything".to_vec(),
+        None,
+        None,
+        None,
+    );
+
+    let resp = client
+        .post(format!("{}/s3/ppost-mismatch", srv.url))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403, "bucket mismatch must be rejected");
+}
+
+#[tokio::test]
+async fn e2e_s3_presigned_post_rejects_missing_bucket_condition() {
+    // A policy with no {"bucket": ...} condition can't be safely scoped to a
+    // bucket — the handler must refuse it even if everything else is valid.
+    let srv = TestServer::start();
+    let client = srv.client();
+    create_bucket(&srv, "ppost-nobucket").await;
+
+    let form = presigned_post_form(
+        "f.txt",
+        &srv.admin_key,
+        &srv.admin_key,
+        vec![serde_json::json!(["starts-with", "$key", ""])],
+        chrono::Utc::now() + chrono::Duration::minutes(15),
+        b"anything".to_vec(),
+        None,
+        None,
+        None,
+    );
+
+    let resp = client
+        .post(format!("{}/s3/ppost-nobucket", srv.url))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+}
+
+#[tokio::test]
+async fn e2e_s3_presigned_post_enforces_exact_key_rule() {
+    let srv = TestServer::start();
+    let client = srv.client();
+    create_bucket(&srv, "ppost-exact").await;
+
+    // Policy pins the key, but the form field tries a different one.
+    let form = presigned_post_form(
+        "intruder.txt",
+        &srv.admin_key,
+        &srv.admin_key,
+        vec![
+            serde_json::json!({ "bucket": "ppost-exact" }),
+            serde_json::json!({ "key": "allowed.txt" }),
+        ],
+        chrono::Utc::now() + chrono::Duration::minutes(15),
+        b"x".to_vec(),
+        None,
+        None,
+        None,
+    );
+
+    let resp = client
+        .post(format!("{}/s3/ppost-exact", srv.url))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403, "exact-key violation must be rejected");
+
+    // And the matching key must succeed.
+    let form_ok = presigned_post_form(
+        "allowed.txt",
+        &srv.admin_key,
+        &srv.admin_key,
+        vec![
+            serde_json::json!({ "bucket": "ppost-exact" }),
+            serde_json::json!({ "key": "allowed.txt" }),
+        ],
+        chrono::Utc::now() + chrono::Duration::minutes(15),
+        b"x".to_vec(),
+        None,
+        None,
+        None,
+    );
+    let resp = client
+        .post(format!("{}/s3/ppost-exact", srv.url))
+        .multipart(form_ok)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 204);
+}
+
+#[tokio::test]
+async fn e2e_s3_presigned_post_enforces_starts_with_key_rule() {
+    let srv = TestServer::start();
+    let client = srv.client();
+    create_bucket(&srv, "ppost-prefix").await;
+
+    let form = presigned_post_form(
+        "videos/a.mp4",
+        &srv.admin_key,
+        &srv.admin_key,
+        vec![
+            serde_json::json!({ "bucket": "ppost-prefix" }),
+            serde_json::json!(["starts-with", "$key", "photos/"]),
+        ],
+        chrono::Utc::now() + chrono::Duration::minutes(15),
+        b"x".to_vec(),
+        None,
+        None,
+        None,
+    );
+
+    let resp = client
+        .post(format!("{}/s3/ppost-prefix", srv.url))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+}
+
+#[tokio::test]
+async fn e2e_s3_presigned_post_enforces_content_length_range() {
+    // content-length-range is checked after the upload lands, because the
+    // server only knows the real size once the stream closes. The handler
+    // must then delete the over/undersized object so the bucket never
+    // contains it.
+    let srv = TestServer::start();
+    let client = srv.client();
+    create_bucket(&srv, "ppost-size").await;
+
+    // 5-byte file against a [10,1000] range → rejected.
+    let form = presigned_post_form(
+        "undersized.bin",
+        &srv.admin_key,
+        &srv.admin_key,
+        vec![
+            serde_json::json!({ "bucket": "ppost-size" }),
+            serde_json::json!(["starts-with", "$key", ""]),
+            serde_json::json!(["content-length-range", 10, 1000]),
+        ],
+        chrono::Utc::now() + chrono::Duration::minutes(15),
+        b"small".to_vec(),
+        None,
+        None,
+        None,
+    );
+
+    let resp = client
+        .post(format!("{}/s3/ppost-size", srv.url))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    // And the object must NOT exist after the rejection — a HEAD should 404.
+    let head = client
+        .head(format!("{}/s3/ppost-size/undersized.bin", srv.url))
+        .header("Authorization", srv.auth_header())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        head.status(),
+        404,
+        "server must clean up oversized/undersized uploads"
+    );
+}
+
+#[tokio::test]
+async fn e2e_s3_presigned_post_rejects_filename_placeholder() {
+    // AWS's ${filename} placeholder is not implemented — clients must send
+    // the concrete key. The handler should reject the placeholder with 400
+    // rather than silently uploading to a bogus key.
+    let srv = TestServer::start();
+    let client = srv.client();
+    create_bucket(&srv, "ppost-ph").await;
+
+    let form = presigned_post_form(
+        "uploads/${filename}",
+        &srv.admin_key,
+        &srv.admin_key,
+        vec![
+            serde_json::json!({ "bucket": "ppost-ph" }),
+            serde_json::json!(["starts-with", "$key", "uploads/"]),
+        ],
+        chrono::Utc::now() + chrono::Duration::minutes(15),
+        b"x".to_vec(),
+        None,
+        None,
+        None,
+    );
+
+    let resp = client
+        .post(format!("{}/s3/ppost-ph", srv.url))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+}
+
+#[tokio::test]
+async fn e2e_s3_presigned_post_rejects_unsupported_algorithm() {
+    let srv = TestServer::start();
+    let client = srv.client();
+    create_bucket(&srv, "ppost-alg").await;
+
+    let form = presigned_post_form(
+        "f.txt",
+        &srv.admin_key,
+        &srv.admin_key,
+        vec![
+            serde_json::json!({ "bucket": "ppost-alg" }),
+            serde_json::json!(["starts-with", "$key", ""]),
+        ],
+        chrono::Utc::now() + chrono::Duration::minutes(15),
+        b"x".to_vec(),
+        None,
+        Some("AWS4-HMAC-SHA512"), // not supported
+        None,
+    );
+
+    let resp = client
+        .post(format!("{}/s3/ppost-alg", srv.url))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+}
+
+#[tokio::test]
+async fn e2e_s3_presigned_post_rejects_missing_file_field() {
+    // Any multipart body that ends without a `file` field is malformed: the
+    // handler buffers non-file fields and expects the file stream to close
+    // the body. Missing file → InvalidRequest, not silent success.
+    let srv = TestServer::start();
+    let client = srv.client();
+    create_bucket(&srv, "ppost-nofile").await;
+
+    // Build a valid-signature form then drop the file part.
+    use base64::Engine;
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    type HmacSha256 = Hmac<Sha256>;
+
+    let now = chrono::Utc::now();
+    let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
+    let scope_date = now.format("%Y%m%d").to_string();
+    let credential = format!("{}/{}/us-east-1/s3/aws4_request", srv.admin_key, scope_date);
+    let policy_json = serde_json::json!({
+        "expiration": (now + chrono::Duration::minutes(15)).to_rfc3339(),
+        "conditions": [
+            { "bucket": "ppost-nofile" },
+            ["starts-with", "$key", ""]
+        ],
+    });
+    let policy_b64 = base64::engine::general_purpose::STANDARD
+        .encode(serde_json::to_string(&policy_json).unwrap().as_bytes());
+    let mac = |k: &[u8], d: &[u8]| -> Vec<u8> {
+        let mut m = HmacSha256::new_from_slice(k).unwrap();
+        m.update(d);
+        m.finalize().into_bytes().to_vec()
+    };
+    let k_date = mac(
+        format!("AWS4{}", srv.admin_key).as_bytes(),
+        scope_date.as_bytes(),
+    );
+    let k_region = mac(&k_date, b"us-east-1");
+    let k_service = mac(&k_region, b"s3");
+    let k_signing = mac(&k_service, b"aws4_request");
+    let signature = hex::encode(mac(&k_signing, policy_b64.as_bytes()));
+
+    let form = reqwest::multipart::Form::new()
+        .text("key", "whatever.txt")
+        .text("x-amz-algorithm", "AWS4-HMAC-SHA256")
+        .text("x-amz-credential", credential)
+        .text("x-amz-date", amz_date)
+        .text("policy", policy_b64)
+        .text("x-amz-signature", signature);
+    // No `file` part.
+
+    let resp = client
+        .post(format!("{}/s3/ppost-nofile", srv.url))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+}
