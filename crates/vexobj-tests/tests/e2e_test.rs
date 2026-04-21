@@ -4092,3 +4092,57 @@ async fn e2e_request_id_replaces_malformed_client_id() {
     assert_eq!(echoed.len(), 36);
     assert_eq!(echoed.matches('-').count(), 4);
 }
+
+// ---------------------------------------------------------------------------
+// Kubernetes probes
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn e2e_livez_returns_ok() {
+    // /livez must succeed whenever the HTTP loop is alive. No auth, no DB
+    // dependency — if this ever fails under normal operation we'd be in a
+    // restart loop.
+    let srv = TestServer::start();
+    let resp = srv
+        .client()
+        .get(format!("{}/livez", srv.url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], "ok");
+}
+
+#[tokio::test]
+async fn e2e_readyz_checks_storage() {
+    // Healthy storage → 200. We don't have an easy way to simulate a
+    // broken DB in-process, so this test is the positive case only; the
+    // error path is exercised by the shared `match` in readyz().
+    let srv = TestServer::start();
+    let resp = srv
+        .client()
+        .get(format!("{}/readyz", srv.url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], "ok");
+}
+
+#[tokio::test]
+async fn e2e_probes_need_no_auth() {
+    // Operators deploy VexObj behind auth-enforcing proxies. The probes
+    // have to pass unauthenticated or K8s will kill every pod.
+    let srv = TestServer::start();
+    for path in ["/livez", "/readyz", "/health"] {
+        let resp = srv
+            .client()
+            .get(format!("{}{}", srv.url, path))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200, "{path} must respond without auth");
+    }
+}

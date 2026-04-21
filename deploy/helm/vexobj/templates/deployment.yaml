@@ -39,15 +39,17 @@ spec:
             - name: http
               containerPort: 8000
               protocol: TCP
+          # /livez only asserts that the HTTP loop is up — a DB hiccup
+          # must not trigger a pod kill. /readyz does the real check.
           livenessProbe:
             httpGet:
-              path: /health
+              path: /livez
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
           readinessProbe:
             httpGet:
-              path: /health
+              path: /readyz
               port: http
             initialDelaySeconds: 3
             periodSeconds: 5
