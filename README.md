@@ -1,9 +1,21 @@
 # VexObj
 
-High-performance, self-hosted object storage with built-in image processing. A single binary alternative to S3 + Cloudinary that runs on a simple VPS.
+Self-hosted S3-compatible object storage with media processing, server-side encryption, async replication, and a SQLite metadata store — all in a single ~14 MB Rust binary.
 
 → **Landing page**: https://vortex-soft.github.io/vexobj/
 → **Release**: [v0.1.0](https://github.com/vortex-soft/vexobj/releases/tag/v0.1.0) (Linux amd64, macOS arm64, Docker `ghcr.io/vortex-soft/vexobj:latest`)
+
+### Drop-in object storage for the fediverse
+
+VexObj is designed first for Mastodon / PeerTube / Pixelfed admins who'd rather not run MinIO + Cloudinary side by side. Media, image transforms, video thumbnails, replication, and a quota-aware admin UI all fit in one process.
+
+- **Mastodon** → [docs/guides/mastodon.md](docs/guides/mastodon.md)
+- **PeerTube** → [docs/guides/peertube.md](docs/guides/peertube.md)
+- **Pixelfed / Friendica / custom** — the patterns in the Mastodon guide apply; S3 config, public buckets, on-the-fly image variants, and content-addressable dedup are the same knobs.
+
+### Why not just MinIO (or SeaweedFS, or Garage)?
+
+Those are excellent if all you need is *pure storage*. For a fediverse instance you also need image resizing, AVIF/WebP negotiation, video thumbnails, and (often) transcoding — and those always live in a second service (ImgProxy / Cloudinary / a custom ffmpeg worker). VexObj rolls them into the same binary, reuses the same SQLite metadata, and caches transformed variants so repeat loads skip the encode entirely. You lose Ceph-style multi-node sharding (VexObj scales vertically and delegates to an S3-compatible blob layer once the local disk is full), but you gain an ops surface orders of magnitude smaller.
 
 ## Features
 
@@ -45,9 +57,9 @@ Three things the server does that no single competitor covers in one process:
 
 Good fit for:
 
-- **B2B / B2C SaaS up to a few million users** — a single binary plus an S3 backend handles the load without custom sharding.
+- **Federated instances (primary target)** — Mastodon, PeerTube, Pixelfed, Matrix, Friendica. Public-bucket reads let browsers fetch media directly, image variants replace a Cloudinary layer, replication gives you a warm standby per instance. See the [Mastodon](docs/guides/mastodon.md) and [PeerTube](docs/guides/peertube.md) guides.
 - **Independent media platforms** — podcasts, video, photo galleries. End-to-end ingestion, transformation, and transcoding in one process.
-- **Federated instances** — Mastodon, Matrix, Peertube, Pixelfed: local media storage with S3 compat for clients and async replication between nodes.
+- **B2B / B2C SaaS up to a few million users** — a single binary plus an S3 backend handles the load without custom sharding.
 - **Enterprise document backends** — WORM object lock + audit log + immutable retention. Healthcare, finance, legal archival.
 - **Dev / staging environments** — mimics an S3 instance locally in seconds, same auth model, same SDK compatibility.
 

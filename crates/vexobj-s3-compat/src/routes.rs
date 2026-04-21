@@ -254,14 +254,27 @@ async fn s3_object(
     headers: HeaderMap,
     body: Body,
 ) -> Response {
-    if let Err(e) = authenticate(
-        &state,
-        method.as_str(),
-        uri.path(),
-        uri.query().unwrap_or(""),
-        &headers,
-    ) {
-        return e.into_response();
+    // Public-bucket read bypass — mirror of the native middleware logic.
+    // GET/HEAD on `/s3/{bucket}/{*key}` goes through without a signature
+    // when the bucket is marked public, so Mastodon/Peertube-style
+    // browser clients can fetch media directly.
+    let is_public_read = matches!(method, Method::GET | Method::HEAD)
+        && state
+            .storage
+            .get_bucket(&bucket)
+            .map(|b| b.public)
+            .unwrap_or(false);
+
+    if !is_public_read {
+        if let Err(e) = authenticate(
+            &state,
+            method.as_str(),
+            uri.path(),
+            uri.query().unwrap_or(""),
+            &headers,
+        ) {
+            return e.into_response();
+        }
     }
 
     // ── Multipart sub-resources ────────────────────────────────────────

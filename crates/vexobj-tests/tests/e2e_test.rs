@@ -2760,3 +2760,92 @@ fn extract_xml_tag(xml: &str, tag: &str) -> Option<String> {
     let end = xml[start..].find(&close)? + start;
     Some(xml[start..end].trim().to_string())
 }
+
+/// Public buckets must allow anonymous GET/HEAD of their objects without an
+/// API key — Mastodon / Peertube serve media directly from VexObj to
+/// unauthenticated browsers, so the `public` flag on a bucket has to
+/// actually waive auth for the narrow read path. Writes, lists, and access
+/// to private buckets all stay locked.
+#[tokio::test]
+async fn e2e_public_bucket_allows_anonymous_object_reads() {
+    use serde_json::json;
+
+    let srv = TestServer::start();
+    let client = srv.client();
+    let auth = srv.auth_header();
+
+    // One public, one private.
+    for (name, is_public) in [("public-assets", true), ("private-docs", false)] {
+        let resp = client
+            .post(format!("{}/v1/buckets", srv.url))
+            .header("Authorization", &auth)
+            .json(&json!({ "name": name, "public": is_public }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 201, "create {name}");
+    }
+    for name in ["public-assets", "private-docs"] {
+        let resp = client
+            .put(format!("{}/v1/objects/{}/logo.png", srv.url, name))
+            .header("Authorization", &auth)
+            .header("content-type", "image/png")
+            .body(b"fake-png-bytes".to_vec())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 201);
+    }
+
+    let anon = reqwest::Client::new();
+
+    // Anonymous GET on the public bucket — body comes back intact.
+    let resp = anon
+        .get(format!("{}/v1/objects/public-assets/logo.png", srv.url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200, "anon GET on public native route");
+    assert_eq!(&resp.bytes().await.unwrap()[..], b"fake-png-bytes");
+
+    let resp = anon
+        .head(format!("{}/v1/objects/public-assets/logo.png", srv.url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200, "anon HEAD on public native route");
+
+    let resp = anon
+        .get(format!("{}/s3/public-assets/logo.png", srv.url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200, "anon GET on public S3 route");
+    assert_eq!(&resp.bytes().await.unwrap()[..], b"fake-png-bytes");
+
+    // Private bucket stays locked.
+    let resp = anon
+        .get(format!("{}/v1/objects/private-docs/logo.png", srv.url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+
+    // Listing a public bucket is NOT anonymously allowed — the `public`
+    // flag unlocks reads by key, not the index.
+    let resp = anon
+        .get(format!("{}/v1/objects/public-assets", srv.url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401, "anon list of public bucket is forbidden");
+
+    // Writes to a public bucket require auth. Public ≠ writable.
+    let resp = anon
+        .put(format!("{}/v1/objects/public-assets/evil.png", srv.url))
+        .body(b"anon-write".to_vec())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401, "anon PUT on public bucket is forbidden");
+}
