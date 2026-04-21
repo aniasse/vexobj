@@ -19,7 +19,7 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
-      description: "API key (vfs_...) — used for the VaultFS native API."
+      description: "API key (vex_...) — used for the VaultFS native API."
     awsV4:
       type: apiKey
       in: header
@@ -1018,7 +1018,7 @@ paths:
       description: >
         Entry point for the S3-compatible API at `/s3/*`. Accepts either
         `Authorization: AWS4-HMAC-SHA256 ...` (full SigV4 verification)
-        or `Authorization: Bearer <vfs_key>` (convenience). Each
+        or `Authorization: Bearer <vex_key>` (convenience). Each
         `/s3/{bucket}` and `/s3/{bucket}/{key}` mirrors the standard S3
         REST API (PUT, GET, HEAD, DELETE, list-objects-v2, copy via
         `x-amz-copy-source`). Returns AWS-style XML.

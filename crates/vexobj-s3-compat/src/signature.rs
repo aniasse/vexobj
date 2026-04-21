@@ -5,7 +5,7 @@
 //! We verify the `Authorization` header, recomputing the canonical request
 //! from the actual request the server received. The signing secret is the
 //! plaintext vexobj API key (stored on key creation), so the `access_key_id`
-//! in the Credential string is expected to be either the full `vfs_...` key
+//! in the Credential string is expected to be either the full `vex_...` key
 //! or its 12-char prefix.
 
 use hmac::{Hmac, Mac};
@@ -284,7 +284,7 @@ mod tests {
     /// to the canonicalization on either side breaks this round-trip.
     #[test]
     fn round_trip_sign_and_verify() {
-        let secret = "vfs_secretsecret";
+        let secret = "vex_secretsecret";
         let method = "GET";
         let uri = "/bucket/key.txt";
         let query = "";

@@ -15,7 +15,7 @@ type HmacSha256 = Hmac<Sha256>;
 /// Build the same signature the server will later verify so the bench
 /// measures the verification path end-to-end, not just failure cases.
 fn make_signed_request() -> (String, ParsedAuth, Vec<(String, String)>) {
-    let secret = "vfs_secretsecretsecretsecret";
+    let secret = "vex_secretsecretsecretsecret";
     let method = "GET";
     let uri = "/bucket/path/to/some/object.bin";
     // Query with no chars that need canonical percent-encoding, so the

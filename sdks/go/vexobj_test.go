@@ -6,7 +6,7 @@ import (
 )
 
 func TestImageURL(t *testing.T) {
-	c := New("http://localhost:8000", "vfs_test")
+	c := New("http://localhost:8000", "vex_test")
 
 	u := c.ImageURL("photos", "cat.jpg", &ImageTransform{
 		Width:   300,
@@ -40,7 +40,7 @@ func TestImageURL(t *testing.T) {
 }
 
 func TestImageURLNoTransform(t *testing.T) {
-	c := New("http://localhost:8000", "vfs_test")
+	c := New("http://localhost:8000", "vex_test")
 	u := c.ImageURL("photos", "cat.jpg", nil)
 
 	if u != "http://localhost:8000/v1/objects/photos/cat.jpg" {
@@ -49,11 +49,11 @@ func TestImageURLNoTransform(t *testing.T) {
 }
 
 func TestNewClient(t *testing.T) {
-	c := New("http://localhost:8000/", "vfs_mykey")
+	c := New("http://localhost:8000/", "vex_mykey")
 	if c.BaseURL != "http://localhost:8000" {
 		t.Errorf("trailing slash not trimmed: %s", c.BaseURL)
 	}
-	if c.APIKey != "vfs_mykey" {
+	if c.APIKey != "vex_mykey" {
 		t.Errorf("wrong api key: %s", c.APIKey)
 	}
 }

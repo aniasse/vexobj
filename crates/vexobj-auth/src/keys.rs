@@ -246,7 +246,7 @@ impl AuthManager {
 fn generate_api_key() -> String {
     let mut rng = rand::thread_rng();
     let bytes: Vec<u8> = (0..32).map(|_| rng.gen()).collect();
-    format!("vfs_{}", hex::encode(bytes))
+    format!("vex_{}", hex::encode(bytes))
 }
 
 fn hash_key(key: &str) -> String {

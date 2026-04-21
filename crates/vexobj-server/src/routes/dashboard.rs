@@ -168,7 +168,7 @@ const DASHBOARD_HTML: &str = r##"<!DOCTYPE html>
   </div>
 </div>
 <div class="auth-bar">
-  <input type="password" id="apiKey" placeholder="Enter your API key (vfs_...)" />
+  <input type="password" id="apiKey" placeholder="Enter your API key (vex_...)" />
   <button onclick="connect()">Connect</button>
 </div>
 <div class="container" id="app">

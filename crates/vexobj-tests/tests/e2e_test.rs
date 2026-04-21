@@ -149,7 +149,7 @@ window_secs = 60
                 Ok(line) => {
                     // Parse the admin key
                     if line.contains("Key:") {
-                        if let Some(pos) = line.find("vfs_") {
+                        if let Some(pos) = line.find("vex_") {
                             admin_key = line[pos..].trim().to_string();
                         }
                     }
@@ -285,7 +285,7 @@ async fn e2e_auth_required() {
     // Invalid key -> 401
     let resp = client
         .get(format!("{}/v1/buckets", srv.url))
-        .header("Authorization", "Bearer vfs_invalid_key")
+        .header("Authorization", "Bearer vex_invalid_key")
         .send()
         .await
         .expect("request");
@@ -2325,7 +2325,7 @@ async fn e2e_s3_compat_sigv4_accepts_valid_and_rejects_tamper() {
         .await
         .unwrap();
 
-    // The admin key is the full `vfs_...` string — our server accepts the
+    // The admin key is the full `vex_...` string — our server accepts the
     // raw key as the Credential access_key (see find_by_access_key).
     let key = srv.admin_key.clone();
     let url = format!("{}/s3", srv.url);

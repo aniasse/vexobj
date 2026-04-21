@@ -94,7 +94,7 @@ class VexObj:
     """vexobj API client.
 
     Usage:
-        vfs = VexObj("http://localhost:8000", "vfs_your_api_key")
+        vfs = VexObj("http://localhost:8000", "vex_your_api_key")
         vfs.create_bucket("photos")
         vfs.put_object("photos", "cat.jpg", open("cat.jpg", "rb"), "image/jpeg")
         data = vfs.get_object("photos", "cat.jpg")

@@ -34,7 +34,7 @@ than cutting new minor versions.
   enforced memory and disk caps
 
 ### Authentication & authorization
-- API key auth via `Authorization: Bearer <vfs_...>` on the native API
+- API key auth via `Authorization: Bearer <vex_...>` on the native API
 - Per-key permissions (read / write / delete / admin)
 - Per-key bucket access control (all or specific)
 - Presigned URLs with HMAC-SHA256 signatures

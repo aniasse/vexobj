@@ -214,7 +214,7 @@ fn test_auth_keys() {
         )
         .unwrap();
     assert_eq!(key.name, "test");
-    assert!(raw.starts_with("vfs_"));
+    assert!(raw.starts_with("vex_"));
 
     // Verify key
     let verified = auth.verify_key(&raw).unwrap();
@@ -223,7 +223,7 @@ fn test_auth_keys() {
     assert!(!verified.permissions.write);
 
     // Invalid key
-    let result = auth.verify_key("vfs_invalid");
+    let result = auth.verify_key("vex_invalid");
     assert!(result.is_err());
 
     // List keys
