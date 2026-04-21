@@ -84,16 +84,11 @@ pub async fn handle_presigned_post(
 /// Consume the multipart stream, validate the policy, stream the file field
 /// through the storage engine, and return the created key. Errors short-
 /// circuit into an S3Error the caller maps to XML.
-async fn process(
-    state: &S3State,
-    bucket: &str,
-    mut mp: Multipart,
-) -> Result<String, S3Error> {
+async fn process(state: &S3State, bucket: &str, mut mp: Multipart) -> Result<String, S3Error> {
     // Gather every field EXCEPT `file` into memory — they're tiny. When we
     // hit `file`, we stop gathering and stream the body to disk through
     // the engine's put_object_stream path.
-    let mut fields: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
+    let mut fields: std::collections::HashMap<String, String> = std::collections::HashMap::new();
 
     loop {
         let field = mp
