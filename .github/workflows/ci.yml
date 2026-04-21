@@ -51,6 +51,21 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --all-targets -- -D warnings
 
+  docker-smoke:
+    # Build the runtime image, boot it, and exercise the minimal
+    # bucket-create / PUT / GET / S3-list path. Catches packaging
+    # regressions (missing ca-certs, wrong user, bad path) the Rust-only
+    # test suite can't see because it runs outside the container.
+    name: Docker Smoke
+    needs: [check, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t vexobj-smoke:ci .
+      - name: Smoke test
+        run: .github/scripts/docker-smoke.sh vexobj-smoke:ci
+
   build-release:
     name: Build Release
     needs: [check, test]
