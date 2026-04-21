@@ -313,7 +313,7 @@ async fn s3_object(
                 Err(_) => S3Error::entity_too_large().into_response(),
             }
         }
-        Method::GET => get_object(&state, &bucket, &key).await,
+        Method::GET => get_object(&state, &bucket, &key, &headers).await,
         Method::HEAD => head_object(&state, &bucket, &key).await,
         Method::DELETE => delete_object(&state, &bucket, &key).await,
         _ => S3Error::invalid_request("Method not allowed").into_response(),
@@ -409,21 +409,98 @@ async fn copy_object(state: &S3State, dest_bucket: &str, dest_key: &str, source:
     }
 }
 
-async fn get_object(state: &S3State, bucket: &str, key: &str) -> Response {
-    match state.storage.get_object(bucket, key).await {
-        Ok((meta, data)) => (
-            StatusCode::OK,
-            [
-                ("content-type", meta.content_type),
-                ("content-length", meta.size.to_string()),
-                ("etag", format!("\"{}\"", meta.sha256)),
-                ("last-modified", meta.updated_at.to_rfc2822()),
-            ],
-            data,
-        )
-            .into_response(),
-        Err(_) => S3Error::no_such_key(key).into_response(),
+async fn get_object(state: &S3State, bucket: &str, key: &str, headers: &HeaderMap) -> Response {
+    let (meta, data) = match state.storage.get_object(bucket, key).await {
+        Ok(r) => r,
+        Err(_) => return S3Error::no_such_key(key).into_response(),
+    };
+
+    // Honor `Range: bytes=start-end` so clients like `aws s3 cp` that
+    // download in parallel ranges don't overwrite each chunk with a
+    // full-body response. Syntactically we support a single range spec
+    // (`bytes=N-`, `bytes=N-M`, `bytes=-N`) — multi-range 206 responses
+    // are not used by any S3 SDK in the wild.
+    if let Some(range_header) = headers.get("range").and_then(|v| v.to_str().ok()) {
+        match parse_single_byte_range(range_header, meta.size) {
+            Some((start, end)) => {
+                let slice = data.slice(start as usize..(end + 1) as usize);
+                let len = slice.len();
+                return (
+                    StatusCode::PARTIAL_CONTENT,
+                    [
+                        ("content-type", meta.content_type),
+                        ("content-length", len.to_string()),
+                        ("etag", format!("\"{}\"", meta.sha256)),
+                        ("last-modified", meta.updated_at.to_rfc2822()),
+                        ("accept-ranges", "bytes".to_string()),
+                        (
+                            "content-range",
+                            format!("bytes {start}-{end}/{}", meta.size),
+                        ),
+                    ],
+                    slice,
+                )
+                    .into_response();
+            }
+            None => {
+                // S3 returns 416 for ranges outside the object size.
+                return (
+                    StatusCode::RANGE_NOT_SATISFIABLE,
+                    [("content-range", format!("bytes */{}", meta.size))],
+                )
+                    .into_response();
+            }
+        }
     }
+
+    (
+        StatusCode::OK,
+        [
+            ("content-type", meta.content_type),
+            ("content-length", meta.size.to_string()),
+            ("etag", format!("\"{}\"", meta.sha256)),
+            ("last-modified", meta.updated_at.to_rfc2822()),
+            ("accept-ranges", "bytes".to_string()),
+        ],
+        data,
+    )
+        .into_response()
+}
+
+/// Parse an HTTP `Range: bytes=…` header against a known object size.
+/// Returns the inclusive [start, end] pair actually served, or `None`
+/// when the range is unsatisfiable or syntactically bad.
+fn parse_single_byte_range(header: &str, size: u64) -> Option<(u64, u64)> {
+    let spec = header.strip_prefix("bytes=")?;
+    // Reject multi-range (`bytes=0-10,20-30`) — single range only.
+    if spec.contains(',') {
+        return None;
+    }
+    let (start_s, end_s) = spec.split_once('-')?;
+    let start_s = start_s.trim();
+    let end_s = end_s.trim();
+
+    let (start, end) = if start_s.is_empty() {
+        // Suffix form `bytes=-N` — last N bytes.
+        let n: u64 = end_s.parse().ok()?;
+        if n == 0 || size == 0 {
+            return None;
+        }
+        let start = size.saturating_sub(n);
+        (start, size - 1)
+    } else {
+        let start: u64 = start_s.parse().ok()?;
+        let end: u64 = if end_s.is_empty() {
+            size.checked_sub(1)?
+        } else {
+            end_s.parse().ok()?
+        };
+        if end >= size || start > end {
+            return None;
+        }
+        (start, end)
+    };
+    Some((start, end))
 }
 
 async fn head_object(state: &S3State, bucket: &str, key: &str) -> Response {

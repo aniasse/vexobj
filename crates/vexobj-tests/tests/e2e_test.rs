@@ -2838,7 +2838,11 @@ async fn e2e_public_bucket_allows_anonymous_object_reads() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), 401, "anon list of public bucket is forbidden");
+    assert_eq!(
+        resp.status(),
+        401,
+        "anon list of public bucket is forbidden"
+    );
 
     // Writes to a public bucket require auth. Public ≠ writable.
     let resp = anon
@@ -2848,4 +2852,90 @@ async fn e2e_public_bucket_allows_anonymous_object_reads() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 401, "anon PUT on public bucket is forbidden");
+}
+
+/// Regression guard: `aws s3 cp` downloads big files in parallel byte-range
+/// requests. When the S3 GET handler ignored `Range:` and served the full
+/// body every time, clients wrote each chunk at the wrong offset and the
+/// downloaded file corrupted silently. Every byte-range request must now
+/// return 206 with only the requested slice.
+#[tokio::test]
+async fn e2e_s3_get_honors_range_header() {
+    use serde_json::json;
+
+    let srv = TestServer::start();
+    let client = srv.client();
+    let auth = srv.auth_header();
+
+    let resp = client
+        .post(format!("{}/v1/buckets", srv.url))
+        .header("Authorization", &auth)
+        .json(&json!({ "name": "ranged", "public": false }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+
+    // 12 distinct byte values so we can spot a misaligned slice by eye.
+    let body: Vec<u8> = (0..12).flat_map(|i| vec![i as u8; 1024]).collect();
+    let resp = client
+        .put(format!("{}/v1/objects/ranged/blob.bin", srv.url))
+        .header("Authorization", &auth)
+        .body(body.clone())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+
+    // Middle range: bytes 1024..=2047 → the second 1 KiB slab, all `1`s.
+    let resp = client
+        .get(format!("{}/s3/ranged/blob.bin", srv.url))
+        .header("Authorization", &auth)
+        .header("Range", "bytes=1024-2047")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 206, "range requests must return 206");
+    assert_eq!(
+        resp.headers().get("content-range").unwrap(),
+        format!("bytes 1024-2047/{}", body.len()).as_str()
+    );
+    let bytes = resp.bytes().await.unwrap();
+    assert_eq!(bytes.len(), 1024);
+    assert!(bytes.iter().all(|&b| b == 1), "slab should be all 1s");
+
+    // Open-ended range `bytes=N-` returns N..EOF.
+    let resp = client
+        .get(format!("{}/s3/ranged/blob.bin", srv.url))
+        .header("Authorization", &auth)
+        .header("Range", "bytes=10240-")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 206);
+    let bytes = resp.bytes().await.unwrap();
+    assert_eq!(bytes.len(), 2048); // last two slabs
+    assert!(bytes[..1024].iter().all(|&b| b == 10));
+    assert!(bytes[1024..].iter().all(|&b| b == 11));
+
+    // Suffix form `bytes=-N` returns the last N bytes.
+    let resp = client
+        .get(format!("{}/s3/ranged/blob.bin", srv.url))
+        .header("Authorization", &auth)
+        .header("Range", "bytes=-1024")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 206);
+    assert!(resp.bytes().await.unwrap().iter().all(|&b| b == 11));
+
+    // Range entirely past EOF is 416 per RFC 9110.
+    let resp = client
+        .get(format!("{}/s3/ranged/blob.bin", srv.url))
+        .header("Authorization", &auth)
+        .header("Range", "bytes=99999-200000")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 416);
 }

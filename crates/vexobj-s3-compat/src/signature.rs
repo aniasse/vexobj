@@ -159,8 +159,12 @@ fn canonical_uri(path: &str) -> String {
         .join("/")
 }
 
-/// Canonical query string: each `key=value` pair is individually percent-
-/// encoded and the pairs are sorted by key, then by value on tie.
+/// Canonical query string: each `key=value` pair is decoded from the
+/// incoming URI and then re-encoded with the SigV4 rules (only unreserved
+/// chars stay verbatim). Sort by key, then value. The decode step is what
+/// matters: the client signs over the *canonical* form, which differs
+/// from the URI-encoded form only for `=` and a handful of reserved chars.
+/// Double-encoding breaks aws-cli commands like `ls s3://b/prefix/`.
 fn canonical_query(query: &str) -> String {
     if query.is_empty() {
         return String::new();
@@ -169,8 +173,11 @@ fn canonical_query(query: &str) -> String {
         .split('&')
         .filter(|s| !s.is_empty())
         .map(|pair| match pair.split_once('=') {
-            Some((k, v)) => (percent_encode(k), percent_encode(v)),
-            None => (percent_encode(pair), String::new()),
+            Some((k, v)) => (
+                percent_encode(&percent_decode(k)),
+                percent_encode(&percent_decode(v)),
+            ),
+            None => (percent_encode(&percent_decode(pair)), String::new()),
         })
         .collect();
     pairs.sort();
@@ -179,6 +186,35 @@ fn canonical_query(query: &str) -> String {
         .map(|(k, v)| format!("{k}={v}"))
         .collect::<Vec<_>>()
         .join("&")
+}
+
+/// Best-effort percent-decode of a URL-encoded string. Invalid escape
+/// sequences are left as-is (we favor not losing data for weird inputs).
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(h), Some(l)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
+                out.push((h << 4) | l);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        _ => None,
+    }
 }
 
 fn percent_encode(s: &str) -> String {
@@ -268,6 +304,21 @@ mod tests {
             "list-type=2&prefix=d%2F"
         );
         assert_eq!(canonical_query(""), "");
+    }
+
+    /// Regression: aws-cli sends already-URI-encoded query strings
+    /// (`prefix=videos%2F`). Our canonicalization must not double-encode
+    /// those — `videos%2F` must stay `videos%2F`, not become `videos%252F`.
+    #[test]
+    fn canonical_query_is_idempotent_on_encoded_input() {
+        assert_eq!(
+            canonical_query("prefix=videos%2F&delimiter=%2F"),
+            "delimiter=%2F&prefix=videos%2F"
+        );
+        assert_eq!(
+            canonical_query("prefix=dir%20with%20space"),
+            "prefix=dir%20with%20space"
+        );
     }
 
     #[test]
