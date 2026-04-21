@@ -213,6 +213,13 @@ impl Database {
              ALTER TABLE objects ADD COLUMN legal_hold INTEGER NOT NULL DEFAULT 0;",
         );
 
+        // Per-bucket CORS rules. Stored as a JSON array of CorsRule objects so
+        // we don't need a side table for a piece of config that's always
+        // read/written whole. Empty array = no rules = CORS is permissive for
+        // that bucket, matching pre-rules behavior.
+        let _ = conn
+            .execute_batch("ALTER TABLE buckets ADD COLUMN cors_rules TEXT NOT NULL DEFAULT '[]';");
+
         Ok(())
     }
 
@@ -545,6 +552,39 @@ impl Database {
         )
         .map(|v| v != 0)
         .unwrap_or(false)
+    }
+
+    // ── CORS rules ──────────────────────────────────────────────────────
+
+    /// Return the CORS rules attached to `bucket`. An unknown bucket or a
+    /// row with NULL/empty JSON both collapse to an empty Vec — callers can
+    /// treat "no rules" identically in all cases.
+    pub fn get_bucket_cors(&self, bucket: &str) -> Vec<crate::models::CorsRule> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT cors_rules FROM buckets WHERE name = ?1",
+            params![bucket],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+    }
+
+    /// Persist `rules` against `bucket`, replacing any prior config.
+    pub fn set_bucket_cors(
+        &self,
+        bucket: &str,
+        rules: &[crate::models::CorsRule],
+    ) -> Result<(), StorageError> {
+        self.get_bucket(bucket)?;
+        let conn = self.conn.lock().unwrap();
+        let json = serde_json::to_string(rules).unwrap_or_else(|_| "[]".to_string());
+        conn.execute(
+            "UPDATE buckets SET cors_rules = ?1 WHERE name = ?2",
+            params![json, bucket],
+        )?;
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]

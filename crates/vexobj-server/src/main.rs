@@ -1,5 +1,6 @@
 mod audit;
 mod config;
+mod cors;
 mod metrics;
 mod middleware;
 mod ratelimit;

@@ -12,10 +12,10 @@ mod transcode;
 use axum::middleware as axum_mw;
 use axum::Router;
 use tower_http::compression::CompressionLayer;
-use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::audit;
+use crate::cors::cors_middleware;
 use crate::metrics;
 use crate::middleware::auth_middleware;
 use crate::ratelimit::rate_limit_middleware;
@@ -61,12 +61,15 @@ pub fn create_router(state: AppState) -> Router {
 
     // Metrics middleware (wraps everything, counts requests)
     app = app.layer(axum_mw::from_fn_with_state(
-        state,
+        state.clone(),
         metrics::metrics_middleware,
     ));
 
     app.layer(axum::middleware::from_fn(security_middleware))
         .layer(CompressionLayer::new())
-        .layer(CorsLayer::permissive())
+        // Custom CORS: per-bucket rules on /s3/<bucket>*, permissive everywhere
+        // else. Replaces the former tower_http::cors::CorsLayer::permissive()
+        // so admins can restrict browser uploads to specific origins.
+        .layer(axum_mw::from_fn_with_state(state, cors_middleware))
         .layer(TraceLayer::new_for_http())
 }

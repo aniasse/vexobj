@@ -140,6 +140,62 @@ pub struct MultipartPart {
     pub uploaded_at: DateTime<Utc>,
 }
 
+/// One CORS rule attached to a bucket. Semantics follow the AWS S3 shape
+/// closely: a request is allowed iff at least one rule matches all three of
+/// Origin, Method, and (for preflight) requested headers. `"*"` is a valid
+/// entry in `allowed_origins` / `allowed_methods` / `allowed_headers` and
+/// matches anything. Empty `allowed_origins` means the rule matches no
+/// request, which is the no-op default we store when a bucket has never
+/// had CORS configured.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct CorsRule {
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
+    #[serde(default)]
+    pub allowed_methods: Vec<String>,
+    #[serde(default)]
+    pub allowed_headers: Vec<String>,
+    #[serde(default)]
+    pub expose_headers: Vec<String>,
+    /// How long browsers may cache the preflight result. 0 = don't emit
+    /// Access-Control-Max-Age.
+    #[serde(default)]
+    pub max_age_seconds: u64,
+}
+
+impl CorsRule {
+    /// True iff `origin` matches `allowed_origins` literally or via `"*"`.
+    pub fn matches_origin(&self, origin: &str) -> bool {
+        self.allowed_origins
+            .iter()
+            .any(|o| o == "*" || o.eq_ignore_ascii_case(origin))
+    }
+
+    /// True iff `method` matches `allowed_methods` literally or via `"*"`.
+    /// Method names are compared case-insensitively to match HTTP's case
+    /// tolerance in Origin/Access-Control-Request-Method.
+    pub fn matches_method(&self, method: &str) -> bool {
+        self.allowed_methods
+            .iter()
+            .any(|m| m == "*" || m.eq_ignore_ascii_case(method))
+    }
+
+    /// True iff every requested header is in `allowed_headers` (case-
+    /// insensitive), or `allowed_headers` contains `"*"`. Called during
+    /// preflight with the comma-separated list from
+    /// Access-Control-Request-Headers.
+    pub fn matches_headers(&self, requested: &[&str]) -> bool {
+        if self.allowed_headers.iter().any(|h| h == "*") {
+            return true;
+        }
+        requested.iter().all(|req| {
+            self.allowed_headers
+                .iter()
+                .any(|h| h.eq_ignore_ascii_case(req))
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LifecycleRule {
     pub id: String,

@@ -929,6 +929,20 @@ impl StorageEngine {
         self.db.enable_versioning(bucket)
     }
 
+    // ── CORS rules ──────────────────────────────────────────────────────
+
+    pub fn get_bucket_cors(&self, bucket: &str) -> Vec<crate::models::CorsRule> {
+        self.db.get_bucket_cors(bucket)
+    }
+
+    pub fn set_bucket_cors(
+        &self,
+        bucket: &str,
+        rules: &[crate::models::CorsRule],
+    ) -> Result<(), StorageError> {
+        self.db.set_bucket_cors(bucket, rules)
+    }
+
     // ── Object lock ─────────────────────────────────────────────────────
 
     pub fn get_lock(&self, bucket: &str, key: &str) -> Result<ObjectLock, StorageError> {

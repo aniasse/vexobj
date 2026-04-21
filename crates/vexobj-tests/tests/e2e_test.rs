@@ -3457,3 +3457,365 @@ async fn e2e_s3_presigned_post_rejects_missing_file_field() {
         .unwrap();
     assert_eq!(resp.status(), 400);
 }
+
+// ---------------------------------------------------------------------------
+// Per-bucket CORS
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn e2e_cors_get_returns_configured_rules() {
+    // Round-trip: PUT a rule set, GET it back, DELETE it, GET returns empty.
+    let srv = TestServer::start();
+    let client = srv.client();
+    let auth = srv.auth_header();
+    create_bucket(&srv, "corsget").await;
+
+    // Initially no rules.
+    let resp = client
+        .get(format!("{}/v1/buckets/corsget/cors", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["rules"].as_array().unwrap().len(), 0);
+
+    // Set a rule.
+    let put = serde_json::json!({
+        "rules": [{
+            "allowed_origins": ["https://social.example"],
+            "allowed_methods": ["POST", "PUT"],
+            "allowed_headers": ["*"],
+            "expose_headers": ["ETag"],
+            "max_age_seconds": 600u64
+        }]
+    });
+    let resp = client
+        .put(format!("{}/v1/buckets/corsget/cors", srv.url))
+        .header("Authorization", &auth)
+        .json(&put)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // GET now shows them.
+    let resp = client
+        .get(format!("{}/v1/buckets/corsget/cors", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(
+        body["rules"][0]["allowed_origins"][0],
+        "https://social.example"
+    );
+    assert_eq!(body["rules"][0]["max_age_seconds"], 600);
+
+    // DELETE clears.
+    let resp = client
+        .delete(format!("{}/v1/buckets/corsget/cors", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 204);
+
+    let resp = client
+        .get(format!("{}/v1/buckets/corsget/cors", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["rules"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn e2e_cors_preflight_permissive_when_no_rules() {
+    // Without explicit rules, any Origin should get the wildcard response so
+    // we don't break existing clients (dashboards, SDK examples, etc.).
+    let srv = TestServer::start();
+    let client = srv.client();
+    create_bucket(&srv, "corsnone").await;
+
+    let resp = client
+        .request(reqwest::Method::OPTIONS, format!("{}/s3/corsnone", srv.url))
+        .header("Origin", "https://random.example")
+        .header("Access-Control-Request-Method", "POST")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 204);
+    assert_eq!(
+        resp.headers().get("access-control-allow-origin").unwrap(),
+        "*"
+    );
+}
+
+#[tokio::test]
+async fn e2e_cors_preflight_honors_matching_rule() {
+    // With rules set, only matching origins get an allow response.
+    let srv = TestServer::start();
+    let client = srv.client();
+    let auth = srv.auth_header();
+    create_bucket(&srv, "corsok").await;
+
+    let put = serde_json::json!({
+        "rules": [{
+            "allowed_origins": ["https://social.example"],
+            "allowed_methods": ["POST"],
+            "allowed_headers": ["x-amz-date", "authorization"],
+            "max_age_seconds": 3000u64
+        }]
+    });
+    client
+        .put(format!("{}/v1/buckets/corsok/cors", srv.url))
+        .header("Authorization", &auth)
+        .json(&put)
+        .send()
+        .await
+        .unwrap();
+
+    let resp = client
+        .request(reqwest::Method::OPTIONS, format!("{}/s3/corsok", srv.url))
+        .header("Origin", "https://social.example")
+        .header("Access-Control-Request-Method", "POST")
+        .header(
+            "Access-Control-Request-Headers",
+            "x-amz-date, authorization",
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 204);
+    assert_eq!(
+        resp.headers().get("access-control-allow-origin").unwrap(),
+        "https://social.example"
+    );
+    assert_eq!(
+        resp.headers().get("access-control-allow-methods").unwrap(),
+        "POST"
+    );
+    assert_eq!(
+        resp.headers().get("access-control-max-age").unwrap(),
+        "3000"
+    );
+}
+
+#[tokio::test]
+async fn e2e_cors_preflight_rejects_non_matching_origin() {
+    let srv = TestServer::start();
+    let client = srv.client();
+    let auth = srv.auth_header();
+    create_bucket(&srv, "corsevil").await;
+
+    let put = serde_json::json!({
+        "rules": [{
+            "allowed_origins": ["https://social.example"],
+            "allowed_methods": ["POST"],
+            "allowed_headers": ["*"]
+        }]
+    });
+    client
+        .put(format!("{}/v1/buckets/corsevil/cors", srv.url))
+        .header("Authorization", &auth)
+        .json(&put)
+        .send()
+        .await
+        .unwrap();
+
+    let resp = client
+        .request(reqwest::Method::OPTIONS, format!("{}/s3/corsevil", srv.url))
+        .header("Origin", "https://evil.example")
+        .header("Access-Control-Request-Method", "POST")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+}
+
+#[tokio::test]
+async fn e2e_cors_preflight_rejects_non_matching_method() {
+    // Origin allowed, but method isn't in the rule → preflight must 403.
+    let srv = TestServer::start();
+    let client = srv.client();
+    let auth = srv.auth_header();
+    create_bucket(&srv, "corsmethod").await;
+
+    let put = serde_json::json!({
+        "rules": [{
+            "allowed_origins": ["https://social.example"],
+            "allowed_methods": ["POST"]
+        }]
+    });
+    client
+        .put(format!("{}/v1/buckets/corsmethod/cors", srv.url))
+        .header("Authorization", &auth)
+        .json(&put)
+        .send()
+        .await
+        .unwrap();
+
+    let resp = client
+        .request(
+            reqwest::Method::OPTIONS,
+            format!("{}/s3/corsmethod", srv.url),
+        )
+        .header("Origin", "https://social.example")
+        .header("Access-Control-Request-Method", "DELETE")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+}
+
+#[tokio::test]
+async fn e2e_cors_actual_request_echoes_origin_when_rule_matches() {
+    // A real (non-preflight) request with a matching Origin gets the echoed
+    // origin in the response, plus Vary: Origin so CDNs cache correctly.
+    let srv = TestServer::start();
+    let client = srv.client();
+    let auth = srv.auth_header();
+    create_bucket(&srv, "corsreal").await;
+
+    let put = serde_json::json!({
+        "rules": [{
+            "allowed_origins": ["https://social.example"],
+            "allowed_methods": ["GET", "HEAD"],
+            "expose_headers": ["ETag"]
+        }]
+    });
+    client
+        .put(format!("{}/v1/buckets/corsreal/cors", srv.url))
+        .header("Authorization", &auth)
+        .json(&put)
+        .send()
+        .await
+        .unwrap();
+
+    // Seed one object so GET is meaningful.
+    client
+        .put(format!("{}/v1/objects/corsreal/hello.txt", srv.url))
+        .header("Authorization", &auth)
+        .body(b"hi".to_vec())
+        .send()
+        .await
+        .unwrap();
+
+    let resp = client
+        .get(format!("{}/s3/corsreal/hello.txt", srv.url))
+        .header("Authorization", &auth)
+        .header("Origin", "https://social.example")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers().get("access-control-allow-origin").unwrap(),
+        "https://social.example"
+    );
+    assert_eq!(resp.headers().get("vary").unwrap(), "origin");
+    assert_eq!(
+        resp.headers().get("access-control-expose-headers").unwrap(),
+        "ETag"
+    );
+}
+
+#[tokio::test]
+async fn e2e_cors_actual_request_omits_origin_when_no_rule_matches() {
+    // When rules are set but none admits the Origin, the server still runs
+    // the request (so non-browser clients work normally) but emits no CORS
+    // headers — browsers will refuse to expose the response. This is the
+    // standard "blocked by CORS" shape.
+    let srv = TestServer::start();
+    let client = srv.client();
+    let auth = srv.auth_header();
+    create_bucket(&srv, "corsblock").await;
+
+    let put = serde_json::json!({
+        "rules": [{
+            "allowed_origins": ["https://social.example"],
+            "allowed_methods": ["GET"]
+        }]
+    });
+    client
+        .put(format!("{}/v1/buckets/corsblock/cors", srv.url))
+        .header("Authorization", &auth)
+        .json(&put)
+        .send()
+        .await
+        .unwrap();
+    client
+        .put(format!("{}/v1/objects/corsblock/hello.txt", srv.url))
+        .header("Authorization", &auth)
+        .body(b"hi".to_vec())
+        .send()
+        .await
+        .unwrap();
+
+    let resp = client
+        .get(format!("{}/s3/corsblock/hello.txt", srv.url))
+        .header("Authorization", &auth)
+        .header("Origin", "https://evil.example")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert!(resp.headers().get("access-control-allow-origin").is_none());
+}
+
+#[tokio::test]
+async fn e2e_cors_non_s3_path_is_permissive() {
+    // Admin endpoints under /v1/ should not be affected by bucket-level rules.
+    // A dashboard pulling from the native API must still work from any origin.
+    let srv = TestServer::start();
+    let client = srv.client();
+    let auth = srv.auth_header();
+    create_bucket(&srv, "corsv1").await;
+
+    // Even with strict rules on the bucket,
+    client
+        .put(format!("{}/v1/buckets/corsv1/cors", srv.url))
+        .header("Authorization", &auth)
+        .json(&serde_json::json!({
+            "rules": [{
+                "allowed_origins": ["https://social.example"],
+                "allowed_methods": ["POST"]
+            }]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    // …a preflight on /v1/buckets is still permissive.
+    let resp = client
+        .request(reqwest::Method::OPTIONS, format!("{}/v1/buckets", srv.url))
+        .header("Origin", "https://random.example")
+        .header("Access-Control-Request-Method", "GET")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 204);
+    assert_eq!(
+        resp.headers().get("access-control-allow-origin").unwrap(),
+        "*"
+    );
+}
+
+#[tokio::test]
+async fn e2e_cors_put_on_unknown_bucket_returns_404() {
+    let srv = TestServer::start();
+    let client = srv.client();
+
+    let resp = client
+        .put(format!("{}/v1/buckets/nonexistent/cors", srv.url))
+        .header("Authorization", srv.auth_header())
+        .json(&serde_json::json!({ "rules": [] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+}
