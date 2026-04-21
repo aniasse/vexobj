@@ -2,9 +2,9 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "vaultfs.fullname" . }}-data
+  name: {{ include "vexobj.fullname" . }}-data
   labels:
-    {{- include "vaultfs.labels" . | nindent 4 }}
+    {{- include "vexobj.labels" . | nindent 4 }}
 spec:
   accessModes:
     {{- toYaml .Values.persistence.accessModes | nindent 4 }}

@@ -1,18 +1,18 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "vaultfs.fullname" . }}
+  name: {{ include "vexobj.fullname" . }}
   labels:
-    {{- include "vaultfs.labels" . | nindent 4 }}
+    {{- include "vexobj.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      {{- include "vaultfs.selectorLabels" . | nindent 6 }}
+      {{- include "vexobj.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "vaultfs.selectorLabels" . | nindent 8 }}
+        {{- include "vexobj.selectorLabels" . | nindent 8 }}
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
     spec:
@@ -29,12 +29,12 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
-        - name: vaultfs
+        - name: vexobj
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
-            - name: VAULTFS_CONFIG
-              value: /etc/vaultfs/config.toml
+            - name: VEXOBJ_CONFIG
+              value: /etc/vexobj/config.toml
           ports:
             - name: http
               containerPort: 8000
@@ -57,16 +57,16 @@ spec:
             - name: data
               mountPath: /data
             - name: config
-              mountPath: /etc/vaultfs
+              mountPath: /etc/vexobj
               readOnly: true
       volumes:
         - name: config
           configMap:
-            name: {{ include "vaultfs.fullname" . }}-config
+            name: {{ include "vexobj.fullname" . }}-config
         {{- if .Values.persistence.enabled }}
         - name: data
           persistentVolumeClaim:
-            claimName: {{ include "vaultfs.fullname" . }}-data
+            claimName: {{ include "vexobj.fullname" . }}-data
         {{- else }}
         - name: data
           emptyDir: {}

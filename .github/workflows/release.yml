@@ -16,10 +16,10 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            archive: vaultfs-linux-amd64.tar.gz
+            archive: vexobj-linux-amd64.tar.gz
           - os: macos-latest
             target: aarch64-apple-darwin
-            archive: vaultfs-macos-arm64.tar.gz
+            archive: vexobj-macos-arm64.tar.gz
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -31,12 +31,12 @@ jobs:
       - name: Build
         run: |
           cargo build --release --target ${{ matrix.target }} \
-            --bin vaultfs --bin vaultfsctl
+            --bin vexobj --bin vexobjctl
 
       - name: Package
         run: |
           cd target/${{ matrix.target }}/release
-          tar czf ../../../${{ matrix.archive }} vaultfs vaultfsctl
+          tar czf ../../../${{ matrix.archive }} vexobj vexobjctl
           cd ../../../
           sha256sum ${{ matrix.archive }} > ${{ matrix.archive }}.sha256
 

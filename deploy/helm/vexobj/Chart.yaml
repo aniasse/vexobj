@@ -1,12 +1,12 @@
 apiVersion: v2
-name: vaultfs
+name: vexobj
 description: High-performance self-hosted object storage with built-in image processing
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
-home: https://github.com/aniasse/vaultfs
+home: https://github.com/aniasse/vexobj
 sources:
-  - https://github.com/aniasse/vaultfs
+  - https://github.com/aniasse/vexobj
 maintainers:
   - name: Adama Niasse
     url: https://github.com/aniasse

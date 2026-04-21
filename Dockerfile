@@ -4,7 +4,7 @@ FROM rust:1.88-bookworm AS builder
 WORKDIR /build
 COPY . .
 
-RUN cargo build --release --bin vaultfs --bin vaultfsctl
+RUN cargo build --release --bin vexobj --bin vexobjctl
 
 # ── Runtime stage ────────────────────────────────────────
 FROM debian:bookworm-slim
@@ -13,19 +13,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-RUN useradd -r -s /bin/false vaultfs
+RUN useradd -r -s /bin/false vexobj
 
-COPY --from=builder /build/target/release/vaultfs /usr/local/bin/vaultfs
-COPY --from=builder /build/target/release/vaultfsctl /usr/local/bin/vaultfsctl
+COPY --from=builder /build/target/release/vexobj /usr/local/bin/vexobj
+COPY --from=builder /build/target/release/vexobjctl /usr/local/bin/vexobjctl
 
-RUN mkdir -p /data && chown vaultfs:vaultfs /data
+RUN mkdir -p /data && chown vexobj:vexobj /data
 
-USER vaultfs
+USER vexobj
 
-ENV VAULTFS_CONFIG=""
+ENV VEXOBJ_CONFIG=""
 
 EXPOSE 8000
 
 VOLUME ["/data"]
 
-ENTRYPOINT ["vaultfs"]
+ENTRYPOINT ["vexobj"]

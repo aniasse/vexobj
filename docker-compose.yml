@@ -1,14 +1,14 @@
 services:
-  vaultfs:
+  vexobj:
     build: .
     ports:
       - "8000:8000"
     volumes:
-      - vaultfs-data:/data
-      - ./config/default.toml:/etc/vaultfs/config.toml:ro
+      - vexobj-data:/data
+      - ./config/default.toml:/etc/vexobj/config.toml:ro
     environment:
-      - VAULTFS_CONFIG=/etc/vaultfs/config.toml
+      - VEXOBJ_CONFIG=/etc/vexobj/config.toml
     restart: unless-stopped
 
 volumes:
-  vaultfs-data:
+  vexobj-data:

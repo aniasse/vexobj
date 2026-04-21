@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "vaultfs.fullname" . }}-config
+  name: {{ include "vexobj.fullname" . }}-config
   labels:
-    {{- include "vaultfs.labels" . | nindent 4 }}
+    {{- include "vexobj.labels" . | nindent 4 }}
 data:
   config.toml: |
     {{- .Values.config | nindent 4 }}

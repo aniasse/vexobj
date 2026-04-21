@@ -12,7 +12,7 @@
       }
     ]
   },
-  "description": "Overview of a VaultFS instance: request rate, errors, latency, and data-plane throughput. Point `DS_PROMETHEUS` at your Prometheus scraping /metrics.",
+  "description": "Overview of a vexobj instance: request rate, errors, latency, and data-plane throughput. Point `DS_PROMETHEUS` at your Prometheus scraping /metrics.",
   "editable": true,
   "graphTooltip": 0,
   "panels": [
@@ -23,7 +23,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "rate(vaultfs_requests_by_method_total[1m])",
+          "expr": "rate(vexobj_requests_by_method_total[1m])",
           "legendFormat": "{{method}}",
           "refId": "A"
         }
@@ -43,7 +43,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "sum(rate(vaultfs_requests_by_status_total{status=\"5xx\"}[5m])) / clamp_min(sum(rate(vaultfs_requests_total[5m])), 1)",
+          "expr": "sum(rate(vexobj_requests_by_status_total{status=\"5xx\"}[5m])) / clamp_min(sum(rate(vexobj_requests_total[5m])), 1)",
           "refId": "A"
         }
       ],
@@ -68,8 +68,8 @@
       "gridPos": { "x": 18, "y": 0, "w": 6, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
-        { "expr": "rate(vaultfs_bytes_uploaded_total[1m])", "legendFormat": "upload", "refId": "A" },
-        { "expr": "rate(vaultfs_bytes_downloaded_total[1m])", "legendFormat": "download", "refId": "B" }
+        { "expr": "rate(vexobj_bytes_uploaded_total[1m])", "legendFormat": "upload", "refId": "A" },
+        { "expr": "rate(vexobj_bytes_downloaded_total[1m])", "legendFormat": "download", "refId": "B" }
       ],
       "fieldConfig": { "defaults": { "unit": "Bps" } }
     },
@@ -80,17 +80,17 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(rate(vaultfs_request_duration_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.50, sum(rate(vexobj_request_duration_seconds_bucket[5m])) by (le))",
           "legendFormat": "p50",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(vaultfs_request_duration_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(vexobj_request_duration_seconds_bucket[5m])) by (le))",
           "legendFormat": "p95",
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.99, sum(rate(vaultfs_request_duration_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(vexobj_request_duration_seconds_bucket[5m])) by (le))",
           "legendFormat": "p99",
           "refId": "C"
         }
@@ -104,7 +104,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "rate(vaultfs_requests_by_status_total[1m])",
+          "expr": "rate(vexobj_requests_by_status_total[1m])",
           "legendFormat": "{{status}}",
           "refId": "A"
         }
@@ -118,7 +118,7 @@
       "gridPos": { "x": 0, "y": 16, "w": 6, "h": 6 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
-        { "expr": "vaultfs_objects_uploaded_total", "refId": "A" }
+        { "expr": "vexobj_objects_uploaded_total", "refId": "A" }
       ],
       "fieldConfig": { "defaults": { "unit": "short" } },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" }
@@ -129,7 +129,7 @@
       "gridPos": { "x": 6, "y": 16, "w": 6, "h": 6 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
-        { "expr": "vaultfs_bytes_uploaded_total", "refId": "A" }
+        { "expr": "vexobj_bytes_uploaded_total", "refId": "A" }
       ],
       "fieldConfig": { "defaults": { "unit": "bytes" } },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" }
@@ -140,7 +140,7 @@
       "gridPos": { "x": 12, "y": 16, "w": 6, "h": 6 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
-        { "expr": "vaultfs_bytes_downloaded_total", "refId": "A" }
+        { "expr": "vexobj_bytes_downloaded_total", "refId": "A" }
       ],
       "fieldConfig": { "defaults": { "unit": "bytes" } },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" }
@@ -151,7 +151,7 @@
       "gridPos": { "x": 18, "y": 16, "w": 6, "h": 6 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
-        { "expr": "vaultfs_requests_total", "refId": "A" }
+        { "expr": "vexobj_requests_total", "refId": "A" }
       ],
       "fieldConfig": { "defaults": { "unit": "short" } },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" }
@@ -159,7 +159,7 @@
   ],
   "refresh": "10s",
   "schemaVersion": 39,
-  "tags": ["vaultfs", "storage"],
+  "tags": ["vexobj", "storage"],
   "templating": {
     "list": [
       {
@@ -181,8 +181,8 @@
   "time": { "from": "now-1h", "to": "now" },
   "timepicker": {},
   "timezone": "",
-  "title": "VaultFS",
-  "uid": "vaultfs-overview",
+  "title": "vexobj",
+  "uid": "vexobj-overview",
   "version": 1,
   "weekStart": ""
 }

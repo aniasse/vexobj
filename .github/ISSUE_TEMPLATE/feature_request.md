@@ -1,6 +1,6 @@
 ---
 name: Feature Request
-about: Suggest a new feature or improvement for VaultFS
+about: Suggest a new feature or improvement for vexobj
 title: "[FEATURE] "
 labels: enhancement
 assignees: ''

@@ -1,14 +1,14 @@
-VaultFS has been deployed!
+vexobj has been deployed!
 
 1. Get the admin API key from the pod logs:
 
-   kubectl logs -l app.kubernetes.io/name=vaultfs --tail=20
+   kubectl logs -l app.kubernetes.io/name=vexobj --tail=20
 
-2. Access VaultFS:
+2. Access vexobj:
 {{- if .Values.ingress.enabled }}
    URL: http{{ if $.Values.ingress.tls }}s{{ end }}://{{ (index .Values.ingress.hosts 0).host }}
 {{- else }}
-   kubectl port-forward svc/{{ include "vaultfs.fullname" . }} 8000:{{ .Values.service.port }}
+   kubectl port-forward svc/{{ include "vexobj.fullname" . }} 8000:{{ .Values.service.port }}
    URL: http://localhost:8000
 {{- end }}
 

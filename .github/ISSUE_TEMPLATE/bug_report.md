@@ -1,6 +1,6 @@
 ---
 name: Bug Report
-about: Report a bug to help us improve VaultFS
+about: Report a bug to help us improve vexobj
 title: "[BUG] "
 labels: bug
 assignees: ''
@@ -12,7 +12,7 @@ A clear and concise description of the bug.
 
 ## Steps to Reproduce
 
-1. Start VaultFS with config '...'
+1. Start vexobj with config '...'
 2. Run command '...'
 3. Send request '...'
 4. See error
@@ -28,7 +28,7 @@ A clear description of what actually happened.
 ## Environment
 
 - **OS**: (e.g., Ubuntu 24.04, macOS 15, Windows 11)
-- **VaultFS version**: (e.g., v0.1.0 or commit hash)
+- **vexobj version**: (e.g., v0.1.0 or commit hash)
 - **Installation method**: (binary, Docker, built from source)
 - **Rust version** (if built from source): (e.g., 1.82)
 
@@ -38,7 +38,7 @@ A clear description of what actually happened.
 <summary>Relevant log output</summary>
 
 ```
-Paste logs here. Run VaultFS with RUST_LOG=debug for verbose output.
+Paste logs here. Run vexobj with RUST_LOG=debug for verbose output.
 ```
 
 </details>
@@ -46,7 +46,7 @@ Paste logs here. Run VaultFS with RUST_LOG=debug for verbose output.
 ## Configuration
 
 <details>
-<summary>VaultFS config (redact any secrets)</summary>
+<summary>vexobj config (redact any secrets)</summary>
 
 ```toml
 # Paste your config.toml here

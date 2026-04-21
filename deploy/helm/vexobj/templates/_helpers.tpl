@@ -1,8 +1,8 @@
-{{- define "vaultfs.name" -}}
+{{- define "vexobj.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
-{{- define "vaultfs.fullname" -}}
+{{- define "vexobj.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
@@ -15,14 +15,14 @@
 {{- end }}
 {{- end }}
 
-{{- define "vaultfs.labels" -}}
+{{- define "vexobj.labels" -}}
 helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
-{{ include "vaultfs.selectorLabels" . }}
+{{ include "vexobj.selectorLabels" . }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
-{{- define "vaultfs.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "vaultfs.name" . }}
+{{- define "vexobj.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "vexobj.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
