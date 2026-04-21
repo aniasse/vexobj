@@ -1,7 +1,7 @@
 //! Background worker that drains the `transcode_jobs` table.
 //!
 //! Spawned once at startup. Polls for `pending` jobs, runs ffmpeg on a
-//! blocking thread, stores the output as a first-class vaultfs object
+//! blocking thread, stores the output as a first-class vexobj object
 //! (so it shows up in listings, gets normal versioning and lifecycle),
 //! then updates the job row. On failure the error message is stored
 //! on the row and the worker moves on.
@@ -134,7 +134,7 @@ async fn run_job(
     .map_err(|e| format!("worker panicked: {e}"))?
     .map_err(|e| format!("{e}"))?;
 
-    // Stream the output into the object store as a regular vaultfs
+    // Stream the output into the object store as a regular vexobj
     // object. Key convention: "<original_key>.<profile>.<ext>" in the
     // same bucket — picks up versioning / lifecycle / ACLs naturally.
     let output_key = format!("{}.{}.{}", job.key, profile.name, profile.extension);

@@ -3,7 +3,7 @@
 //! string-to-sign) runs once per S3 call, so its cost sets the upper
 //! bound on requests-per-core for the /s3 layer.
 //!
-//! Run with: `cargo bench -p vaultfs-s3-compat`
+//! Run with: `cargo bench -p vexobj-s3-compat`
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use hmac::{Hmac, Mac};

@@ -122,12 +122,12 @@ impl Metrics {
         let mut out = String::with_capacity(2048);
 
         // requests_total by method
-        out.push_str("# HELP vaultfs_requests_total Total number of HTTP requests.\n");
-        out.push_str("# TYPE vaultfs_requests_total counter\n");
-        out.push_str(&format!("vaultfs_requests_total {{}} {}\n", self.requests_total.load(Ordering::Relaxed)));
+        out.push_str("# HELP vexobj_requests_total Total number of HTTP requests.\n");
+        out.push_str("# TYPE vexobj_requests_total counter\n");
+        out.push_str(&format!("vexobj_requests_total {{}} {}\n", self.requests_total.load(Ordering::Relaxed)));
 
-        out.push_str("# HELP vaultfs_requests_by_method_total HTTP requests by method.\n");
-        out.push_str("# TYPE vaultfs_requests_by_method_total counter\n");
+        out.push_str("# HELP vexobj_requests_by_method_total HTTP requests by method.\n");
+        out.push_str("# TYPE vexobj_requests_by_method_total counter\n");
         for (method, counter) in [
             ("GET", &self.requests_get),
             ("PUT", &self.requests_put),
@@ -136,14 +136,14 @@ impl Metrics {
             ("HEAD", &self.requests_head),
         ] {
             out.push_str(&format!(
-                "vaultfs_requests_by_method_total{{method=\"{}\"}} {}\n",
+                "vexobj_requests_by_method_total{{method=\"{}\"}} {}\n",
                 method,
                 counter.load(Ordering::Relaxed),
             ));
         }
 
-        out.push_str("# HELP vaultfs_requests_by_status_total HTTP requests by status class.\n");
-        out.push_str("# TYPE vaultfs_requests_by_status_total counter\n");
+        out.push_str("# HELP vexobj_requests_by_status_total HTTP requests by status class.\n");
+        out.push_str("# TYPE vexobj_requests_by_status_total counter\n");
         for (status, counter) in [
             ("2xx", &self.requests_2xx),
             ("3xx", &self.requests_3xx),
@@ -151,7 +151,7 @@ impl Metrics {
             ("5xx", &self.requests_5xx),
         ] {
             out.push_str(&format!(
-                "vaultfs_requests_by_status_total{{status=\"{}\"}} {}\n",
+                "vexobj_requests_by_status_total{{status=\"{}\"}} {}\n",
                 status,
                 counter.load(Ordering::Relaxed),
             ));
@@ -162,8 +162,8 @@ impl Metrics {
         let sum_us = self.request_duration_sum_us.load(Ordering::Relaxed);
         let sum_secs = sum_us as f64 / 1_000_000.0;
 
-        out.push_str("# HELP vaultfs_request_duration_seconds HTTP request duration in seconds.\n");
-        out.push_str("# TYPE vaultfs_request_duration_seconds histogram\n");
+        out.push_str("# HELP vexobj_request_duration_seconds HTTP request duration in seconds.\n");
+        out.push_str("# TYPE vexobj_request_duration_seconds histogram\n");
         for (le, counter) in [
             ("0.001", &self.duration_le_1ms),
             ("0.01", &self.duration_le_10ms),
@@ -175,26 +175,26 @@ impl Metrics {
             ("+Inf", &self.duration_le_inf),
         ] {
             out.push_str(&format!(
-                "vaultfs_request_duration_seconds_bucket{{le=\"{}\"}} {}\n",
+                "vexobj_request_duration_seconds_bucket{{le=\"{}\"}} {}\n",
                 le,
                 counter.load(Ordering::Relaxed),
             ));
         }
-        out.push_str(&format!("vaultfs_request_duration_seconds_sum {:.6}\n", sum_secs));
-        out.push_str(&format!("vaultfs_request_duration_seconds_count {}\n", count));
+        out.push_str(&format!("vexobj_request_duration_seconds_sum {:.6}\n", sum_secs));
+        out.push_str(&format!("vexobj_request_duration_seconds_count {}\n", count));
 
         // Upload/download counters
-        out.push_str("# HELP vaultfs_objects_uploaded_total Total objects uploaded.\n");
-        out.push_str("# TYPE vaultfs_objects_uploaded_total counter\n");
-        out.push_str(&format!("vaultfs_objects_uploaded_total {}\n", self.objects_uploaded_total.load(Ordering::Relaxed)));
+        out.push_str("# HELP vexobj_objects_uploaded_total Total objects uploaded.\n");
+        out.push_str("# TYPE vexobj_objects_uploaded_total counter\n");
+        out.push_str(&format!("vexobj_objects_uploaded_total {}\n", self.objects_uploaded_total.load(Ordering::Relaxed)));
 
-        out.push_str("# HELP vaultfs_bytes_uploaded_total Total bytes uploaded.\n");
-        out.push_str("# TYPE vaultfs_bytes_uploaded_total counter\n");
-        out.push_str(&format!("vaultfs_bytes_uploaded_total {}\n", self.bytes_uploaded_total.load(Ordering::Relaxed)));
+        out.push_str("# HELP vexobj_bytes_uploaded_total Total bytes uploaded.\n");
+        out.push_str("# TYPE vexobj_bytes_uploaded_total counter\n");
+        out.push_str(&format!("vexobj_bytes_uploaded_total {}\n", self.bytes_uploaded_total.load(Ordering::Relaxed)));
 
-        out.push_str("# HELP vaultfs_bytes_downloaded_total Total bytes downloaded.\n");
-        out.push_str("# TYPE vaultfs_bytes_downloaded_total counter\n");
-        out.push_str(&format!("vaultfs_bytes_downloaded_total {}\n", self.bytes_downloaded_total.load(Ordering::Relaxed)));
+        out.push_str("# HELP vexobj_bytes_downloaded_total Total bytes downloaded.\n");
+        out.push_str("# TYPE vexobj_bytes_downloaded_total counter\n");
+        out.push_str(&format!("vexobj_bytes_downloaded_total {}\n", self.bytes_downloaded_total.load(Ordering::Relaxed)));
 
         out
     }

@@ -5,14 +5,14 @@ use serde_json::Value;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "vaultfsctl", version, about = "VaultFS admin CLI")]
+#[command(name = "vexobjctl", version, about = "vexobj admin CLI")]
 struct Cli {
-    /// VaultFS server URL
-    #[arg(long, env = "VAULTFS_URL", default_value = "http://localhost:8000")]
+    /// vexobj server URL
+    #[arg(long, env = "VEXOBJ_URL", default_value = "http://localhost:8000")]
     url: String,
 
     /// API key for authentication
-    #[arg(long, env = "VAULTFS_KEY")]
+    #[arg(long, env = "VEXOBJ_KEY")]
     key: Option<String>,
 
     #[command(subcommand)]
@@ -49,7 +49,7 @@ enum Commands {
     },
     /// Health check
     Health,
-    /// Migrate data from external sources into VaultFS
+    /// Migrate data from external sources into vexobj
     Migrate {
         #[command(subcommand)]
         source: MigrateSource,
@@ -64,34 +64,34 @@ enum Commands {
     /// accidentally reconnects to the dead primary, and runs a sanity
     /// probe against the local server. See docs/failover.md.
     Promote {
-        /// Cursor file written by `vaultfsctl replicate`. Deleted on
+        /// Cursor file written by `vexobjctl replicate`. Deleted on
         /// success so a future replicate call against the dead primary
         /// fails loudly instead of rewinding to 0.
-        #[arg(long, default_value = "./vaultfs-replica.cursor")]
+        #[arg(long, default_value = "./vexobj-replica.cursor")]
         cursor_file: PathBuf,
         /// Skip deletion of the cursor file (handy in tests or if you
         /// want to inspect the last-applied id without side effects).
         #[arg(long)]
         keep_cursor: bool,
     },
-    /// Pull replication events from a primary VaultFS and apply them to the
+    /// Pull replication events from a primary vexobj and apply them to the
     /// local server. Designed to run as a one-shot or a tight loop.
     Replicate {
-        /// Primary VaultFS URL (e.g. https://vaultfs-primary.example.com)
+        /// Primary vexobj URL (e.g. https://vexobj-primary.example.com)
         #[arg(long)]
         primary: String,
         /// Admin API key on the primary (read-only keys are not enough)
-        #[arg(long, env = "VAULTFS_PRIMARY_KEY")]
+        #[arg(long, env = "VEXOBJ_PRIMARY_KEY")]
         primary_key: String,
-        /// Local (replica) VaultFS URL. Defaults to --url.
+        /// Local (replica) vexobj URL. Defaults to --url.
         #[arg(long)]
         local: Option<String>,
         /// Admin API key on the local replica. Defaults to --key.
-        #[arg(long, env = "VAULTFS_LOCAL_KEY")]
+        #[arg(long, env = "VEXOBJ_LOCAL_KEY")]
         local_key: Option<String>,
         /// Cursor file that records the last applied event id. A missing
         /// file means start from event 0 (full catch-up).
-        #[arg(long, default_value = "./vaultfs-replica.cursor")]
+        #[arg(long, default_value = "./vexobj-replica.cursor")]
         cursor_file: PathBuf,
         /// Poll interval in seconds. If 0, apply once and exit.
         #[arg(long, default_value_t = 0u64)]
@@ -143,7 +143,7 @@ enum MigrateSource {
         /// S3 secret access key
         #[arg(long)]
         source_secret_key: String,
-        /// Destination VaultFS bucket name
+        /// Destination vexobj bucket name
         #[arg(long)]
         dest_bucket: String,
         /// Only migrate objects with this key prefix
@@ -902,7 +902,7 @@ async fn cmd_stats(api: &ApiClient) -> Result<()> {
     let resp = api.get("/v1/stats").send().await.context("request failed")?;
     let body = check_response(resp).await?;
 
-    println!("VaultFS Storage Statistics");
+    println!("vexobj Storage Statistics");
     println!("==========================");
     println!(
         "Buckets:       {}",
@@ -1072,9 +1072,9 @@ async fn cmd_health(api: &ApiClient) -> Result<()> {
         .unwrap_or("unknown");
 
     if status.is_success() && srv_status == "ok" {
-        println!("VaultFS is healthy (v{})", version);
+        println!("vexobj is healthy (v{})", version);
     } else {
-        println!("VaultFS health check failed (HTTP {}, status={})", status, srv_status);
+        println!("vexobj health check failed (HTTP {}, status={})", status, srv_status);
         std::process::exit(1);
     }
     Ok(())
@@ -1348,7 +1348,7 @@ async fn cmd_migrate_s3(
         return Ok(());
     }
 
-    // Phase 2: Download each object from S3 and upload to VaultFS
+    // Phase 2: Download each object from S3 and upload to vexobj
     let mut migrated = 0u64;
     let mut failed = 0u64;
     let mut bytes_transferred = 0u64;
@@ -1417,7 +1417,7 @@ async fn cmd_migrate_s3(
             .first_or_octet_stream()
             .to_string();
 
-        // Upload to VaultFS
+        // Upload to vexobj
         let upload_path = format!("/v1/objects/{}/{}", dest_bucket, obj.key);
         let upload_resp = api
             .put(&upload_path)
@@ -1681,7 +1681,7 @@ async fn cmd_promote(
     cursor_file: &std::path::Path,
     keep_cursor: bool,
 ) -> Result<()> {
-    println!("=== VaultFS promote ===");
+    println!("=== vexobj promote ===");
     println!("Local server: {}", api.base_url);
     println!();
 
@@ -1754,12 +1754,12 @@ async fn cmd_promote(
     // Operator checklist. Promotion itself is not a state change on the
     // server — the server always writes to its own replication log.
     // What changes is *who the world talks to*, which the operator
-    // must reconfigure outside VaultFS.
+    // must reconfigure outside vexobj.
     println!();
     println!("Promotion checklist (complete these next):");
     println!("  1. Point clients at this node (DNS, load balancer, SDK base_url).");
     println!("  2. Revoke the old primary's admin key (in case it comes back online).");
-    println!("  3. Start `vaultfsctl replicate` on each remaining replica with");
+    println!("  3. Start `vexobjctl replicate` on each remaining replica with");
     println!("     --primary={} and a fresh cursor file.", api.base_url);
     println!("  4. Investigate why the old primary failed before reusing the node.");
     println!();

@@ -186,7 +186,7 @@ pub struct WebhookConfigEntry {
 
 /// Server-side encryption at rest. When enabled, blobs are stored
 /// AES-256-GCM encrypted on disk. `master_key` must be 64 hex chars (32
-/// bytes). Can be set via VAULTFS_SSE_MASTER_KEY for secrets hygiene.
+/// bytes). Can be set via VEXOBJ_SSE_MASTER_KEY for secrets hygiene.
 #[derive(Debug, Deserialize, Default)]
 pub struct SseConfig {
     #[serde(default)]
@@ -288,7 +288,7 @@ fn default_webhook_events() -> Vec<String> {
 
 impl Config {
     pub fn load() -> Result<Self> {
-        let config_path = std::env::var("VAULTFS_CONFIG").unwrap_or_else(|_| "config.toml".into());
+        let config_path = std::env::var("VEXOBJ_CONFIG").unwrap_or_else(|_| "config.toml".into());
 
         let mut config: Config = if std::path::Path::new(&config_path).exists() {
             let content = std::fs::read_to_string(&config_path)?;
@@ -297,29 +297,29 @@ impl Config {
             toml::from_str("")?
         };
 
-        // Environment variable overrides (VAULTFS_ prefix)
-        if let Ok(val) = std::env::var("VAULTFS_BIND") {
+        // Environment variable overrides (VEXOBJ_ prefix)
+        if let Ok(val) = std::env::var("VEXOBJ_BIND") {
             config.server.bind = val;
         }
-        if let Ok(val) = std::env::var("VAULTFS_DATA_DIR") {
+        if let Ok(val) = std::env::var("VEXOBJ_DATA_DIR") {
             config.storage.data_dir = val;
         }
-        if let Ok(val) = std::env::var("VAULTFS_AUTH_ENABLED") {
+        if let Ok(val) = std::env::var("VEXOBJ_AUTH_ENABLED") {
             config.auth.enabled = val.parse().unwrap_or(config.auth.enabled);
         }
-        if let Ok(val) = std::env::var("VAULTFS_MAX_FILE_SIZE") {
+        if let Ok(val) = std::env::var("VEXOBJ_MAX_FILE_SIZE") {
             config.storage.max_file_size = val;
         }
-        if let Ok(val) = std::env::var("VAULTFS_DEDUPLICATION") {
+        if let Ok(val) = std::env::var("VEXOBJ_DEDUPLICATION") {
             config.storage.deduplication = val.parse().unwrap_or(config.storage.deduplication);
         }
         // Storage-backend envs follow the same pattern as the [storage.s3]
         // block; they're the path used by the test harness and by
         // operators who don't want credentials in their config file.
-        if let Ok(val) = std::env::var("VAULTFS_STORAGE_BACKEND") {
+        if let Ok(val) = std::env::var("VEXOBJ_STORAGE_BACKEND") {
             config.storage.backend = val;
         }
-        if let Ok(val) = std::env::var("VAULTFS_S3_ENDPOINT") {
+        if let Ok(val) = std::env::var("VEXOBJ_S3_ENDPOINT") {
             let s3 = config.storage.s3.get_or_insert_with(|| StorageS3Config {
                 endpoint: String::new(),
                 bucket: String::new(),
@@ -329,60 +329,60 @@ impl Config {
                 path_style: true,
             });
             s3.endpoint = val;
-            if let Ok(v) = std::env::var("VAULTFS_S3_BUCKET")     { s3.bucket = v; }
-            if let Ok(v) = std::env::var("VAULTFS_S3_ACCESS_KEY") { s3.access_key = v; }
-            if let Ok(v) = std::env::var("VAULTFS_S3_SECRET_KEY") { s3.secret_key = v; }
-            if let Ok(v) = std::env::var("VAULTFS_S3_REGION")     { s3.region = v; }
-            if let Ok(v) = std::env::var("VAULTFS_S3_PATH_STYLE") {
+            if let Ok(v) = std::env::var("VEXOBJ_S3_BUCKET")     { s3.bucket = v; }
+            if let Ok(v) = std::env::var("VEXOBJ_S3_ACCESS_KEY") { s3.access_key = v; }
+            if let Ok(v) = std::env::var("VEXOBJ_S3_SECRET_KEY") { s3.secret_key = v; }
+            if let Ok(v) = std::env::var("VEXOBJ_S3_REGION")     { s3.region = v; }
+            if let Ok(v) = std::env::var("VEXOBJ_S3_PATH_STYLE") {
                 s3.path_style = v.parse().unwrap_or(true);
             }
         }
-        if let Ok(val) = std::env::var("VAULTFS_CACHE_MEMORY_SIZE") {
+        if let Ok(val) = std::env::var("VEXOBJ_CACHE_MEMORY_SIZE") {
             config.cache.memory_size = val;
         }
-        if let Ok(val) = std::env::var("VAULTFS_CACHE_DISK_SIZE") {
+        if let Ok(val) = std::env::var("VEXOBJ_CACHE_DISK_SIZE") {
             config.cache.disk_size = val;
         }
-        if let Ok(val) = std::env::var("VAULTFS_TLS_ENABLED") {
+        if let Ok(val) = std::env::var("VEXOBJ_TLS_ENABLED") {
             config.tls.enabled = val.parse().unwrap_or(config.tls.enabled);
         }
-        if let Ok(val) = std::env::var("VAULTFS_TLS_CERT_PATH") {
+        if let Ok(val) = std::env::var("VEXOBJ_TLS_CERT_PATH") {
             config.tls.cert_path = Some(val);
         }
-        if let Ok(val) = std::env::var("VAULTFS_TLS_KEY_PATH") {
+        if let Ok(val) = std::env::var("VEXOBJ_TLS_KEY_PATH") {
             config.tls.key_path = Some(val);
         }
-        if let Ok(val) = std::env::var("VAULTFS_RATE_LIMIT_ENABLED") {
+        if let Ok(val) = std::env::var("VEXOBJ_RATE_LIMIT_ENABLED") {
             config.rate_limit.enabled = val.parse().unwrap_or(config.rate_limit.enabled);
         }
-        if let Ok(val) = std::env::var("VAULTFS_RATE_LIMIT_MAX") {
+        if let Ok(val) = std::env::var("VEXOBJ_RATE_LIMIT_MAX") {
             config.rate_limit.max_requests = val.parse().unwrap_or(config.rate_limit.max_requests);
         }
-        if let Ok(val) = std::env::var("VAULTFS_RATE_LIMIT_WINDOW") {
+        if let Ok(val) = std::env::var("VEXOBJ_RATE_LIMIT_WINDOW") {
             config.rate_limit.window_secs = val.parse().unwrap_or(config.rate_limit.window_secs);
         }
-        if let Ok(val) = std::env::var("VAULTFS_QUOTAS_ENABLED") {
+        if let Ok(val) = std::env::var("VEXOBJ_QUOTAS_ENABLED") {
             config.quotas.enabled = val.parse().unwrap_or(config.quotas.enabled);
         }
-        if let Ok(val) = std::env::var("VAULTFS_QUOTAS_MAX_STORAGE") {
+        if let Ok(val) = std::env::var("VEXOBJ_QUOTAS_MAX_STORAGE") {
             config.quotas.default_max_storage = val;
         }
-        if let Ok(val) = std::env::var("VAULTFS_QUOTAS_MAX_OBJECTS") {
+        if let Ok(val) = std::env::var("VEXOBJ_QUOTAS_MAX_OBJECTS") {
             config.quotas.default_max_objects = val.parse().unwrap_or(config.quotas.default_max_objects);
         }
-        if let Ok(val) = std::env::var("VAULTFS_SSE_ENABLED") {
+        if let Ok(val) = std::env::var("VEXOBJ_SSE_ENABLED") {
             config.sse.enabled = val.parse().unwrap_or(config.sse.enabled);
         }
-        if let Ok(val) = std::env::var("VAULTFS_SSE_MASTER_KEY") {
+        if let Ok(val) = std::env::var("VEXOBJ_SSE_MASTER_KEY") {
             config.sse.master_key = val;
         }
-        if let Ok(val) = std::env::var("VAULTFS_TRANSCODE_WORKERS") {
+        if let Ok(val) = std::env::var("VEXOBJ_TRANSCODE_WORKERS") {
             if let Ok(v) = val.parse() { config.transcode.workers = v; }
         }
-        if let Ok(val) = std::env::var("VAULTFS_TRANSCODE_MAX_PENDING") {
+        if let Ok(val) = std::env::var("VEXOBJ_TRANSCODE_MAX_PENDING") {
             if let Ok(v) = val.parse() { config.transcode.max_pending = v; }
         }
-        if let Ok(val) = std::env::var("VAULTFS_TRANSCODE_GC_DAYS") {
+        if let Ok(val) = std::env::var("VEXOBJ_TRANSCODE_GC_DAYS") {
             if let Ok(v) = val.parse() { config.transcode.gc_after_days = v; }
         }
 

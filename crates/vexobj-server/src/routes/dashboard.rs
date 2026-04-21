@@ -17,7 +17,7 @@ const DASHBOARD_HTML: &str = r##"<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VaultFS Dashboard</title>
+<title>vexobj Dashboard</title>
 <style>
   :root {
     --bg: #0f1117;

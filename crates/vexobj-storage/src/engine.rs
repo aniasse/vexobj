@@ -43,7 +43,7 @@ impl StorageEngine {
         deduplication: bool,
         encryptor: Option<Arc<Encryptor>>,
     ) -> Result<Self, StorageError> {
-        // Default to local blob storage — what VaultFS has always done.
+        // Default to local blob storage — what vexobj has always done.
         let blob_store = Arc::new(crate::LocalBlobStore::new(data_dir.clone()));
         Self::with_backend(data_dir, max_file_size, deduplication, encryptor, blob_store)
     }
@@ -59,7 +59,7 @@ impl StorageEngine {
         encryptor: Option<Arc<Encryptor>>,
         blob_store: Arc<dyn crate::blob_store::BlobStore>,
     ) -> Result<Self, StorageError> {
-        let db_path = data_dir.join("vaultfs.db");
+        let db_path = data_dir.join("vexobj.db");
         std::fs::create_dir_all(&data_dir)?;
         // Only pre-create the blobs directory when the backend is
         // local — remote backends manage their own prefix layout.

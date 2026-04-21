@@ -134,7 +134,7 @@ async fn get_blob(
                 [
                     ("content-type", "application/octet-stream".to_string()),
                     ("content-length", size),
-                    ("x-vaultfs-sha256", sha256),
+                    ("x-vexobj-sha256", sha256),
                 ],
                 Body::from_stream(stream),
             )

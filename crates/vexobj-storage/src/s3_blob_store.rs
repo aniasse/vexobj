@@ -180,7 +180,7 @@ fn sha256_hex(data: &[u8]) -> String {
 }
 
 /// Build the Authorization + x-amz-* headers for an S3 request. Mirrors
-/// the signing we already do in vaultfsctl-migrate; extracted here so
+/// the signing we already do in vexobjctl-migrate; extracted here so
 /// the backend doesn't depend on the CLI crate.
 fn sign_request(
     method: &str,

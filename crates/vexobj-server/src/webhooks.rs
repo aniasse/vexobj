@@ -62,7 +62,7 @@ async fn webhook_worker(
                 let mut req = client
                     .post(&config.url)
                     .header("content-type", "application/json")
-                    .header("x-vaultfs-event", &event.event);
+                    .header("x-vexobj-event", &event.event);
 
                 if let Some(ref secret) = config.secret {
                     use hmac::{Hmac, Mac};
@@ -72,7 +72,7 @@ async fn webhook_worker(
                     let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
                     mac.update(body.as_bytes());
                     let sig = hex::encode(mac.finalize().into_bytes());
-                    req = req.header("x-vaultfs-signature", sig);
+                    req = req.header("x-vexobj-signature", sig);
                 }
 
                 match req.body(body).send().await {

@@ -75,7 +75,7 @@ impl ObjectLock {
 }
 
 /// A video transcoding job tracked in SQLite. Variant output is
-/// stored as a first-class vaultfs object at `output_bucket/output_key`
+/// stored as a first-class vexobj object at `output_bucket/output_key`
 /// once the job completes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranscodeJob {
@@ -85,7 +85,7 @@ pub struct TranscodeJob {
     pub bucket: String,
     pub key: String,
     pub source_sha256: String,
-    /// Profile name (see vaultfs-processing::transcode_profiles).
+    /// Profile name (see vexobj-processing::transcode_profiles).
     pub profile: String,
     pub output_bucket: Option<String>,
     pub output_key: Option<String>,

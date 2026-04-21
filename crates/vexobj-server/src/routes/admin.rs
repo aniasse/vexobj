@@ -552,7 +552,7 @@ async fn migrate_s3_stub(
         Json(json!({
             "error": "server-side S3 migration is not implemented",
             "hint": "Use the CLI tool instead:",
-            "command": "vaultfsctl migrate s3 --source-endpoint <ENDPOINT> --source-bucket <BUCKET> --source-access-key <KEY> --source-secret-key <SECRET> --dest-bucket <DEST>"
+            "command": "vexobjctl migrate s3 --source-endpoint <ENDPOINT> --source-bucket <BUCKET> --source-access-key <KEY> --source-secret-key <SECRET> --dest-bucket <DEST>"
         })),
     )
         .into_response()

@@ -21,7 +21,7 @@ pub struct S3State {
 }
 
 /// Create the S3-compatible router.
-/// Mount this at the root alongside the VaultFS native API.
+/// Mount this at the root alongside the vexobj native API.
 pub fn s3_router(storage: Arc<StorageEngine>, auth: Arc<AuthManager>) -> Router {
     let state = S3State { storage, auth };
 
@@ -125,7 +125,7 @@ async fn s3_service(
 
     match state.storage.list_buckets() {
         Ok(buckets) => {
-            let body = xml::list_buckets_xml(&buckets, "vaultfs");
+            let body = xml::list_buckets_xml(&buckets, "vexobj");
             (
                 StatusCode::OK,
                 [("content-type", "application/xml")],

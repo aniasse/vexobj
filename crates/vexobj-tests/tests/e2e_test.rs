@@ -1,10 +1,10 @@
-//! End-to-end HTTP integration tests for VaultFS.
+//! End-to-end HTTP integration tests for vexobj.
 //!
-//! Each test spawns a real `vaultfs` server process on a random port, makes
+//! Each test spawns a real `vexobj` server process on a random port, makes
 //! HTTP requests via `reqwest`, then tears the server down.
 //!
 //! Prerequisites:
-//!   cargo build          # the binary must exist at target/debug/vaultfs
+//!   cargo build          # the binary must exist at target/debug/vexobj
 //!   cargo test --all     # runs these tests
 
 use reqwest::Client;
@@ -32,7 +32,7 @@ fn find_free_port() -> u16 {
 }
 
 impl TestServer {
-    /// Spawn a VaultFS server on a random port with a fresh temp directory.
+    /// Spawn a vexobj server on a random port with a fresh temp directory.
     /// Blocks until the health endpoint responds or a timeout is reached.
     fn start() -> Self {
         Self::start_with(None, &[])
@@ -43,7 +43,7 @@ impl TestServer {
     }
 
     /// Start a test server with arbitrary env vars — used by tests that
-    /// need to tweak VAULTFS_* knobs (rate limits, worker counts, etc.).
+    /// need to tweak VEXOBJ_* knobs (rate limits, worker counts, etc.).
     fn start_with_env(extra_env: &[(&str, &str)]) -> Self {
         Self::start_with(None, extra_env)
     }
@@ -52,7 +52,7 @@ impl TestServer {
     /// given extra environment overrides, and blocks until /health
     /// answers.
     fn start_with(sse_master_key: Option<&str>, extra_env: &[(&str, &str)]) -> Self {
-        let temp_dir = std::env::temp_dir().join(format!("vaultfs-e2e-{}", uuid::Uuid::new_v4()));
+        let temp_dir = std::env::temp_dir().join(format!("vexobj-e2e-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).expect("create temp dir");
 
         let port = find_free_port();
@@ -94,17 +94,17 @@ window_secs = 60
             .parent()
             .unwrap()
             .to_path_buf();
-        let binary = workspace_root.join("target/debug/vaultfs");
+        let binary = workspace_root.join("target/debug/vexobj");
         assert!(
             binary.exists(),
-            "vaultfs binary not found at {}. Run `cargo build` first.",
+            "vexobj binary not found at {}. Run `cargo build` first.",
             binary.display()
         );
 
         // Spawn with stdout piped so we can read the admin key from tracing output.
         // tracing_subscriber::fmt() writes to stdout by default in this project.
         let mut cmd = Command::new(&binary);
-        cmd.env("VAULTFS_CONFIG", config_path.to_str().unwrap())
+        cmd.env("VEXOBJ_CONFIG", config_path.to_str().unwrap())
             .env("RUST_LOG", "info")
             .env("NO_COLOR", "1")
             .stdout(Stdio::piped())
@@ -112,7 +112,7 @@ window_secs = 60
         for (k, v) in extra_env {
             cmd.env(k, v);
         }
-        let mut child = cmd.spawn().expect("spawn vaultfs");
+        let mut child = cmd.spawn().expect("spawn vexobj");
 
         // Read stdout in a separate thread so we don't block forever.
         // We collect lines until we see the "listening" message or timeout.
@@ -123,7 +123,7 @@ window_secs = 60
             for line in reader.lines() {
                 match line {
                     Ok(line) => {
-                        let done = line.contains("VaultFS listening on");
+                        let done = line.contains("vexobj listening on");
                         if tx.send(line).is_err() {
                             break;
                         }
@@ -143,7 +143,7 @@ window_secs = 60
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             if remaining.is_zero() {
                 child.kill().ok();
-                panic!("timed out waiting for vaultfs to start on port {}", port);
+                panic!("timed out waiting for vexobj to start on port {}", port);
             }
             match rx.recv_timeout(remaining) {
                 Ok(line) => {
@@ -154,19 +154,19 @@ window_secs = 60
                         }
                     }
                     // Server is ready
-                    if line.contains("VaultFS listening on") {
+                    if line.contains("vexobj listening on") {
                         break;
                     }
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                     child.kill().ok();
-                    panic!("timed out waiting for vaultfs to start on port {}", port);
+                    panic!("timed out waiting for vexobj to start on port {}", port);
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                     // stderr closed -- server probably crashed
                     let status = child.wait().ok();
                     panic!(
-                        "vaultfs exited unexpectedly on port {} (status: {:?})",
+                        "vexobj exited unexpectedly on port {} (status: {:?})",
                         port, status
                     );
                 }
@@ -263,7 +263,7 @@ async fn e2e_health_check() {
     assert_eq!(resp.status(), 200);
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body["status"], "ok");
-    assert_eq!(body["service"], "vaultfs");
+    assert_eq!(body["service"], "vexobj");
     assert!(body["version"].is_string());
 }
 
@@ -378,7 +378,7 @@ async fn e2e_object_crud() {
     assert_eq!(resp.status(), 201);
 
     // Upload object
-    let data = b"hello vaultfs e2e test";
+    let data = b"hello vexobj e2e test";
     let resp = client
         .put(format!("{}/v1/objects/obj-bucket/greeting.txt", srv.url))
         .header("Authorization", &auth)
@@ -746,13 +746,13 @@ async fn e2e_metrics_endpoint() {
     let body = resp.text().await.unwrap();
 
     // Verify key prometheus metrics are present
-    assert!(body.contains("vaultfs_requests_total"));
-    assert!(body.contains("vaultfs_requests_by_method_total"));
-    assert!(body.contains("vaultfs_request_duration_seconds"));
-    assert!(body.contains("vaultfs_bytes_uploaded_total"));
+    assert!(body.contains("vexobj_requests_total"));
+    assert!(body.contains("vexobj_requests_by_method_total"));
+    assert!(body.contains("vexobj_request_duration_seconds"));
+    assert!(body.contains("vexobj_bytes_uploaded_total"));
 
     // The request count should be > 0 since we made requests above
-    assert!(body.contains("vaultfs_requests_by_method_total{method=\"GET\"}"));
+    assert!(body.contains("vexobj_requests_by_method_total{method=\"GET\"}"));
 }
 
 #[tokio::test]
@@ -1048,7 +1048,7 @@ async fn e2e_delete_version_and_purge() {
 #[tokio::test]
 async fn e2e_replication_promote_clears_cursor() {
     // Simulate: primary is gone, replica caught up to some events,
-    // operator runs `vaultfsctl promote`. We verify the command runs
+    // operator runs `vexobjctl promote`. We verify the command runs
     // to success and deletes the cursor file so a later replicate
     // call can't silently replay from 0 against the dead primary.
     let primary = TestServer::start();
@@ -1077,7 +1077,7 @@ async fn e2e_replication_promote_clears_cursor() {
         .unwrap()
         .parent()
         .unwrap()
-        .join("target/debug/vaultfsctl");
+        .join("target/debug/vexobjctl");
 
     // Replicate once so the cursor file exists and holds a real id.
     let sync_out = Command::new(&binary)
@@ -1187,7 +1187,7 @@ async fn e2e_storage_backend_config_parses_local() {
     // server with the default config should report "local" at boot.
     // We can't test the S3 path without a live S3-compatible endpoint,
     // which belongs in a separate docker-compose-driven suite.
-    let srv = TestServer::start_with_env(&[("VAULTFS_STORAGE_BACKEND", "local")]);
+    let srv = TestServer::start_with_env(&[("VEXOBJ_STORAGE_BACKEND", "local")]);
     let client = srv.client();
     let auth = srv.auth_header();
 
@@ -1237,8 +1237,8 @@ async fn e2e_transcode_queue_cap_rejects_with_429() {
     };
 
     let srv = TestServer::start_with_env(&[
-        ("VAULTFS_TRANSCODE_WORKERS", "0"),
-        ("VAULTFS_TRANSCODE_MAX_PENDING", "1"),
+        ("VEXOBJ_TRANSCODE_WORKERS", "0"),
+        ("VEXOBJ_TRANSCODE_MAX_PENDING", "1"),
     ]);
     let client = srv.client();
     let auth = srv.auth_header();
@@ -1462,7 +1462,7 @@ async fn e2e_video_thumbnail_endpoint() {
         .unwrap();
     assert_eq!(r.status(), 200);
     assert_eq!(r.headers().get("content-type").unwrap(), "image/jpeg");
-    assert_eq!(r.headers().get("x-vaultfs-cache").unwrap(), "miss");
+    assert_eq!(r.headers().get("x-vexobj-cache").unwrap(), "miss");
     let body = r.bytes().await.unwrap();
     // A 200×N JPEG of a solid-color test frame compresses to a few
     // hundred bytes; anything under ~100 B would be a truncated write.
@@ -1479,7 +1479,7 @@ async fn e2e_video_thumbnail_endpoint() {
         .send()
         .await
         .unwrap();
-    assert_eq!(r2.headers().get("x-vaultfs-cache").unwrap(), "hit");
+    assert_eq!(r2.headers().get("x-vexobj-cache").unwrap(), "hit");
 
     // WebP variant — different cache key, different magic bytes.
     let r3 = client
@@ -1571,7 +1571,7 @@ async fn e2e_video_metadata_on_upload() {
     assert_eq!(video["codec"], "h264");
     assert_eq!(video["has_audio"], false);
 
-    // HEAD should surface the same values via x-vaultfs-video-* headers.
+    // HEAD should surface the same values via x-vexobj-video-* headers.
     let head = client
         .head(format!("{}/v1/objects/videos/clip.mp4", srv.url))
         .header("Authorization", &auth)
@@ -1580,10 +1580,10 @@ async fn e2e_video_metadata_on_upload() {
         .unwrap();
     assert_eq!(head.status(), 200);
     let h = head.headers();
-    assert_eq!(h.get("x-vaultfs-video-width").unwrap(), "320");
-    assert_eq!(h.get("x-vaultfs-video-height").unwrap(), "240");
-    assert_eq!(h.get("x-vaultfs-video-codec").unwrap(), "h264");
-    assert!(h.get("x-vaultfs-video-duration").is_some());
+    assert_eq!(h.get("x-vexobj-video-width").unwrap(), "320");
+    assert_eq!(h.get("x-vexobj-video-height").unwrap(), "240");
+    assert_eq!(h.get("x-vexobj-video-codec").unwrap(), "h264");
+    assert!(h.get("x-vexobj-video-duration").is_some());
 
     // A non-video upload must not grow any video metadata.
     let png_bytes = [
@@ -1614,7 +1614,7 @@ async fn e2e_video_metadata_on_upload() {
 #[tokio::test]
 async fn e2e_replication_two_node_sync() {
     // Spin up two independent servers and drive a one-shot replicate
-    // from "primary" to "replica" via the vaultfsctl binary.
+    // from "primary" to "replica" via the vexobjctl binary.
     let primary = TestServer::start();
     let replica = TestServer::start();
     let client = primary.client();
@@ -1654,7 +1654,7 @@ async fn e2e_replication_two_node_sync() {
         .await
         .unwrap();
 
-    // Run vaultfsctl replicate once. Primary and replica each have their
+    // Run vexobjctl replicate once. Primary and replica each have their
     // own admin key; we pass both explicitly.
     let cursor = std::env::temp_dir().join(format!("cursor-{}", uuid::Uuid::new_v4()));
     let binary = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1662,10 +1662,10 @@ async fn e2e_replication_two_node_sync() {
         .unwrap()
         .parent()
         .unwrap()
-        .join("target/debug/vaultfsctl");
+        .join("target/debug/vexobjctl");
     assert!(
         binary.exists(),
-        "vaultfsctl binary not found at {}. Run `cargo build` first.",
+        "vexobjctl binary not found at {}. Run `cargo build` first.",
         binary.display()
     );
 
@@ -1684,10 +1684,10 @@ async fn e2e_replication_two_node_sync() {
         ])
         .arg(&cursor)
         .output()
-        .expect("run vaultfsctl replicate");
+        .expect("run vexobjctl replicate");
     assert!(
         out.status.success(),
-        "vaultfsctl replicate failed: stdout={} stderr={}",
+        "vexobjctl replicate failed: stdout={} stderr={}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr),
     );
@@ -2414,5 +2414,5 @@ async fn e2e_migrate_s3_stub() {
     assert_eq!(resp.status(), 501);
     let body: Value = resp.json().await.unwrap();
     assert!(body["hint"].as_str().unwrap().contains("CLI"));
-    assert!(body["command"].as_str().unwrap().contains("vaultfsctl"));
+    assert!(body["command"].as_str().unwrap().contains("vexobjctl"));
 }

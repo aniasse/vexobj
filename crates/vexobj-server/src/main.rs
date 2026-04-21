@@ -26,7 +26,7 @@ async fn main() -> Result<()> {
     info!(
         bind = %config.server.bind,
         data_dir = %config.storage.data_dir,
-        "starting VaultFS"
+        "starting vexobj"
     );
 
     if config.tls.enabled {
@@ -119,7 +119,7 @@ async fn main() -> Result<()> {
             .as_deref()
             .expect("tls.key_path required when TLS is enabled");
 
-        info!("VaultFS listening on {} (HTTPS)", config.server.bind);
+        info!("vexobj listening on {} (HTTPS)", config.server.bind);
 
         let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert_path, key_path)
             .await?;
@@ -129,7 +129,7 @@ async fn main() -> Result<()> {
             .await?;
     } else {
         let listener = tokio::net::TcpListener::bind(&config.server.bind).await?;
-        info!("VaultFS listening on {}", config.server.bind);
+        info!("vexobj listening on {}", config.server.bind);
         axum::serve(listener, app).await?;
     }
 

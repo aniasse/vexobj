@@ -4,7 +4,7 @@ use tracing::info;
 use crate::db::Database;
 use crate::error::StorageError;
 
-/// Backup and restore operations for VaultFS.
+/// Backup and restore operations for vexobj.
 pub struct BackupManager {
     data_dir: PathBuf,
 }
@@ -34,7 +34,7 @@ impl BackupManager {
         std::fs::create_dir_all(dest_dir)?;
 
         // Backup SQLite database atomically
-        let db_dest = dest_dir.join("vaultfs.db");
+        let db_dest = dest_dir.join("vexobj.db");
         db.backup_to(&db_dest)?;
         let db_size = std::fs::metadata(&db_dest)
             .map(|m| m.len())
@@ -85,18 +85,18 @@ impl BackupManager {
     /// Restore from a backup snapshot.
     /// Warning: this will overwrite current data.
     pub fn restore_snapshot(&self, snapshot_dir: &Path) -> Result<RestoreResult, StorageError> {
-        let db_src = snapshot_dir.join("vaultfs.db");
+        let db_src = snapshot_dir.join("vexobj.db");
         if !db_src.exists() {
             return Err(StorageError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
-                "backup snapshot missing vaultfs.db",
+                "backup snapshot missing vexobj.db",
             )));
         }
 
         std::fs::create_dir_all(&self.data_dir)?;
 
         // Restore database
-        let db_dest = self.data_dir.join("vaultfs.db");
+        let db_dest = self.data_dir.join("vexobj.db");
         std::fs::copy(&db_src, &db_dest)?;
 
         // Restore auth database

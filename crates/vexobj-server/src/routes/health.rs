@@ -19,7 +19,7 @@ async fn health_check(State(state): State<AppState>) -> Json<serde_json::Value> 
     let vf = state.storage.video_features();
     Json(json!({
         "status": "ok",
-        "service": "vaultfs",
+        "service": "vexobj",
         "version": env!("CARGO_PKG_VERSION"),
         "capabilities": {
             "sse_at_rest":        state.storage.encryption_enabled(),
@@ -42,7 +42,7 @@ async fn swagger_ui() -> Html<&'static str> {
     Html(r#"<!DOCTYPE html>
 <html>
 <head>
-<title>VaultFS API Docs</title>
+<title>vexobj API Docs</title>
 <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
 </head>
 <body>

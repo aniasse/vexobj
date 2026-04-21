@@ -4,7 +4,7 @@
 //!
 //! We verify the `Authorization` header, recomputing the canonical request
 //! from the actual request the server received. The signing secret is the
-//! plaintext VaultFS API key (stored on key creation), so the `access_key_id`
+//! plaintext vexobj API key (stored on key creation), so the `access_key_id`
 //! in the Credential string is expected to be either the full `vfs_...` key
 //! or its 12-char prefix.
 

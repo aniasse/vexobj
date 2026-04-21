@@ -190,7 +190,7 @@ async fn get_object(
                         ("content-type", version.content_type),
                         ("content-length", version.size.to_string()),
                         ("etag", format!("\"{}\"", version.sha256)),
-                        ("x-vaultfs-version-id", version.version_id),
+                        ("x-vexobj-version-id", version.version_id),
                     ],
                     data,
                 )
@@ -256,7 +256,7 @@ async fn get_object(
                     StatusCode::OK,
                     [
                         ("content-type", cached_type),
-                        ("x-vaultfs-cache", "hit".to_string()),
+                        ("x-vexobj-cache", "hit".to_string()),
                     ],
                     cached_data,
                 )
@@ -271,7 +271,7 @@ async fn get_object(
                         StatusCode::OK,
                         [
                             ("content-type", content_type),
-                            ("x-vaultfs-cache", "miss".to_string()),
+                            ("x-vexobj-cache", "miss".to_string()),
                         ],
                         bytes,
                     )
@@ -391,19 +391,19 @@ async fn head_object(
 
             if let Some(video) = meta.metadata.get("video") {
                 if let Some(d) = video.get("duration_secs").and_then(|v| v.as_f64()) {
-                    headers.push(("x-vaultfs-video-duration", format!("{d:.3}")));
+                    headers.push(("x-vexobj-video-duration", format!("{d:.3}")));
                 }
                 if let Some(w) = video.get("width").and_then(|v| v.as_u64()) {
-                    headers.push(("x-vaultfs-video-width", w.to_string()));
+                    headers.push(("x-vexobj-video-width", w.to_string()));
                 }
                 if let Some(h) = video.get("height").and_then(|v| v.as_u64()) {
-                    headers.push(("x-vaultfs-video-height", h.to_string()));
+                    headers.push(("x-vexobj-video-height", h.to_string()));
                 }
                 if let Some(c) = video.get("codec").and_then(|v| v.as_str()) {
-                    headers.push(("x-vaultfs-video-codec", c.to_string()));
+                    headers.push(("x-vexobj-video-codec", c.to_string()));
                 }
                 if let Some(a) = video.get("has_audio").and_then(|v| v.as_bool()) {
-                    headers.push(("x-vaultfs-video-has-audio", a.to_string()));
+                    headers.push(("x-vexobj-video-has-audio", a.to_string()));
                 }
             }
 
@@ -537,7 +537,7 @@ async fn serve_video_thumbnail(
             StatusCode::NOT_IMPLEMENTED,
             Json(json!({
                 "error": "video thumbnails require ffmpeg on the server's PATH",
-                "hint": "install ffmpeg and restart vaultfs; no other config needed",
+                "hint": "install ffmpeg and restart vexobj; no other config needed",
             })),
         )
             .into_response();
@@ -584,7 +584,7 @@ async fn serve_video_thumbnail(
             StatusCode::OK,
             [
                 ("content-type", ct),
-                ("x-vaultfs-cache", "hit".to_string()),
+                ("x-vexobj-cache", "hit".to_string()),
             ],
             bytes,
         )
@@ -664,7 +664,7 @@ async fn serve_video_thumbnail(
         StatusCode::OK,
         [
             ("content-type", ct),
-            ("x-vaultfs-cache", "miss".to_string()),
+            ("x-vexobj-cache", "miss".to_string()),
         ],
         body,
     )

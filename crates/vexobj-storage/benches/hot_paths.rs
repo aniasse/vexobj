@@ -3,7 +3,7 @@
 //! every byte and — when SSE is on — encrypts every byte; these two
 //! together dominate CPU cost for uploads.
 //!
-//! Run with: `cargo bench -p vaultfs-storage`
+//! Run with: `cargo bench -p vexobj-storage`
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use sha2::{Digest, Sha256};

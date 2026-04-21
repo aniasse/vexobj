@@ -46,7 +46,7 @@ impl Encryptor {
     fn derive(&self, sha256_hex: &str) -> ([u8; 32], [u8; 12]) {
         let hk = Hkdf::<Sha256>::new(Some(sha256_hex.as_bytes()), &self.master_key);
         let mut okm = [0u8; 44];
-        hk.expand(b"vaultfs-sse-v1", &mut okm)
+        hk.expand(b"vexobj-sse-v1", &mut okm)
             .expect("HKDF expand with <= 255*HashLen output");
         let mut key = [0u8; 32];
         let mut nonce = [0u8; 12];

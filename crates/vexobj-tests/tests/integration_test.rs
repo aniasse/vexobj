@@ -406,7 +406,7 @@ async fn test_backup_and_restore() {
     assert_eq!(result.blobs_copied, 2);
 
     // Verify backup files exist
-    assert!(backup_dir.join("vaultfs.db").exists());
+    assert!(backup_dir.join("vexobj.db").exists());
     assert!(backup_dir.join("blobs").exists());
 
     // Restore to a new location
@@ -484,7 +484,7 @@ async fn test_streaming_upload() {
 }
 
 fn tempdir() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("vaultfs-test-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("vexobj-test-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
