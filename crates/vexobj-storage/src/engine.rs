@@ -674,6 +674,232 @@ impl StorageEngine {
         &self.data_dir
     }
 
+    // ── S3 multipart uploads ────────────────────────────────────────────
+
+    /// Where a single part lives on disk during an in-flight upload.
+    fn part_path(&self, upload_id: &str, part_number: u32) -> PathBuf {
+        self.data_dir
+            .join("multipart")
+            .join(upload_id)
+            .join(format!("{part_number}.part"))
+    }
+
+    fn multipart_dir(&self, upload_id: &str) -> PathBuf {
+        self.data_dir.join("multipart").join(upload_id)
+    }
+
+    /// S3 InitiateMultipartUpload — allocates an upload id and a scratch
+    /// directory. Bucket is checked up front so clients don't waste bytes
+    /// uploading parts into a nonexistent bucket.
+    pub async fn initiate_multipart(
+        &self,
+        bucket: &str,
+        key: &str,
+        content_type: Option<&str>,
+    ) -> Result<String, StorageError> {
+        self.db.get_bucket(bucket)?;
+        let upload_id = uuid::Uuid::new_v4().to_string();
+        self.db
+            .create_multipart_upload(&upload_id, bucket, key, content_type)?;
+        tokio::fs::create_dir_all(self.multipart_dir(&upload_id)).await?;
+        Ok(upload_id)
+    }
+
+    /// S3 UploadPart — streams the body to `<data_dir>/multipart/<id>/<N>.part`
+    /// and hashes on the fly. Returns the part's SHA-256 hex as the ETag.
+    ///
+    /// Re-uploading the same part number is allowed (S3 semantics); the new
+    /// bytes replace the old file and the DB row is updated via UPSERT.
+    pub async fn upload_part<S, E>(
+        &self,
+        upload_id: &str,
+        part_number: u32,
+        mut stream: S,
+    ) -> Result<MultipartPart, StorageError>
+    where
+        S: futures::Stream<Item = Result<bytes::Bytes, E>> + Unpin,
+        E: std::fmt::Display,
+    {
+        use futures::StreamExt;
+        if !(1..=10_000).contains(&part_number) {
+            return Err(StorageError::Io(std::io::Error::other(
+                "part_number must be in [1, 10000]",
+            )));
+        }
+        self.db
+            .get_multipart_upload(upload_id)?
+            .ok_or_else(|| StorageError::ObjectNotFound {
+                bucket: String::new(),
+                key: format!("upload:{upload_id}"),
+            })?;
+
+        let path = self.part_path(upload_id, part_number);
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+
+        let mut file = tokio::fs::File::create(&path).await?;
+        let mut hasher = Sha256::new();
+        let mut size: u64 = 0;
+
+        while let Some(chunk) = stream.next().await {
+            let data = chunk.map_err(|e| StorageError::Io(std::io::Error::other(e.to_string())))?;
+            let new_size = size + data.len() as u64;
+            if new_size > self.max_file_size {
+                drop(file);
+                let _ = tokio::fs::remove_file(&path).await;
+                return Err(StorageError::ObjectTooLarge {
+                    size: new_size,
+                    max: self.max_file_size,
+                });
+            }
+            hasher.update(&data);
+            size = new_size;
+            file.write_all(&data).await?;
+        }
+        file.sync_all().await?;
+        drop(file);
+
+        let etag = hex::encode(hasher.finalize());
+        self.db
+            .save_multipart_part(upload_id, part_number, size, &etag)?;
+        Ok(MultipartPart {
+            upload_id: upload_id.to_string(),
+            part_number,
+            size,
+            etag,
+            uploaded_at: chrono::Utc::now(),
+        })
+    }
+
+    /// S3 CompleteMultipartUpload — verifies the claimed parts (numbers +
+    /// ETags) against the DB, concatenates the part files in order, and
+    /// writes the final object through the standard put pipeline (which
+    /// also re-runs dedup + SSE + quota). On success the scratch dir and
+    /// DB rows are removed.
+    pub async fn complete_multipart(
+        &self,
+        upload_id: &str,
+        claimed_parts: Vec<(u32, String)>,
+    ) -> Result<ObjectMeta, StorageError> {
+        let upload = self.db.get_multipart_upload(upload_id)?.ok_or_else(|| {
+            StorageError::ObjectNotFound {
+                bucket: String::new(),
+                key: format!("upload:{upload_id}"),
+            }
+        })?;
+
+        if claimed_parts.is_empty() {
+            return Err(StorageError::Io(std::io::Error::other(
+                "CompleteMultipartUpload requires at least one part",
+            )));
+        }
+
+        let saved = self.db.list_multipart_parts(upload_id)?;
+        let mut prev = 0u32;
+        for (pn, etag) in &claimed_parts {
+            if *pn <= prev {
+                return Err(StorageError::Io(std::io::Error::other(
+                    "parts must be listed in ascending part_number order",
+                )));
+            }
+            prev = *pn;
+            let cleaned = etag.trim_matches('"');
+            let s = saved.iter().find(|s| s.part_number == *pn).ok_or_else(|| {
+                StorageError::Io(std::io::Error::other(format!(
+                    "part {pn} was never uploaded"
+                )))
+            })?;
+            if s.etag != cleaned {
+                return Err(StorageError::Io(std::io::Error::other(format!(
+                    "ETag mismatch for part {pn}"
+                ))));
+            }
+            // S3 requires every part except the last to be >= 5 MiB. Enforcing
+            // that prevents clients from abusing multipart to stream tiny
+            // chunks, but also matches the spec so `aws s3 cp` / `rclone`
+            // don't quietly accept a broken configuration.
+            if *pn != claimed_parts.last().unwrap().0 && s.size < 5 * 1024 * 1024 {
+                return Err(StorageError::Io(std::io::Error::other(format!(
+                    "part {pn} is {} bytes; non-last parts must be >= 5 MiB",
+                    s.size
+                ))));
+            }
+        }
+
+        // Build a concat-stream of the part files in order. We use a
+        // tokio duplex: one task writes all parts into `w`, ReaderStream
+        // yields them from `r`. The pre-check above guarantees every part
+        // file exists.
+        let part_paths: Vec<PathBuf> = claimed_parts
+            .iter()
+            .map(|(pn, _)| self.part_path(upload_id, *pn))
+            .collect();
+        for p in &part_paths {
+            if !p.exists() {
+                return Err(StorageError::Io(std::io::Error::other(format!(
+                    "part file missing on disk: {}",
+                    p.display()
+                ))));
+            }
+        }
+
+        let (mut w, r) = tokio::io::duplex(256 * 1024);
+        tokio::spawn(async move {
+            for path in part_paths {
+                match tokio::fs::File::open(&path).await {
+                    Ok(mut f) => {
+                        let _ = tokio::io::copy(&mut f, &mut w).await;
+                    }
+                    Err(e) => {
+                        tracing::error!(?path, ?e, "multipart concat: failed to open part");
+                        break;
+                    }
+                }
+            }
+            // dropping `w` closes the writer; the reader-side stream ends.
+        });
+        let combined = tokio_util::io::ReaderStream::new(r);
+
+        let meta = self
+            .put_object_stream(
+                &upload.bucket,
+                &upload.key,
+                combined,
+                upload.content_type.as_deref(),
+                None,
+            )
+            .await?;
+
+        self.db.delete_multipart_upload(upload_id)?;
+        let _ = tokio::fs::remove_dir_all(self.multipart_dir(upload_id)).await;
+
+        Ok(meta)
+    }
+
+    /// S3 AbortMultipartUpload — drop the DB rows and wipe the scratch
+    /// directory. Safe to call twice; a missing upload is a silent no-op
+    /// so clients can fire-and-forget from cleanup paths.
+    pub async fn abort_multipart(&self, upload_id: &str) -> Result<(), StorageError> {
+        self.db.delete_multipart_upload(upload_id)?;
+        let _ = tokio::fs::remove_dir_all(self.multipart_dir(upload_id)).await;
+        Ok(())
+    }
+
+    pub fn list_multipart_parts(
+        &self,
+        upload_id: &str,
+    ) -> Result<Vec<MultipartPart>, StorageError> {
+        self.db.list_multipart_parts(upload_id)
+    }
+
+    pub fn get_multipart_upload(
+        &self,
+        upload_id: &str,
+    ) -> Result<Option<MultipartUpload>, StorageError> {
+        self.db.get_multipart_upload(upload_id)
+    }
+
     // ── Versioning helpers ──────────────────────────────────────────────
 
     pub fn list_versions(

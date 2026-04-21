@@ -19,6 +19,7 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 bytes = { workspace = true }
 uuid = { workspace = true }
+futures = { workspace = true }
 mime_guess = { workspace = true }
 vexobj-storage = { workspace = true }
 vexobj-auth = { workspace = true }

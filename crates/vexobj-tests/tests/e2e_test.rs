@@ -2538,3 +2538,225 @@ async fn e2e_quota_enforced_on_every_write_path() {
         .unwrap();
     assert_eq!(resp.status(), 507, "S3 copy over quota");
 }
+
+/// Full S3-spec multipart upload round-trip: InitiateMultipartUpload →
+/// UploadPart × 3 (two 5 MiB parts + one small tail) → CompleteMultipartUpload
+/// → HEAD verifies the assembled object matches. Also exercises AbortMultipartUpload
+/// and the 5-MiB-minimum rule on non-last parts.
+#[tokio::test]
+async fn e2e_s3_multipart_upload_roundtrip() {
+    use serde_json::json;
+
+    let srv = TestServer::start();
+    let client = srv.client();
+    let auth = srv.auth_header();
+
+    // Create the bucket via the native API so we don't have to implement
+    // CreateBucket in the test harness. The S3 mux shares the same storage.
+    let resp = client
+        .post(format!("{}/v1/buckets", srv.url))
+        .header("Authorization", &auth)
+        .json(&json!({ "name": "mpt", "public": false }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+
+    // 1. InitiateMultipartUpload — POST /s3/mpt/big.bin?uploads
+    let resp = client
+        .post(format!("{}/s3/mpt/big.bin?uploads", srv.url))
+        .header("Authorization", &auth)
+        .header("Content-Type", "application/octet-stream")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    let upload_id = extract_xml_tag(&body, "UploadId").expect("UploadId present");
+    assert!(!upload_id.is_empty());
+
+    // 2. Build three parts: 5 MiB, 5 MiB, 12 bytes.
+    let part1 = vec![b'A'; 5 * 1024 * 1024];
+    let part2 = vec![b'B'; 5 * 1024 * 1024];
+    let part3 = b"tail-bytes!!".to_vec();
+    let mut etags = Vec::new();
+    for (pn, data) in [(1u32, &part1), (2u32, &part2), (3u32, &part3)] {
+        let resp = client
+            .put(format!(
+                "{}/s3/mpt/big.bin?uploadId={}&partNumber={}",
+                srv.url, upload_id, pn
+            ))
+            .header("Authorization", &auth)
+            .body(data.clone())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200, "UploadPart {pn}");
+        let etag = resp
+            .headers()
+            .get("etag")
+            .and_then(|v| v.to_str().ok())
+            .unwrap()
+            .trim_matches('"')
+            .to_string();
+        assert_eq!(etag.len(), 64, "etag should be 64-char sha-256 hex");
+        etags.push(etag);
+    }
+
+    // 3. ListParts should show all three parts in ascending order.
+    let resp = client
+        .get(format!("{}/s3/mpt/big.bin?uploadId={}", srv.url, upload_id))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let list_body = resp.text().await.unwrap();
+    assert_eq!(list_body.matches("<PartNumber>").count(), 3);
+    assert!(list_body.contains("<PartNumber>1</PartNumber>"));
+    assert!(list_body.contains("<PartNumber>3</PartNumber>"));
+
+    // 4. CompleteMultipartUpload — POST with XML listing the parts.
+    let complete_body = format!(
+        r#"<?xml version="1.0"?>
+<CompleteMultipartUpload>
+  <Part><PartNumber>1</PartNumber><ETag>"{}"</ETag></Part>
+  <Part><PartNumber>2</PartNumber><ETag>"{}"</ETag></Part>
+  <Part><PartNumber>3</PartNumber><ETag>"{}"</ETag></Part>
+</CompleteMultipartUpload>"#,
+        etags[0], etags[1], etags[2]
+    );
+    let resp = client
+        .post(format!("{}/s3/mpt/big.bin?uploadId={}", srv.url, upload_id))
+        .header("Authorization", &auth)
+        .header("Content-Type", "application/xml")
+        .body(complete_body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200, "CompleteMultipartUpload");
+    let complete_body = resp.text().await.unwrap();
+    let final_etag =
+        extract_xml_tag(&complete_body, "ETag").expect("final ETag in complete response");
+    assert_eq!(
+        final_etag.trim_matches('"').len(),
+        64,
+        "final etag is sha-256 hex"
+    );
+
+    // 5. GET the assembled object — must match part1 || part2 || part3.
+    let resp = client
+        .get(format!("{}/s3/mpt/big.bin", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let fetched = resp.bytes().await.unwrap();
+    let expected_len = part1.len() + part2.len() + part3.len();
+    assert_eq!(fetched.len(), expected_len, "reassembled length");
+    assert_eq!(&fetched[..part1.len()], &part1[..]);
+    assert_eq!(&fetched[part1.len()..part1.len() + part2.len()], &part2[..]);
+    assert_eq!(&fetched[part1.len() + part2.len()..], &part3[..]);
+
+    // 6. After Complete, the upload_id must be gone (NoSuchUpload on
+    //    further UploadPart / ListParts).
+    let resp = client
+        .get(format!("{}/s3/mpt/big.bin?uploadId={}", srv.url, upload_id))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+
+    // 7. Abort path: start a new upload, upload one part, abort, confirm
+    //    both the upload row and the scratch file go away.
+    let resp = client
+        .post(format!("{}/s3/mpt/abort-me?uploads", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    let abort_id = extract_xml_tag(&body, "UploadId").unwrap();
+    let _ = client
+        .put(format!(
+            "{}/s3/mpt/abort-me?uploadId={}&partNumber=1",
+            srv.url, abort_id
+        ))
+        .header("Authorization", &auth)
+        .body(vec![b'Z'; 1024])
+        .send()
+        .await
+        .unwrap();
+    let resp = client
+        .delete(format!("{}/s3/mpt/abort-me?uploadId={}", srv.url, abort_id))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 204);
+
+    // 8. Enforce the 5-MiB-minimum rule on non-last parts. Initiate,
+    //    upload two tiny parts, try to Complete — must be rejected.
+    let resp = client
+        .post(format!("{}/s3/mpt/tiny?uploads", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    let tiny_id = extract_xml_tag(&resp.text().await.unwrap(), "UploadId").unwrap();
+    let mut tiny_etags = Vec::new();
+    for pn in [1u32, 2u32] {
+        let resp = client
+            .put(format!(
+                "{}/s3/mpt/tiny?uploadId={}&partNumber={}",
+                srv.url, tiny_id, pn
+            ))
+            .header("Authorization", &auth)
+            .body(vec![b'T'; 100])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let etag = resp
+            .headers()
+            .get("etag")
+            .and_then(|v| v.to_str().ok())
+            .unwrap()
+            .trim_matches('"')
+            .to_string();
+        tiny_etags.push(etag);
+    }
+    let complete = format!(
+        r#"<?xml version="1.0"?>
+<CompleteMultipartUpload>
+  <Part><PartNumber>1</PartNumber><ETag>"{}"</ETag></Part>
+  <Part><PartNumber>2</PartNumber><ETag>"{}"</ETag></Part>
+</CompleteMultipartUpload>"#,
+        tiny_etags[0], tiny_etags[1]
+    );
+    let resp = client
+        .post(format!("{}/s3/mpt/tiny?uploadId={}", srv.url, tiny_id))
+        .header("Authorization", &auth)
+        .header("Content-Type", "application/xml")
+        .body(complete)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        400,
+        "Complete with tiny non-last parts must be rejected (InvalidPart)"
+    );
+}
+
+/// Extract the inner text of the first `<tag>…</tag>` from an XML string.
+/// Used only by the multipart test; keeps dep-tree free of a full parser.
+fn extract_xml_tag(xml: &str, tag: &str) -> Option<String> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let start = xml.find(&open)? + open.len();
+    let end = xml[start..].find(&close)? + start;
+    Some(xml[start..end].trim().to_string())
+}

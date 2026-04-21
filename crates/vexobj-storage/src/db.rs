@@ -166,6 +166,29 @@ impl Database {
                 ON transcode_jobs(status, created_at);
             CREATE INDEX IF NOT EXISTS idx_transcode_jobs_source
                 ON transcode_jobs(bucket, key, profile);
+
+            -- S3 multipart upload state. `multipart_uploads` is the parent
+            -- record created by InitiateMultipartUpload; `multipart_parts`
+            -- holds one row per UploadPart. On Complete or Abort both get
+            -- dropped (ON DELETE CASCADE) and the scratch files are wiped.
+            CREATE TABLE IF NOT EXISTS multipart_uploads (
+                upload_id TEXT PRIMARY KEY,
+                bucket TEXT NOT NULL,
+                key TEXT NOT NULL,
+                content_type TEXT,
+                initiated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_multipart_bucket_key
+                ON multipart_uploads(bucket, key);
+
+            CREATE TABLE IF NOT EXISTS multipart_parts (
+                upload_id TEXT NOT NULL REFERENCES multipart_uploads(upload_id) ON DELETE CASCADE,
+                part_number INTEGER NOT NULL,
+                size INTEGER NOT NULL,
+                etag TEXT NOT NULL,
+                uploaded_at TEXT NOT NULL,
+                PRIMARY KEY (upload_id, part_number)
+            );
             ",
         )?;
 
@@ -1217,5 +1240,160 @@ impl Database {
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(results)
+    }
+
+    // ── S3 multipart uploads ───────────────────────────────────────────
+
+    pub fn create_multipart_upload(
+        &self,
+        upload_id: &str,
+        bucket: &str,
+        key: &str,
+        content_type: Option<&str>,
+    ) -> Result<MultipartUpload, StorageError> {
+        // Surface BucketNotFound rather than a foreign-key failure — the
+        // S3 NoSuchBucket error is more useful to clients.
+        self.get_bucket(bucket)?;
+        let now = Utc::now();
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO multipart_uploads (upload_id, bucket, key, content_type, initiated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![upload_id, bucket, key, content_type, now.to_rfc3339()],
+        )?;
+        Ok(MultipartUpload {
+            upload_id: upload_id.to_string(),
+            bucket: bucket.to_string(),
+            key: key.to_string(),
+            content_type: content_type.map(|s| s.to_string()),
+            initiated_at: now,
+        })
+    }
+
+    pub fn get_multipart_upload(
+        &self,
+        upload_id: &str,
+    ) -> Result<Option<MultipartUpload>, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let row = conn.query_row(
+            "SELECT bucket, key, content_type, initiated_at
+             FROM multipart_uploads WHERE upload_id = ?1",
+            params![upload_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
+        );
+        match row {
+            Ok((bucket, key, content_type, initiated_at)) => Ok(Some(MultipartUpload {
+                upload_id: upload_id.to_string(),
+                bucket,
+                key,
+                content_type,
+                initiated_at: initiated_at.parse().unwrap_or_else(|_| chrono::Utc::now()),
+            })),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(StorageError::Database(e)),
+        }
+    }
+
+    pub fn save_multipart_part(
+        &self,
+        upload_id: &str,
+        part_number: u32,
+        size: u64,
+        etag: &str,
+    ) -> Result<MultipartPart, StorageError> {
+        let now = Utc::now();
+        let conn = self.conn.lock().unwrap();
+        // UPSERT: re-uploading the same part number replaces it. S3 allows
+        // this and clients do it for retries.
+        conn.execute(
+            "INSERT INTO multipart_parts (upload_id, part_number, size, etag, uploaded_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(upload_id, part_number) DO UPDATE SET
+                size = excluded.size,
+                etag = excluded.etag,
+                uploaded_at = excluded.uploaded_at",
+            params![upload_id, part_number, size, etag, now.to_rfc3339()],
+        )?;
+        Ok(MultipartPart {
+            upload_id: upload_id.to_string(),
+            part_number,
+            size,
+            etag: etag.to_string(),
+            uploaded_at: now,
+        })
+    }
+
+    pub fn list_multipart_parts(
+        &self,
+        upload_id: &str,
+    ) -> Result<Vec<MultipartPart>, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT part_number, size, etag, uploaded_at
+             FROM multipart_parts WHERE upload_id = ?1 ORDER BY part_number",
+        )?;
+        let parts = stmt
+            .query_map(params![upload_id], |row| {
+                Ok(MultipartPart {
+                    upload_id: upload_id.to_string(),
+                    part_number: row.get::<_, u32>(0)?,
+                    size: row.get::<_, u64>(1)?,
+                    etag: row.get::<_, String>(2)?,
+                    uploaded_at: row
+                        .get::<_, String>(3)?
+                        .parse()
+                        .unwrap_or_else(|_| chrono::Utc::now()),
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(parts)
+    }
+
+    pub fn delete_multipart_upload(&self, upload_id: &str) -> Result<(), StorageError> {
+        let conn = self.conn.lock().unwrap();
+        // Explicitly drop parts first — the schema FK uses CASCADE, but
+        // enable_foreign_keys isn't set on every connection path.
+        conn.execute(
+            "DELETE FROM multipart_parts WHERE upload_id = ?1",
+            params![upload_id],
+        )?;
+        conn.execute(
+            "DELETE FROM multipart_uploads WHERE upload_id = ?1",
+            params![upload_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_multipart_uploads(
+        &self,
+        bucket: &str,
+    ) -> Result<Vec<MultipartUpload>, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT upload_id, key, content_type, initiated_at
+             FROM multipart_uploads WHERE bucket = ?1 ORDER BY initiated_at",
+        )?;
+        let uploads = stmt
+            .query_map(params![bucket], |row| {
+                Ok(MultipartUpload {
+                    upload_id: row.get::<_, String>(0)?,
+                    bucket: bucket.to_string(),
+                    key: row.get::<_, String>(1)?,
+                    content_type: row.get::<_, Option<String>>(2)?,
+                    initiated_at: row
+                        .get::<_, String>(3)?
+                        .parse()
+                        .unwrap_or_else(|_| chrono::Utc::now()),
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(uploads)
     }
 }

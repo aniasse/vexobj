@@ -3331,6 +3331,7 @@ dependencies = [
  "bytes",
  "chrono",
  "criterion",
+ "futures",
  "hex",
  "hmac",
  "mime_guess",

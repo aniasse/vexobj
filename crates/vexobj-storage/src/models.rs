@@ -116,6 +116,30 @@ pub struct ReplicationEvent {
     pub content_type: String,
 }
 
+/// S3-style multipart upload in progress. Rows here are created at
+/// `InitiateMultipartUpload`, consulted by every `UploadPart` call, and
+/// deleted at `CompleteMultipartUpload` / `AbortMultipartUpload`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MultipartUpload {
+    pub upload_id: String,
+    pub bucket: String,
+    pub key: String,
+    pub content_type: Option<String>,
+    pub initiated_at: DateTime<Utc>,
+}
+
+/// One part of a multipart upload. Part bytes live in a scratch file on
+/// disk; this row records the metadata needed to validate the client's
+/// `CompleteMultipartUpload` request and reassemble in order.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MultipartPart {
+    pub upload_id: String,
+    pub part_number: u32,
+    pub size: u64,
+    pub etag: String,
+    pub uploaded_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LifecycleRule {
     pub id: String,

@@ -1,11 +1,13 @@
 use std::sync::Arc;
 
+use axum::body::{to_bytes, Body};
 use axum::extract::{OriginalUri, Path, Query, State};
 use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::any;
 use axum::Router;
 use bytes::Bytes;
+use futures::TryStreamExt;
 use serde::Deserialize;
 
 use crate::error::S3Error;
@@ -13,6 +15,15 @@ use crate::signature::{parse_auth_header, verify_sigv4};
 use crate::xml;
 use vexobj_auth::AuthManager;
 use vexobj_storage::StorageEngine;
+
+/// Ceiling for non-multipart S3 PUT bodies buffered into memory (16 MiB).
+/// Above this clients must use the multipart protocol, which streams each
+/// part to disk.
+const S3_SINGLEPUT_MAX: usize = 16 * 1024 * 1024;
+
+/// Cap on the CompleteMultipartUpload request body. The XML is tiny — a
+/// few hundred bytes per part × 10 000 parts max.
+const S3_COMPLETE_MAX: usize = 4 * 1024 * 1024;
 
 #[derive(Clone)]
 pub struct S3State {
@@ -241,7 +252,7 @@ async fn s3_object(
     OriginalUri(uri): OriginalUri,
     Path((bucket, key)): Path<(String, String)>,
     headers: HeaderMap,
-    body: Bytes,
+    body: Body,
 ) -> Response {
     if let Err(e) = authenticate(
         &state,
@@ -253,13 +264,63 @@ async fn s3_object(
         return e.into_response();
     }
 
+    // ── Multipart sub-resources ────────────────────────────────────────
+    //
+    // S3 overloads `/bucket/key` with query-string verbs. We check them up
+    // front so the standard verb handlers never see a multipart request.
+    let qs = uri.query().unwrap_or("");
+    let has_uploads = qs == "uploads" || qs.starts_with("uploads&") || qs.contains("&uploads");
+    let upload_id = extract_query_param(qs, "uploadId");
+    let part_number = extract_query_param(qs, "partNumber").and_then(|v| v.parse::<u32>().ok());
+
+    if method == Method::POST && has_uploads {
+        return initiate_multipart(&state, &bucket, &key, &headers).await;
+    }
+    if let Some(id) = &upload_id {
+        return match (method.clone(), part_number) {
+            (Method::PUT, Some(pn)) => upload_part(&state, &bucket, id, pn, body).await,
+            (Method::POST, None) => complete_multipart(&state, &bucket, id, body, &uri).await,
+            (Method::DELETE, None) => abort_multipart(&state, id).await,
+            (Method::GET, None) => list_parts(&state, &bucket, &key, id).await,
+            _ => S3Error::invalid_request(
+                "Invalid combination of method and multipart sub-resources",
+            )
+            .into_response(),
+        };
+    }
+
+    // ── Standard verbs ──────────────────────────────────────────────────
     match method {
-        Method::PUT => put_object(&state, &bucket, &key, headers, body).await,
+        Method::PUT => {
+            // Buffer non-multipart PUTs into memory up to the cap, then
+            // hand to the existing put_object path. Clients needing more
+            // than 16 MiB should use the multipart protocol.
+            match to_bytes(body, S3_SINGLEPUT_MAX).await {
+                Ok(b) => put_object(&state, &bucket, &key, headers, b).await,
+                Err(_) => S3Error::entity_too_large().into_response(),
+            }
+        }
         Method::GET => get_object(&state, &bucket, &key).await,
         Method::HEAD => head_object(&state, &bucket, &key).await,
         Method::DELETE => delete_object(&state, &bucket, &key).await,
         _ => S3Error::invalid_request("Method not allowed").into_response(),
     }
+}
+
+/// Minimal query-string parser that handles valueless keys like `?uploads`
+/// as well as `foo=bar` pairs. Not URL-decoding values — S3 part numbers
+/// and upload IDs don't need it.
+fn extract_query_param<'a>(qs: &'a str, name: &str) -> Option<&'a str> {
+    for pair in qs.split('&') {
+        if let Some((k, v)) = pair.split_once('=') {
+            if k == name {
+                return Some(v);
+            }
+        } else if pair == name {
+            return Some("");
+        }
+    }
+    None
 }
 
 async fn put_object(
@@ -375,5 +436,133 @@ async fn delete_object(state: &S3State, bucket: &str, key: &str) -> Response {
             // S3 returns 204 even if object doesn't exist
             StatusCode::NO_CONTENT.into_response()
         }
+    }
+}
+
+// ─── Multipart Upload ─────────────────────────────────────────────────
+
+async fn initiate_multipart(
+    state: &S3State,
+    bucket: &str,
+    key: &str,
+    headers: &HeaderMap,
+) -> Response {
+    let content_type = headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    match state
+        .storage
+        .initiate_multipart(bucket, key, content_type.as_deref())
+        .await
+    {
+        Ok(upload_id) => {
+            let body = xml::initiate_multipart_xml(bucket, key, &upload_id);
+            (StatusCode::OK, [("content-type", "application/xml")], body).into_response()
+        }
+        Err(vexobj_storage::StorageError::BucketNotFound(_)) => {
+            S3Error::no_such_bucket(bucket).into_response()
+        }
+        Err(e) => S3Error::internal(&e.to_string()).into_response(),
+    }
+}
+
+async fn upload_part(
+    state: &S3State,
+    bucket: &str,
+    upload_id: &str,
+    part_number: u32,
+    body: Body,
+) -> Response {
+    // Verify the upload belongs to this bucket — clients can't poke a
+    // different bucket's upload id into the URL and write there.
+    match state.storage.get_multipart_upload(upload_id) {
+        Ok(Some(u)) if u.bucket == bucket => {}
+        Ok(_) => return S3Error::no_such_upload(upload_id).into_response(),
+        Err(e) => return S3Error::internal(&e.to_string()).into_response(),
+    }
+
+    let stream = body.into_data_stream().map_err(std::io::Error::other);
+    match state
+        .storage
+        .upload_part(upload_id, part_number, stream)
+        .await
+    {
+        Ok(part) => (StatusCode::OK, [("etag", format!("\"{}\"", part.etag))], "").into_response(),
+        Err(vexobj_storage::StorageError::ObjectTooLarge { .. }) => {
+            S3Error::entity_too_large().into_response()
+        }
+        Err(e) => S3Error::internal(&e.to_string()).into_response(),
+    }
+}
+
+async fn complete_multipart(
+    state: &S3State,
+    bucket: &str,
+    upload_id: &str,
+    body: Body,
+    uri: &axum::http::Uri,
+) -> Response {
+    match state.storage.get_multipart_upload(upload_id) {
+        Ok(Some(u)) if u.bucket == bucket => {}
+        Ok(_) => return S3Error::no_such_upload(upload_id).into_response(),
+        Err(e) => return S3Error::internal(&e.to_string()).into_response(),
+    }
+
+    let body_bytes = match to_bytes(body, S3_COMPLETE_MAX).await {
+        Ok(b) => b,
+        Err(_) => {
+            return S3Error::invalid_request("CompleteMultipartUpload body too large")
+                .into_response();
+        }
+    };
+    let body_str = match std::str::from_utf8(&body_bytes) {
+        Ok(s) => s,
+        Err(_) => return S3Error::malformed_xml().into_response(),
+    };
+    let Some(claimed_parts) = xml::parse_complete_multipart(body_str) else {
+        return S3Error::malformed_xml().into_response();
+    };
+
+    match state
+        .storage
+        .complete_multipart(upload_id, claimed_parts)
+        .await
+    {
+        Ok(meta) => {
+            let location = format!("{}/{}/{}", uri.path(), bucket, meta.key);
+            let body =
+                xml::complete_multipart_xml(&meta.bucket, &meta.key, &meta.sha256, &location);
+            (StatusCode::OK, [("content-type", "application/xml")], body).into_response()
+        }
+        Err(vexobj_storage::StorageError::QuotaExceeded { reason, .. }) => {
+            S3Error::quota_exceeded(&reason).into_response()
+        }
+        Err(vexobj_storage::StorageError::Io(e)) => {
+            S3Error::invalid_part(&e.to_string()).into_response()
+        }
+        Err(e) => S3Error::internal(&e.to_string()).into_response(),
+    }
+}
+
+async fn abort_multipart(state: &S3State, upload_id: &str) -> Response {
+    match state.storage.abort_multipart(upload_id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => S3Error::internal(&e.to_string()).into_response(),
+    }
+}
+
+async fn list_parts(state: &S3State, bucket: &str, key: &str, upload_id: &str) -> Response {
+    match state.storage.get_multipart_upload(upload_id) {
+        Ok(Some(u)) if u.bucket == bucket => {}
+        Ok(_) => return S3Error::no_such_upload(upload_id).into_response(),
+        Err(e) => return S3Error::internal(&e.to_string()).into_response(),
+    }
+    match state.storage.list_multipart_parts(upload_id) {
+        Ok(parts) => {
+            let body = xml::list_parts_xml(bucket, key, upload_id, &parts, 1000);
+            (StatusCode::OK, [("content-type", "application/xml")], body).into_response()
+        }
+        Err(e) => S3Error::internal(&e.to_string()).into_response(),
     }
 }

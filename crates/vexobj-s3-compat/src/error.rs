@@ -82,6 +82,30 @@ impl S3Error {
             status: StatusCode::INSUFFICIENT_STORAGE,
         }
     }
+
+    pub fn no_such_upload(upload_id: &str) -> Self {
+        Self {
+            code: "NoSuchUpload",
+            message: format!("The specified multipart upload does not exist: {upload_id}"),
+            status: StatusCode::NOT_FOUND,
+        }
+    }
+
+    pub fn invalid_part(msg: &str) -> Self {
+        Self {
+            code: "InvalidPart",
+            message: msg.to_string(),
+            status: StatusCode::BAD_REQUEST,
+        }
+    }
+
+    pub fn malformed_xml() -> Self {
+        Self {
+            code: "MalformedXML",
+            message: "The XML in the request body is malformed".into(),
+            status: StatusCode::BAD_REQUEST,
+        }
+    }
 }
 
 impl IntoResponse for S3Error {
