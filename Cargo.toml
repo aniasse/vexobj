@@ -1,13 +1,13 @@
 [workspace]
 members = [
-    "crates/vaultfs-server",
-    "crates/vaultfs-storage",
-    "crates/vaultfs-processing",
-    "crates/vaultfs-s3-compat",
-    "crates/vaultfs-cache",
-    "crates/vaultfs-auth",
-    "crates/vaultfs-tests",
-    "crates/vaultfs-cli",
+    "crates/vexobj-server",
+    "crates/vexobj-storage",
+    "crates/vexobj-processing",
+    "crates/vexobj-s3-compat",
+    "crates/vexobj-cache",
+    "crates/vexobj-auth",
+    "crates/vexobj-tests",
+    "crates/vexobj-cli",
 ]
 resolver = "2"
 
@@ -15,7 +15,7 @@ resolver = "2"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/aniasse/vaultfs"
+repository = "https://github.com/aniasse/vexobj"
 description = "High-performance self-hosted object storage with built-in image processing"
 
 [workspace.dependencies]
@@ -69,8 +69,8 @@ clap = { version = "4", features = ["derive", "env"] }
 reqwest = { version = "0.12", features = ["json", "stream", "multipart"] }
 
 # Internal crates (also used in integration tests)
-vaultfs-storage = { path = "crates/vaultfs-storage" }
-vaultfs-processing = { path = "crates/vaultfs-processing" }
-vaultfs-s3-compat = { path = "crates/vaultfs-s3-compat" }
-vaultfs-cache = { path = "crates/vaultfs-cache" }
-vaultfs-auth = { path = "crates/vaultfs-auth" }
+vexobj-storage = { path = "crates/vexobj-storage" }
+vexobj-processing = { path = "crates/vexobj-processing" }
+vexobj-s3-compat = { path = "crates/vexobj-s3-compat" }
+vexobj-cache = { path = "crates/vexobj-cache" }
+vexobj-auth = { path = "crates/vexobj-auth" }

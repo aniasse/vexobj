@@ -1,0 +1,25 @@
+[package]
+name = "vexobj-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "CLI admin tool for vexobj object storage"
+
+[[bin]]
+name = "vexobjctl"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+mime_guess = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+chrono = { workspace = true }
+url = "2"

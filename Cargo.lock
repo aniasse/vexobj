@@ -3247,7 +3247,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
-name = "vaultfs-auth"
+name = "vcpkg"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
+
+[[package]]
+name = "version_check"
+version = "0.9.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "vexobj-auth"
 version = "0.1.0"
 dependencies = [
  "base64",
@@ -3266,7 +3278,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "vaultfs-cache"
+name = "vexobj-cache"
 version = "0.1.0"
 dependencies = [
  "bytes",
@@ -3279,7 +3291,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "vaultfs-cli"
+name = "vexobj-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -3297,7 +3309,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "vaultfs-processing"
+name = "vexobj-processing"
 version = "0.1.0"
 dependencies = [
  "bytes",
@@ -3311,7 +3323,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "vaultfs-s3-compat"
+name = "vexobj-s3-compat"
 version = "0.1.0"
 dependencies = [
  "axum",
@@ -3329,12 +3341,12 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
- "vaultfs-auth",
- "vaultfs-storage",
+ "vexobj-auth",
+ "vexobj-storage",
 ]
 
 [[package]]
-name = "vaultfs-server"
+name = "vexobj-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -3360,15 +3372,15 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
- "vaultfs-auth",
- "vaultfs-cache",
- "vaultfs-processing",
- "vaultfs-s3-compat",
- "vaultfs-storage",
+ "vexobj-auth",
+ "vexobj-cache",
+ "vexobj-processing",
+ "vexobj-s3-compat",
+ "vexobj-storage",
 ]
 
 [[package]]
-name = "vaultfs-storage"
+name = "vexobj-storage"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
@@ -3391,11 +3403,11 @@ dependencies = [
  "tokio-util",
  "tracing",
  "uuid",
- "vaultfs-processing",
+ "vexobj-processing",
 ]
 
 [[package]]
-name = "vaultfs-tests"
+name = "vexobj-tests"
 version = "0.1.0"
 dependencies = [
  "bytes",
@@ -3408,23 +3420,11 @@ dependencies = [
  "sha2",
  "tokio",
  "uuid",
- "vaultfs-auth",
- "vaultfs-cache",
- "vaultfs-processing",
- "vaultfs-storage",
+ "vexobj-auth",
+ "vexobj-cache",
+ "vexobj-processing",
+ "vexobj-storage",
 ]
-
-[[package]]
-name = "vcpkg"
-version = "0.2.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
-
-[[package]]
-name = "version_check"
-version = "0.9.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "walkdir"

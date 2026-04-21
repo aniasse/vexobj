@@ -1,0 +1,23 @@
+[package]
+name = "vexobj-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Integration tests for vexobj"
+publish = false
+
+[dev-dependencies]
+vexobj-storage = { workspace = true }
+vexobj-processing = { workspace = true }
+vexobj-cache = { workspace = true }
+vexobj-auth = { workspace = true }
+tokio = { workspace = true }
+bytes = { workspace = true }
+uuid = { workspace = true }
+serde_json = { workspace = true }
+futures = { workspace = true }
+reqwest = { workspace = true }
+chrono = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }

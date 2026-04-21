@@ -1,0 +1,17 @@
+[package]
+name = "vexobj-cache"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Multi-level cache for vexobj"
+
+[dependencies]
+tokio = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+bytes = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+
+[dev-dependencies]
+uuid = { workspace = true }

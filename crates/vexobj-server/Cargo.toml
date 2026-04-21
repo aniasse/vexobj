@@ -1,0 +1,42 @@
+[package]
+name = "vexobj-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "vexobj server binary"
+
+[[bin]]
+name = "vexobj"
+path = "src/main.rs"
+
+[dependencies]
+axum = { workspace = true }
+axum-server = { version = "0.7", features = ["tls-rustls"] }
+tower = { workspace = true }
+tower-http = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+bytes = { workspace = true }
+mime_guess = { workspace = true }
+rand = { workspace = true }
+futures = { workspace = true }
+tokio-util = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+
+rusqlite = { workspace = true }
+
+vexobj-storage = { workspace = true }
+vexobj-processing = { workspace = true }
+vexobj-s3-compat = { workspace = true }
+vexobj-cache = { workspace = true }
+vexobj-auth = { workspace = true }
