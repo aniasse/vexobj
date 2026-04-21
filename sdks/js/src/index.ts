@@ -1,4 +1,4 @@
-export interface VaultFSConfig {
+export interface VexObjConfig {
   baseUrl: string;
   apiKey: string;
 }
@@ -87,11 +87,11 @@ export interface LifecycleRule {
   created_at: string;
 }
 
-export class VaultFS {
+export class VexObj {
   private baseUrl: string;
   private apiKey: string;
 
-  constructor(config: VaultFSConfig) {
+  constructor(config: VexObjConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, "");
     this.apiKey = config.apiKey;
   }
@@ -113,7 +113,7 @@ export class VaultFS {
     });
     if (!resp.ok) {
       const body = await resp.json().catch(() => ({}));
-      throw new VaultFSError(resp.status, (body as any).error || resp.statusText);
+      throw new VexObjError(resp.status, (body as any).error || resp.statusText);
     }
     const ct = resp.headers.get("content-type") || "";
     if (ct.includes("application/json")) {
@@ -178,7 +178,7 @@ export class VaultFS {
       `${this.baseUrl}/v1/objects/${enc(bucket)}/${key}${qs}`,
       { headers: this.headers() }
     );
-    if (!resp.ok) throw new VaultFSError(resp.status, "object not found");
+    if (!resp.ok) throw new VexObjError(resp.status, "object not found");
     return resp;
   }
 
@@ -212,7 +212,7 @@ export class VaultFS {
     const url = `${this.baseUrl}/v1/objects/${enc(bucket)}/${key}${qs ? "?" + qs : ""}`;
 
     const resp = await fetch(url, { headers: this.headers() });
-    if (!resp.ok) throw new VaultFSError(resp.status, "image transform failed");
+    if (!resp.ok) throw new VexObjError(resp.status, "image transform failed");
     return resp;
   }
 
@@ -247,7 +247,7 @@ export class VaultFS {
     );
     if (!resp.ok && resp.status !== 404) {
       const body = await resp.json().catch(() => ({}));
-      throw new VaultFSError(resp.status, (body as any).error || resp.statusText);
+      throw new VexObjError(resp.status, (body as any).error || resp.statusText);
     }
   }
 
@@ -292,7 +292,7 @@ export class VaultFS {
     const resp = await fetch(`${this.baseUrl}/v1/stream/${enc(bucket)}/${key}`, {
       headers: this.headers(),
     });
-    if (!resp.ok) throw new VaultFSError(resp.status, "object not found");
+    if (!resp.ok) throw new VexObjError(resp.status, "object not found");
     return resp.body!;
   }
 
@@ -429,13 +429,13 @@ export class VaultFS {
   }
 }
 
-export class VaultFSError extends Error {
+export class VexObjError extends Error {
   status: number;
 
   constructor(status: number, message: string) {
     super(message);
     this.status = status;
-    this.name = "VaultFSError";
+    this.name = "VexObjError";
   }
 }
 

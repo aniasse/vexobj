@@ -1,7 +1,7 @@
 {
-  "name": "vaultfs-sdk",
+  "name": "vexobj-sdk",
   "version": "0.1.0",
-  "description": "JavaScript/TypeScript SDK for VaultFS",
+  "description": "JavaScript/TypeScript SDK for vexobj",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": ["dist"],
@@ -9,11 +9,11 @@
     "build": "tsc",
     "prepublishOnly": "npm run build"
   },
-  "keywords": ["vaultfs", "object-storage", "s3", "image-processing"],
+  "keywords": ["vexobj", "object-storage", "s3", "image-processing"],
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/aniasse/vaultfs"
+    "url": "https://github.com/aniasse/vexobj"
   },
   "devDependencies": {
     "typescript": "^5.0.0"

@@ -1,5 +1,5 @@
-// Package vaultfs provides a Go client for the VaultFS API.
-package vaultfs
+// Package vexobj provides a Go client for the vexobj API.
+package vexobj
 
 import (
 	"bytes"
@@ -13,14 +13,14 @@ import (
 	"time"
 )
 
-// Client is the VaultFS API client.
+// Client is the vexobj API client.
 type Client struct {
 	BaseURL    string
 	APIKey     string
 	HTTPClient *http.Client
 }
 
-// New creates a new VaultFS client.
+// New creates a new vexobj client.
 func New(baseURL, apiKey string) *Client {
 	return &Client{
 		BaseURL:    strings.TrimRight(baseURL, "/"),
@@ -134,14 +134,14 @@ type LifecycleRule struct {
 	CreatedAt  string `json:"created_at"`
 }
 
-// Error is returned by the VaultFS API on failure.
+// Error is returned by the vexobj API on failure.
 type Error struct {
 	StatusCode int
 	Message    string
 }
 
 func (e *Error) Error() string {
-	return fmt.Sprintf("vaultfs [%d]: %s", e.StatusCode, e.Message)
+	return fmt.Sprintf("vexobj [%d]: %s", e.StatusCode, e.Message)
 }
 
 // ── Internal ────────────────────────────────────────────

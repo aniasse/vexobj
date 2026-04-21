@@ -1,4 +1,4 @@
-"""VaultFS Python SDK — simple, typed client for VaultFS API."""
+"""vexobj Python SDK — simple, typed client for vexobj API."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from urllib.parse import quote
 import httpx
 
 
-class VaultFSError(Exception):
+class VexObjError(Exception):
     def __init__(self, status: int, message: str):
         self.status = status
         super().__init__(f"[{status}] {message}")
@@ -90,11 +90,11 @@ class LifecycleRule:
         return cls(**{k: d.get(k) for k in cls.__dataclass_fields__})
 
 
-class VaultFS:
-    """VaultFS API client.
+class VexObj:
+    """vexobj API client.
 
     Usage:
-        vfs = VaultFS("http://localhost:8000", "vfs_your_api_key")
+        vfs = VexObj("http://localhost:8000", "vfs_your_api_key")
         vfs.create_bucket("photos")
         vfs.put_object("photos", "cat.jpg", open("cat.jpg", "rb"), "image/jpeg")
         data = vfs.get_object("photos", "cat.jpg")
@@ -111,7 +111,7 @@ class VaultFS:
     def close(self) -> None:
         self._client.close()
 
-    def __enter__(self) -> "VaultFS":
+    def __enter__(self) -> "VexObj":
         return self
 
     def __exit__(self, *args: Any) -> None:
@@ -123,7 +123,7 @@ class VaultFS:
                 msg = resp.json().get("error", resp.text)
             except Exception:
                 msg = resp.text
-            raise VaultFSError(resp.status_code, msg)
+            raise VexObjError(resp.status_code, msg)
         return resp
 
     # ─── Buckets ──────────────────────────────────────────

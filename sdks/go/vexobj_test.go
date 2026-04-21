@@ -1,4 +1,4 @@
-package vaultfs
+package vexobj
 
 import (
 	"net/url"

@@ -3,13 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "vaultfs-sdk"
+name = "vexobj-sdk"
 version = "0.1.0"
-description = "Python SDK for VaultFS"
+description = "Python SDK for vexobj"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"
 dependencies = ["httpx>=0.27"]
 
 [project.urls]
-Repository = "https://github.com/aniasse/vaultfs"
+Repository = "https://github.com/aniasse/vexobj"
