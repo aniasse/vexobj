@@ -4146,3 +4146,221 @@ async fn e2e_probes_need_no_auth() {
         assert_eq!(resp.status(), 200, "{path} must respond without auth");
     }
 }
+
+// ---------------------------------------------------------------------------
+// vexobjctl migrate s3
+// ---------------------------------------------------------------------------
+//
+// Uses a second VexObj instance as the S3 source — our /s3 surface is
+// SigV4-compatible, so driving vexobjctl against it exercises the real
+// signing path end-to-end without requiring MinIO in CI.
+
+async fn run_vexobjctl(args: &[&str], env: &[(&str, &str)]) -> std::process::Output {
+    let workspace_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let cli = workspace_root.join("target/debug/vexobjctl");
+    assert!(
+        cli.exists(),
+        "vexobjctl not built; run `cargo build --bins`"
+    );
+    let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+    let env: Vec<(String, String)> = env
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    tokio::task::spawn_blocking(move || {
+        let mut cmd = std::process::Command::new(&cli);
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+        for a in args {
+            cmd.arg(a);
+        }
+        cmd.output().expect("spawn vexobjctl")
+    })
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn e2e_vexobjctl_migrate_s3_round_trips_bytes_with_hash_verified() {
+    use serde_json::json;
+
+    let source = TestServer::start();
+    let dest = TestServer::start();
+    let sc = source.client();
+    let dc = dest.client();
+
+    // Seed three objects on the source with varying shapes so the test can't
+    // pass by accident (e.g. empty-body pipeline).
+    sc.post(format!("{}/v1/buckets", source.url))
+        .header("Authorization", source.auth_header())
+        .json(&json!({ "name": "src", "public": false }))
+        .send()
+        .await
+        .unwrap();
+    let objects: &[(&str, &[u8])] = &[
+        ("a.txt", b"alpha content"),
+        ("nested/b.bin", &[0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+        ("docs/readme.md", b"# hello\n\nmigration smoke test\n"),
+    ];
+    for (k, body) in objects {
+        let resp = sc
+            .put(format!("{}/v1/objects/src/{k}", source.url))
+            .header("Authorization", source.auth_header())
+            .body(body.to_vec())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 201, "seed {k}");
+    }
+
+    // Destination bucket exists but is empty.
+    dc.post(format!("{}/v1/buckets", dest.url))
+        .header("Authorization", dest.auth_header())
+        .json(&json!({ "name": "dst", "public": false }))
+        .send()
+        .await
+        .unwrap();
+
+    let source_endpoint = format!("{}/s3", source.url);
+    let out = run_vexobjctl(
+        &[
+            "migrate",
+            "s3",
+            "--source-endpoint",
+            &source_endpoint,
+            "--source-bucket",
+            "src",
+            "--source-access-key",
+            &source.admin_key,
+            "--source-secret-key",
+            &source.admin_key,
+            "--dest-bucket",
+            "dst",
+            "--region",
+            "us-east-1",
+        ],
+        &[("VEXOBJ_URL", &dest.url), ("VEXOBJ_KEY", &dest.admin_key)],
+    )
+    .await;
+    assert!(
+        out.status.success(),
+        "migrate failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("sha256 verified"),
+        "expected per-object hash verification in output:\n{stdout}"
+    );
+
+    // Every object must exist on dest with the exact source bytes.
+    for (k, body) in objects {
+        let resp = dc
+            .get(format!("{}/v1/objects/dst/{k}", dest.url))
+            .header("Authorization", dest.auth_header())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200, "dest missing {k}");
+        let got = resp.bytes().await.unwrap();
+        assert_eq!(&got[..], *body, "byte mismatch for {k}");
+    }
+}
+
+#[tokio::test]
+async fn e2e_vexobjctl_migrate_s3_skip_existing_resumes_partial_run() {
+    // Simulates a re-run: pre-seed one key on the destination, then invoke
+    // migrate with --skip-existing. That key must be skipped; the others
+    // must be transferred. Confirms --skip-existing is an effective resume
+    // primitive (checks HEAD on dest before transferring).
+    use serde_json::json;
+
+    let source = TestServer::start();
+    let dest = TestServer::start();
+    let sc = source.client();
+    let dc = dest.client();
+
+    sc.post(format!("{}/v1/buckets", source.url))
+        .header("Authorization", source.auth_header())
+        .json(&json!({ "name": "src", "public": false }))
+        .send()
+        .await
+        .unwrap();
+    for k in ["one.txt", "two.txt", "three.txt"] {
+        sc.put(format!("{}/v1/objects/src/{k}", source.url))
+            .header("Authorization", source.auth_header())
+            .body(format!("content of {k}").into_bytes())
+            .send()
+            .await
+            .unwrap();
+    }
+
+    dc.post(format!("{}/v1/buckets", dest.url))
+        .header("Authorization", dest.auth_header())
+        .json(&json!({ "name": "dst", "public": false }))
+        .send()
+        .await
+        .unwrap();
+    // Pre-seed `two.txt` with DIFFERENT content — we want to prove skip
+    // really means skip (not overwrite with source content).
+    dc.put(format!("{}/v1/objects/dst/two.txt", dest.url))
+        .header("Authorization", dest.auth_header())
+        .body(b"preserved content".to_vec())
+        .send()
+        .await
+        .unwrap();
+
+    let source_endpoint = format!("{}/s3", source.url);
+    let out = run_vexobjctl(
+        &[
+            "migrate",
+            "s3",
+            "--source-endpoint",
+            &source_endpoint,
+            "--source-bucket",
+            "src",
+            "--source-access-key",
+            &source.admin_key,
+            "--source-secret-key",
+            &source.admin_key,
+            "--dest-bucket",
+            "dst",
+            "--skip-existing",
+        ],
+        &[("VEXOBJ_URL", &dest.url), ("VEXOBJ_KEY", &dest.admin_key)],
+    )
+    .await;
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("SKIP (exists) two.txt"),
+        "expected two.txt to be skipped:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Migrated:    2 object"),
+        "expected two migrations:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Skipped:     1 object"),
+        "expected one skip in summary:\n{stdout}"
+    );
+
+    // two.txt on dest must still have the pre-seeded content.
+    let body = dc
+        .get(format!("{}/v1/objects/dst/two.txt", dest.url))
+        .header("Authorization", dest.auth_header())
+        .send()
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    assert_eq!(&body[..], b"preserved content");
+}

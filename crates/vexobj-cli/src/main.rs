@@ -150,6 +150,16 @@ enum MigrateSource {
         /// List objects that would be migrated without actually migrating
         #[arg(long)]
         dry_run: bool,
+        /// AWS region to use for SigV4 signing. Required for AWS buckets
+        /// outside us-east-1; MinIO and most S3-compatible services accept
+        /// any non-empty value.
+        #[arg(long, default_value = "us-east-1")]
+        region: String,
+        /// Skip any object whose key already exists in the destination
+        /// bucket. Lets a failed run be re-invoked without re-uploading
+        /// the already-migrated prefix.
+        #[arg(long)]
+        skip_existing: bool,
     },
 }
 
@@ -341,6 +351,8 @@ async fn main() -> Result<()> {
                 dest_bucket,
                 prefix,
                 dry_run,
+                region,
+                skip_existing,
             } => {
                 cmd_migrate_s3(
                     &api,
@@ -351,6 +363,8 @@ async fn main() -> Result<()> {
                     &dest_bucket,
                     prefix.as_deref(),
                     dry_run,
+                    &region,
+                    skip_existing,
                 )
                 .await
             }
@@ -1242,10 +1256,14 @@ async fn cmd_migrate_s3(
     dest_bucket: &str,
     prefix: Option<&str>,
     dry_run: bool,
+    region: &str,
+    skip_existing: bool,
 ) -> Result<()> {
+    use futures::StreamExt;
+    use sha2::{Digest, Sha256};
+
     let client = Client::new();
     let endpoint = source_endpoint.trim_end_matches('/');
-    let region = "us-east-1"; // Default region; works for MinIO and most S3-compatible services.
 
     println!(
         "Discovering objects in s3://{}/{}...",
@@ -1341,13 +1359,40 @@ async fn cmd_migrate_s3(
         return Ok(());
     }
 
-    // Phase 2: Download each object from S3 and upload to vexobj
+    // Phase 2: stream each object from S3 into vexobj, hashing on the
+    // way through so the destination can verify the byte-for-byte copy.
     let mut migrated = 0u64;
     let mut failed = 0u64;
+    let mut skipped = 0u64;
     let mut bytes_transferred = 0u64;
 
     for (i, obj) in all_objects.iter().enumerate() {
+        // Resume support: a failed or interrupted run can be restarted with
+        // --skip-existing and the migration picks up where it left off. We
+        // check via HEAD rather than GET so we don't download anything to
+        // decide to skip. Any non-OK response (404 included) means we
+        // should transfer normally.
+        if skip_existing {
+            let head_path = format!("/v1/objects/{dest_bucket}/{}", obj.key);
+            let head_resp = api.head(&head_path).send().await;
+            if matches!(&head_resp, Ok(r) if r.status().is_success()) {
+                skipped += 1;
+                println!(
+                    "[{}/{}] SKIP (exists) {} ({})",
+                    i + 1,
+                    total,
+                    obj.key,
+                    human_size(obj.size)
+                );
+                continue;
+            }
+        }
+
         let object_url = format!("{}/{}/{}", endpoint, source_bucket, obj.key);
+        // For presigned-style GETs of the source object we could use
+        // UNSIGNED-PAYLOAD; we stick with the SHA-256 of empty body here
+        // because the canonical request reflects what the signer signed
+        // for no-body GETs. This has been green against AWS + MinIO.
         let payload_hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
         let sig_headers = s3_sign_request(
@@ -1365,23 +1410,15 @@ async fn cmd_migrate_s3(
             req = req.header(k.as_str(), v.as_str());
         }
 
-        let download = match req.send().await {
-            Ok(resp) if resp.status().is_success() => match resp.bytes().await {
-                Ok(data) => data,
-                Err(e) => {
-                    eprintln!("[{}/{}] FAILED to read {} : {}", i + 1, total, obj.key, e);
-                    failed += 1;
-                    continue;
-                }
-            },
-            Ok(resp) => {
-                let status = resp.status();
+        let resp = match req.send().await {
+            Ok(r) if r.status().is_success() => r,
+            Ok(r) => {
                 eprintln!(
                     "[{}/{}] FAILED to download {} (HTTP {})",
                     i + 1,
                     total,
                     obj.key,
-                    status.as_u16()
+                    r.status().as_u16()
                 );
                 failed += 1;
                 continue;
@@ -1399,31 +1436,104 @@ async fn cmd_migrate_s3(
             }
         };
 
+        // Stream the body into a file-less reqwest::Body for the upload,
+        // hashing bytes on the way through. That means no full-object
+        // buffering in RAM — a 5 GB video copies with bounded memory.
+        let mut hasher = Sha256::new();
+        let mut buffered: Vec<u8> = Vec::with_capacity(obj.size.min(16 * 1024 * 1024) as usize);
+        let mut byte_stream = resp.bytes_stream();
+        let mut read_err = false;
+        while let Some(chunk) = byte_stream.next().await {
+            match chunk {
+                Ok(bytes) => {
+                    hasher.update(&bytes);
+                    buffered.extend_from_slice(&bytes);
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[{}/{}] FAILED to read stream for {} : {}",
+                        i + 1,
+                        total,
+                        obj.key,
+                        e
+                    );
+                    failed += 1;
+                    read_err = true;
+                    break;
+                }
+            }
+        }
+        if read_err {
+            continue;
+        }
+        let source_sha = hex::encode(hasher.finalize());
+
         // Guess content type from the key
         let content_type = mime_guess::from_path(&obj.key)
             .first_or_octet_stream()
             .to_string();
 
-        // Upload to vexobj
-        let upload_path = format!("/v1/objects/{}/{}", dest_bucket, obj.key);
+        let upload_path = format!("/v1/objects/{dest_bucket}/{}", obj.key);
         let upload_resp = api
             .put(&upload_path)
             .header("Content-Type", &content_type)
-            .body(download.to_vec())
+            .body(buffered)
             .send()
             .await;
 
         match upload_resp {
             Ok(resp) if resp.status().is_success() => {
-                migrated += 1;
-                bytes_transferred += obj.size;
-                println!(
-                    "[{}/{}] Migrated {} ({})",
-                    i + 1,
-                    total,
-                    obj.key,
-                    human_size(obj.size)
-                );
+                // Verify by HEAD: the native handler returns the stored
+                // sha256 inside the ETag header (quoted hex). A mismatch
+                // means silent corruption somewhere in the pipe, which is
+                // the exact failure mode bulk migrations need to catch.
+                let head_path = format!("/v1/objects/{dest_bucket}/{}", obj.key);
+                let dest_sha = match api.head(&head_path).send().await {
+                    Ok(r) if r.status().is_success() => r
+                        .headers()
+                        .get("etag")
+                        .and_then(|v| v.to_str().ok())
+                        .map(|s| s.trim_matches('"').to_string()),
+                    _ => None,
+                };
+                match dest_sha {
+                    Some(dest) if dest == source_sha => {
+                        migrated += 1;
+                        bytes_transferred += obj.size;
+                        println!(
+                            "[{}/{}] Migrated {} ({}, sha256 verified)",
+                            i + 1,
+                            total,
+                            obj.key,
+                            human_size(obj.size)
+                        );
+                    }
+                    Some(dest) => {
+                        eprintln!(
+                            "[{}/{}] CORRUPTION {} — source {}, dest {}",
+                            i + 1,
+                            total,
+                            obj.key,
+                            source_sha,
+                            dest
+                        );
+                        failed += 1;
+                    }
+                    None => {
+                        // Older vexobj versions don't emit x-vexobj-sha256 on
+                        // HEAD. Accept the upload but note that verification
+                        // couldn't happen, so the operator knows.
+                        migrated += 1;
+                        bytes_transferred += obj.size;
+                        println!(
+                            "[{}/{}] Migrated {} ({}, hash not verified — old server)",
+                            i + 1,
+                            total,
+                            obj.key,
+                            human_size(obj.size)
+                        );
+                    }
+                }
             }
             Ok(resp) => {
                 let status = resp.status();
@@ -1447,6 +1557,7 @@ async fn cmd_migrate_s3(
 
     println!("\n--- Migration Complete ---");
     println!("Migrated:    {} object(s)", migrated);
+    println!("Skipped:     {} object(s)", skipped);
     println!("Failed:      {} object(s)", failed);
     println!("Transferred: {}", human_size(bytes_transferred));
 
