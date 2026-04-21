@@ -166,7 +166,23 @@ async fn s3_bucket(
     Path(bucket): Path<String>,
     Query(query): Query<BucketQuery>,
     headers: HeaderMap,
+    body: Body,
 ) -> Response {
+    // POST with multipart/form-data is the S3 presigned-POST upload flow.
+    // It's authenticated entirely by fields inside the form (policy +
+    // x-amz-signature), not by an Authorization header, so the regular
+    // `authenticate()` path has to be skipped for this case.
+    if method == Method::POST {
+        let ct = headers
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        if ct.starts_with("multipart/form-data") {
+            return crate::presigned_post::handle_presigned_post(&state, &bucket, headers, body)
+                .await;
+        }
+    }
+
     if let Err(e) = authenticate(
         &state,
         method.as_str(),

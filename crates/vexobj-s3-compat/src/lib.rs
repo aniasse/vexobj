@@ -1,4 +1,5 @@
 mod error;
+mod presigned_post;
 mod routes;
 pub mod signature;
 mod xml;
