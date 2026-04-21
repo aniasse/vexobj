@@ -4030,3 +4030,65 @@ async fn e2e_s3_presigned_put_url_rejects_bad_signature() {
     let resp = client.put(&url).body(b"hi".to_vec()).send().await.unwrap();
     assert_eq!(resp.status(), 200);
 }
+
+// ---------------------------------------------------------------------------
+// X-Request-Id
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn e2e_request_id_generated_when_absent() {
+    // No X-Request-Id on the wire → server mints a UUID-shaped id and
+    // echoes it. 36-char with 4 dashes is a reasonable sanity shape
+    // without pulling in a UUID parser just for the test.
+    let srv = TestServer::start();
+    let resp = srv
+        .client()
+        .get(format!("{}/health", srv.url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let id = resp.headers().get("x-request-id").expect("echo header");
+    let s = id.to_str().unwrap();
+    assert_eq!(s.len(), 36);
+    assert_eq!(s.matches('-').count(), 4);
+}
+
+#[tokio::test]
+async fn e2e_request_id_echoes_well_formed_client_id() {
+    let srv = TestServer::start();
+    let resp = srv
+        .client()
+        .get(format!("{}/health", srv.url))
+        .header("X-Request-Id", "abc-123-trace")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.headers().get("x-request-id").unwrap(), "abc-123-trace");
+}
+
+#[tokio::test]
+async fn e2e_request_id_replaces_malformed_client_id() {
+    // A 200-byte client-supplied id is over our 128-byte cap — the server
+    // must silently replace it with a minted one rather than echo a
+    // possibly-attacker-controlled identifier back.
+    let srv = TestServer::start();
+    let bad = "a".repeat(200);
+    let resp = srv
+        .client()
+        .get(format!("{}/health", srv.url))
+        .header("X-Request-Id", bad)
+        .send()
+        .await
+        .unwrap();
+    let echoed = resp
+        .headers()
+        .get("x-request-id")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    // 36 chars (UUID shape) is the replacement-happened tell. A generated
+    // UUID can start with any hex digit so we can't assert on the prefix.
+    assert_eq!(echoed.len(), 36);
+    assert_eq!(echoed.matches('-').count(), 4);
+}

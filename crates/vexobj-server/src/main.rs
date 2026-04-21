@@ -4,6 +4,7 @@ mod cors;
 mod metrics;
 mod middleware;
 mod ratelimit;
+mod request_id;
 mod routes;
 mod security;
 mod state;

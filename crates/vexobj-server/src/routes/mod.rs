@@ -19,6 +19,7 @@ use crate::cors::cors_middleware;
 use crate::metrics;
 use crate::middleware::auth_middleware;
 use crate::ratelimit::rate_limit_middleware;
+use crate::request_id::request_id_middleware;
 use crate::security::security_middleware;
 use crate::state::AppState;
 
@@ -71,5 +72,8 @@ pub fn create_router(state: AppState) -> Router {
         // else. Replaces the former tower_http::cors::CorsLayer::permissive()
         // so admins can restrict browser uploads to specific origins.
         .layer(axum_mw::from_fn_with_state(state, cors_middleware))
+        // Outermost request-concerning layer: stamp every request with an
+        // x-request-id before anything else sees it, and echo it back.
+        .layer(axum_mw::from_fn(request_id_middleware))
         .layer(TraceLayer::new_for_http())
 }
