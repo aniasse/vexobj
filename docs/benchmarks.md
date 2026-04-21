@@ -9,11 +9,11 @@ representative machine.
 
 ```bash
 # Component micro-benchmarks (criterion, single-threaded)
-cargo bench -p vaultfs-storage   --bench hot_paths
-cargo bench -p vaultfs-s3-compat --bench sigv4
+cargo bench -p vexobj-storage   --bench hot_paths
+cargo bench -p vexobj-s3-compat --bench sigv4
 
 # End-to-end HTTP load (requires a running server + curl)
-./bench/bench.sh http://localhost:8000 "$VAULTFS_KEY" 20 500
+./bench/bench.sh http://localhost:8000 "$VEXOBJ_KEY" 20 500
 ```
 
 Criterion reports throughput for the byte-in / byte-out paths and
@@ -80,8 +80,8 @@ Criterion writes its history to `target/criterion/`. A simple way to
 catch regressions during development:
 
 ```bash
-git checkout main && cargo bench -p vaultfs-storage --bench hot_paths
-git checkout my-branch && cargo bench -p vaultfs-storage --bench hot_paths
+git checkout main && cargo bench -p vexobj-storage --bench hot_paths
+git checkout my-branch && cargo bench -p vexobj-storage --bench hot_paths
 # criterion prints change detection automatically
 ```
 

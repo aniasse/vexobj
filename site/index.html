@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>VaultFS — stockage objet auto-hébergé compatible S3.</title>
+<title>VexObj — stockage objet auto-hébergé compatible S3.</title>
 <meta name="description" content="Stockage objet auto-hébergé compatible S3, avec chiffrement au repos, versioning, object lock, réplication asynchrone, et traitement d'images intégré. Écrit en Rust, distribué en binaire unique.">
-<meta property="og:title" content="VaultFS — stockage objet auto-hébergé compatible S3.">
+<meta property="og:title" content="VexObj — stockage objet auto-hébergé compatible S3.">
 <meta property="og:description" content="API compatible S3 avec SigV4. Chiffrement AES-256-GCM au repos. Versioning et object lock. Réplication asynchrone. Binaire unique.">
 <meta property="og:type" content="website">
-<meta property="og:url" content="https://aniasse.github.io/vaultfs/">
+<meta property="og:url" content="https://aniasse.github.io/vexobj/">
 <meta http-equiv="content-language" content="fr">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -17,7 +17,7 @@
 
 <style>
 /*
-  VaultFS landing — dark product page, portfolio-aligned palette.
+  VexObj landing — dark product page, portfolio-aligned palette.
   Enterprise register: factual copy, no terminal cosplay.
 */
 
@@ -920,7 +920,7 @@ footer a:hover { color: var(--emerald); border-bottom-color: transparent; }
 <header class="masthead">
   <a href="https://aniasse.github.io/" class="brand" style="border: none;">
     <span class="logo">A</span>
-    <span>vaultfs</span>
+    <span>vexobj</span>
     <span class="back">← Portfolio</span>
   </a>
 
@@ -937,7 +937,7 @@ footer a:hover { color: var(--emerald); border-bottom-color: transparent; }
       <button type="button" data-lang="fr" class="active">FR</button>
       <button type="button" data-lang="en">EN</button>
     </div>
-    <a href="https://github.com/aniasse/vaultfs" class="gh" target="_blank" rel="noopener">
+    <a href="https://github.com/aniasse/vexobj" class="gh" target="_blank" rel="noopener">
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.44 9.8 8.21 11.39.6.11.82-.26.82-.58 0-.29-.01-1.05-.02-2.07-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.73.08-.73 1.21.09 1.84 1.24 1.84 1.24 1.07 1.84 2.81 1.31 3.5 1 .11-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.11-3.17 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6 0C17.32 4.55 18.33 4.87 18.33 4.87c.66 1.65.25 2.87.12 3.17.77.84 1.24 1.91 1.24 3.22 0 4.61-2.81 5.63-5.49 5.92.43.37.81 1.1.81 2.22 0 1.61-.01 2.9-.01 3.3 0 .32.22.7.83.58A12 12 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
       GitHub
     </a>
@@ -952,10 +952,10 @@ footer a:hover { color: var(--emerald); border-bottom-color: transparent; }
       <span data-i18n="hero.kicker">Version 0.1.0 · Disponible</span>
     </div>
     <h1 class="hero-heading" data-i18n-html="hero.title">Stockage objet<br/><em>compatible S3.</em></h1>
-    <p class="hero-desc" data-i18n="hero.desc">VaultFS est une plateforme de stockage objet auto-hébergée, compatible avec l'API Amazon S3. Elle fournit le chiffrement au repos (AES-256-GCM), le versioning, l'object lock en mode WORM, et la réplication asynchrone primary-replica. Distribuée sous forme de binaire unique sans dépendances externes.</p>
+    <p class="hero-desc" data-i18n="hero.desc">VexObj est une plateforme de stockage objet auto-hébergée, compatible avec l'API Amazon S3. Elle fournit le chiffrement au repos (AES-256-GCM), le versioning, l'object lock en mode WORM, et la réplication asynchrone primary-replica. Distribuée sous forme de binaire unique sans dépendances externes.</p>
     <div class="cta-row">
       <a href="#install" class="btn bare btn-primary" data-i18n="hero.cta1">Télécharger la version 0.1.0</a>
-      <a href="https://github.com/aniasse/vaultfs" class="btn bare" target="_blank" rel="noopener" data-i18n="hero.cta2">Voir le code source</a>
+      <a href="https://github.com/aniasse/vexobj" class="btn bare" target="_blank" rel="noopener" data-i18n="hero.cta2">Voir le code source</a>
       <a href="./demo/" class="btn bare" data-i18n="hero.cta3">Démo interactive →</a>
     </div>
   </div>
@@ -999,7 +999,7 @@ footer a:hover { color: var(--emerald); border-bottom-color: transparent; }
         <p class="bench-label" data-i18n-html="bench.l3"><strong>Binaire autonome.</strong> Aucun runtime, interpréteur, ou orchestrateur de conteneurs requis au déploiement.</p>
       </div>
     </div>
-    <p class="bench-foot" data-i18n-html="bench.foot">Méthodologie et résultats par taille de payload : <a href="https://github.com/aniasse/vaultfs/blob/main/docs/benchmarks.md" target="_blank" rel="noopener">docs/benchmarks.md</a>. Benchmarks reproductibles localement via <code style="color:var(--emerald)">cargo bench</code>.</p>
+    <p class="bench-foot" data-i18n-html="bench.foot">Méthodologie et résultats par taille de payload : <a href="https://github.com/aniasse/vexobj/blob/main/docs/benchmarks.md" target="_blank" rel="noopener">docs/benchmarks.md</a>. Benchmarks reproductibles localement via <code style="color:var(--emerald)">cargo bench</code>.</p>
   </div>
 </section>
 
@@ -1008,7 +1008,7 @@ footer a:hover { color: var(--emerald); border-bottom-color: transparent; }
 <!-- —————— POSITIONING —————— -->
 <section class="positioning reveal" id="fit">
   <header class="positioning-header">
-    <h2 data-i18n-html="positioning.title">À qui s'adresse <em>VaultFS</em>.</h2>
+    <h2 data-i18n-html="positioning.title">À qui s'adresse <em>VexObj</em>.</h2>
     <span class="caps" data-i18n="positioning.kicker">Positionnement</span>
   </header>
   <div class="positioning-grid">
@@ -1114,7 +1114,7 @@ footer a:hover { color: var(--emerald); border-bottom-color: transparent; }
     <button class="tab" data-tab="ts" role="tab">TypeScript</button>
     <button class="tab" data-tab="py" role="tab">Python</button>
     <button class="tab" data-tab="go" role="tab">Go</button>
-    <button class="tab" data-tab="ctl" role="tab">vaultfsctl</button>
+    <button class="tab" data-tab="ctl" role="tab">vexobjctl</button>
   </div>
 
   <div class="code-panel active" data-panel="curl">
@@ -1137,9 +1137,9 @@ curl <span class="str">"http://localhost:8000/v1/objects/photos/beach.jpg?w=400&
 
   <div class="code-panel" data-panel="ts">
     <button class="copy-btn" data-copy data-i18n="code.copy">Copier</button>
-<pre data-i18n-html="code.ts"><span class="key">import</span> { VaultFS } <span class="key">from</span> <span class="str">"@vaultfs/client"</span>;
+<pre data-i18n-html="code.ts"><span class="key">import</span> { VexObj } <span class="key">from</span> <span class="str">"@vexobj/client"</span>;
 
-<span class="key">const</span> vfs = <span class="key">new</span> VaultFS({
+<span class="key">const</span> vfs = <span class="key">new</span> VexObj({
   baseUrl: <span class="str">"http://localhost:8000"</span>,
   apiKey:  process.env.VFS_KEY!,
 });
@@ -1156,9 +1156,9 @@ curl <span class="str">"http://localhost:8000/v1/objects/photos/beach.jpg?w=400&
 
   <div class="code-panel" data-panel="py">
     <button class="copy-btn" data-copy data-i18n="code.copy">Copier</button>
-<pre data-i18n-html="code.py"><span class="key">from</span> vaultfs <span class="key">import</span> VaultFS
+<pre data-i18n-html="code.py"><span class="key">from</span> vexobj <span class="key">import</span> VexObj
 
-vfs = VaultFS(<span class="str">"http://localhost:8000"</span>, api_key=os.environ[<span class="str">"VFS_KEY"</span>])
+vfs = VexObj(<span class="str">"http://localhost:8000"</span>, api_key=os.environ[<span class="str">"VFS_KEY"</span>])
 
 vfs.enable_versioning(<span class="str">"photos"</span>)
 vfs.put_object(<span class="str">"photos"</span>, <span class="str">"beach.jpg"</span>,
@@ -1172,9 +1172,9 @@ versions = vfs.list_versions(<span class="str">"photos"</span>, <span class="str
 
   <div class="code-panel" data-panel="go">
     <button class="copy-btn" data-copy data-i18n="code.copy">Copier</button>
-<pre data-i18n-html="code.go"><span class="key">import</span> <span class="str">"github.com/aniasse/vaultfs/sdks/go"</span>
+<pre data-i18n-html="code.go"><span class="key">import</span> <span class="str">"github.com/aniasse/vexobj/sdks/go"</span>
 
-c := vaultfs.<span class="op">New</span>(<span class="str">"http://localhost:8000"</span>, os.<span class="op">Getenv</span>(<span class="str">"VFS_KEY"</span>))
+c := vexobj.<span class="op">New</span>(<span class="str">"http://localhost:8000"</span>, os.<span class="op">Getenv</span>(<span class="str">"VFS_KEY"</span>))
 
 <span class="cmt">// Règle d'expiration à 7 jours sous le préfixe tmp/.</span>
 rule, _ := c.<span class="op">CreateLifecycleRule</span>(<span class="str">"photos"</span>, <span class="str">"tmp/"</span>, <span class="op">7</span>)
@@ -1188,19 +1188,19 @@ fmt.<span class="op">Printf</span>(<span class="str">"expired %d objects, freed 
   <div class="code-panel" data-panel="ctl">
     <button class="copy-btn" data-copy data-i18n="code.copy">Copier</button>
 <pre data-i18n-html="code.ctl"><span class="cmt"># Réplication continue depuis un nœud primary distant.</span>
-vaultfsctl replicate \
+vexobjctl replicate \
   --url          http://localhost:8000 \
   --key          $REPLICA_KEY \
   --primary      https://primary.example.com \
   --primary-key  $PRIMARY_KEY \
-  --cursor-file  /var/lib/vaultfs/replica.cursor \
+  --cursor-file  /var/lib/vexobj/replica.cursor \
   --interval     <span class="op">5</span>
 
 <span class="cmt"># Promotion de la réplique en cas de défaillance du primary.</span>
-vaultfsctl promote \
+vexobjctl promote \
   --url          http://localhost:8000 \
   --key          $REPLICA_KEY \
-  --cursor-file  /var/lib/vaultfs/replica.cursor</pre>
+  --cursor-file  /var/lib/vexobj/replica.cursor</pre>
   </div>
 </section>
 
@@ -1229,11 +1229,11 @@ vaultfsctl promote \
                                               │                       │
                                               ▼                       │
                                    <span class="dim">  ./data/</span>                        │
-                                   <span class="dim">  ├── vaultfs.db         ─── append atomique ┐</span>
+                                   <span class="dim">  ├── vexobj.db         ─── append atomique ┐</span>
                                    <span class="dim">  ├── blobs/aa/bb/&lt;sha&gt;</span>                   │
                                    <span class="dim">  ├── backups/…</span>                            ▼
                                    <span class="dim">  └── replication_events</span>         ┌───────────┐
-                                                                      │  vaultfsctl │
+                                                                      │  vexobjctl │
                                                                       │  replicate  │
                                                                       └───────────┘</pre>
   </div>
@@ -1251,10 +1251,10 @@ vaultfsctl promote \
       <h3>Docker</h3>
       <p data-i18n="install.dockerDesc">Configuration minimale. Un volume pour les données persistantes. Image officielle publiée sur GitHub Container Registry.</p>
 <pre data-i18n-html="install.dockerCmd">docker run -d \
-  --name vaultfs \
+  --name vexobj \
   -p <span class="op">8000</span>:<span class="op">8000</span> \
-  -v vaultfs-data:/data \
-  ghcr.io/aniasse/vaultfs:latest</pre>
+  -v vexobj-data:/data \
+  ghcr.io/aniasse/vexobj:latest</pre>
     </div>
 
     <div class="install-col">
@@ -1262,11 +1262,11 @@ vaultfsctl promote \
       <h3 data-i18n="install.binary">Binaire précompilé</h3>
       <p data-i18n="install.binaryDesc">Disponible pour Linux amd64 et macOS arm64. Empreintes SHA-256 signées publiées sur la page de release.</p>
 <pre data-i18n-html="install.binaryCmd"><span class="cmt"># linux-amd64</span>
-curl -LO https://github.com/aniasse/vaultfs/\
+curl -LO https://github.com/aniasse/vexobj/\
 releases/download/v0.1.0/\
-vaultfs-linux-amd64.tar.gz
-tar xzf vaultfs-linux-amd64.tar.gz
-./vaultfs</pre>
+vexobj-linux-amd64.tar.gz
+tar xzf vexobj-linux-amd64.tar.gz
+./vexobj</pre>
     </div>
 
     <div class="install-col">
@@ -1274,28 +1274,28 @@ tar xzf vaultfs-linux-amd64.tar.gz
       <h3 data-i18n="install.source">Compilation depuis les sources</h3>
       <p data-i18n="install.sourceDesc">Rust 1.85 minimum (edition 2024). La suite de tests complète s'exécute en environ deux secondes après un build à chaud.</p>
 <pre data-i18n-html="install.sourceCmd">git clone \
-  https://github.com/aniasse/vaultfs.git
-<span class="key">cd</span> vaultfs
+  https://github.com/aniasse/vexobj.git
+<span class="key">cd</span> vexobj
 cargo build --release
-./target/release/vaultfs</pre>
+./target/release/vexobj</pre>
     </div>
   </div>
 
   <div class="footer-cta">
     <p data-i18n="install.quote">Documentation API complète (OpenAPI 3.1), runbooks opérationnels et résultats de benchmarks disponibles dans le dépôt GitHub.</p>
-    <a href="https://github.com/aniasse/vaultfs" class="btn bare btn-primary" target="_blank" rel="noopener" data-i18n="install.repo">Ouvrir le dépôt</a>
+    <a href="https://github.com/aniasse/vexobj" class="btn bare btn-primary" target="_blank" rel="noopener" data-i18n="install.repo">Ouvrir le dépôt</a>
   </div>
 </section>
 
 <!-- —————— FOOTER —————— -->
 <footer>
   <div class="left">© 2026 Adama Niasse · Licence MIT</div>
-  <div class="center" data-i18n="footer.center">VaultFS 0.1.0 · Open source</div>
+  <div class="center" data-i18n="footer.center">VexObj 0.1.0 · Open source</div>
   <div class="right">
     <a href="https://aniasse.github.io/" target="_blank" rel="noopener">Portfolio</a>
-    <a href="https://github.com/aniasse/vaultfs" target="_blank" rel="noopener">GitHub</a>
-    <a href="https://github.com/aniasse/vaultfs/releases/tag/v0.1.0" target="_blank" rel="noopener">Release</a>
-    <a href="https://github.com/aniasse/vaultfs/blob/main/docs/benchmarks.md" target="_blank" rel="noopener">Benchmarks</a>
+    <a href="https://github.com/aniasse/vexobj" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://github.com/aniasse/vexobj/releases/tag/v0.1.0" target="_blank" rel="noopener">Release</a>
+    <a href="https://github.com/aniasse/vexobj/blob/main/docs/benchmarks.md" target="_blank" rel="noopener">Benchmarks</a>
   </div>
 </footer>
 </div>
@@ -1312,7 +1312,7 @@ cargo build --release
       "positioning.fit.title":   "Idéal pour",
       "positioning.nofit.title": "Pas taillé pour",
       "hero.kicker":      "Version 0.1.0 · Disponible",
-      "hero.desc":        "VaultFS est une plateforme de stockage objet auto-hébergée, compatible avec l'API Amazon S3. Elle fournit le chiffrement au repos (AES-256-GCM), le versioning, l'object lock en mode WORM, et la réplication asynchrone primary-replica. Distribuée sous forme de binaire unique sans dépendances externes.",
+      "hero.desc":        "VexObj est une plateforme de stockage objet auto-hébergée, compatible avec l'API Amazon S3. Elle fournit le chiffrement au repos (AES-256-GCM), le versioning, l'object lock en mode WORM, et la réplication asynchrone primary-replica. Distribuée sous forme de binaire unique sans dépendances externes.",
       "hero.cta1":        "Télécharger la version 0.1.0",
       "hero.cta2":        "Voir le code source",
       "hero.cta3":        "Démo interactive →",
@@ -1350,7 +1350,7 @@ cargo build --release
       "install.sourceDesc": "Rust 1.85 minimum (edition 2024). La suite de tests complète s'exécute en environ deux secondes après un build à chaud.",
       "install.quote":    "Documentation API complète (OpenAPI 3.1), runbooks opérationnels et résultats de benchmarks disponibles dans le dépôt GitHub.",
       "install.repo":     "Ouvrir le dépôt",
-      "footer.center":    "VaultFS 0.1.0 · Open source",
+      "footer.center":    "VexObj 0.1.0 · Open source",
     },
     en: {
       "nav.fit":          "Who it's for",
@@ -1362,7 +1362,7 @@ cargo build --release
       "positioning.fit.title":   "Good fit",
       "positioning.nofit.title": "Not a fit",
       "hero.kicker":      "Version 0.1.0 · Available",
-      "hero.desc":        "VaultFS is a self-hosted object storage platform, compatible with the Amazon S3 API. It provides server-side encryption at rest (AES-256-GCM), object versioning, WORM object lock, and asynchronous primary-replica replication. Distributed as a single binary with no external dependencies.",
+      "hero.desc":        "VexObj is a self-hosted object storage platform, compatible with the Amazon S3 API. It provides server-side encryption at rest (AES-256-GCM), object versioning, WORM object lock, and asynchronous primary-replica replication. Distributed as a single binary with no external dependencies.",
       "hero.cta1":        "Download version 0.1.0",
       "hero.cta2":        "View source code",
       "hero.cta3":        "Live demo →",
@@ -1400,21 +1400,21 @@ cargo build --release
       "install.sourceDesc": "Rust 1.85 minimum (edition 2024). The full test suite runs in roughly two seconds after a warm build.",
       "install.quote":    "Complete API reference (OpenAPI 3.1), operational runbooks, and benchmark results are available in the GitHub repository.",
       "install.repo":     "Open repository",
-      "footer.center":    "VaultFS 0.1.0 · Open source",
+      "footer.center":    "VexObj 0.1.0 · Open source",
     },
   };
 
   const I18N_HTML = {
     fr: {
       "hero.title":       "Stockage objet<br/><em>compatible S3.</em>",
-      "positioning.title": "\u00c0 qui s\u2019adresse <em>VaultFS</em>.",
+      "positioning.title": "\u00c0 qui s\u2019adresse <em>VexObj</em>.",
       "positioning.fit.items": "<li><strong>SaaS B2B / B2C jusqu\u2019\u00e0 quelques millions d\u2019utilisateurs</strong> \u2014 binaire + backend S3 tient la charge sans sharding custom.</li><li><strong>Plateforme m\u00e9dia ind\u00e9pendante</strong> \u2014 podcasts, vid\u00e9os, galeries photo. Pipeline ingestion + transformation + transcoding couverte de bout en bout.</li><li><strong>Instance f\u00e9d\u00e9r\u00e9e</strong> \u2014 Mastodon, Matrix, Peertube, Pixelfed : stockage m\u00e9dia local avec compat S3 pour les clients et r\u00e9plication asynchrone.</li><li><strong>Backend documentaire d\u2019entreprise</strong> \u2014 object lock WORM + audit log + r\u00e9tention immuable. Sant\u00e9, finance, archivage l\u00e9gal.</li><li><strong>Environnement dev / staging</strong> \u2014 mime une instance S3 localement en secondes, m\u00eame auth, m\u00eame compat SDK.</li>",
       "positioning.nofit.items": "<li><strong>\u00c9chelle des r\u00e9seaux sociaux grand public</strong> (Meta, TikTok, Snap) \u2014 SQLite single-writer sature vers ~100 TB, au-del\u00e0 il faut une couche metadata distribu\u00e9e.</li><li><strong>Multi-r\u00e9gion actif-actif</strong> avec \u00e9critures simultan\u00e9es des deux c\u00f4t\u00e9s \u2014 la r\u00e9plication est asynchrone unidirectionnelle, pas de consensus Raft.</li><li><strong>Mod\u00e9ration automatique</strong> (NSFW, DMCA, copyright matching) \u2014 ces couches doivent \u00eatre construites \u00e0 c\u00f4t\u00e9.</li><li><strong>Drop-in replacement d\u2019un \u00e9cosyst\u00e8me AWS complet</strong> \u2014 l\u2019auth est plus simple, ce qui est une force pour 95 % des cas et une limite pour les 5 % restants.</li>",
       "meta.statusVal":   "<span class=\"emerald\">\u2713 Disponible</span>",
       "bench.l1":         "<strong>D\u00e9bit AES-256-GCM.</strong> Le chiffrement au repos n\u2019introduit pas de surco\u00fbt perceptible sur les charges courantes.",
       "bench.l2":         "<strong>V\u00e9rifications SigV4</strong> par c\u0153ur et par seconde. Contr\u00f4le complet de signature, pas uniquement validation de la cl\u00e9 d\u2019acc\u00e8s.",
       "bench.l3":         "<strong>Binaire autonome.</strong> Aucun runtime, interpr\u00e9teur, ou orchestrateur de conteneurs requis au d\u00e9ploiement.",
-      "bench.foot":       "M\u00e9thodologie et r\u00e9sultats par taille de payload : <a href=\"https://github.com/aniasse/vaultfs/blob/main/docs/benchmarks.md\" target=\"_blank\" rel=\"noopener\">docs/benchmarks.md</a>. Benchmarks reproductibles localement via <code style=\"color:var(--emerald)\">cargo bench</code>.",
+      "bench.foot":       "M\u00e9thodologie et r\u00e9sultats par taille de payload : <a href=\"https://github.com/aniasse/vexobj/blob/main/docs/benchmarks.md\" target=\"_blank\" rel=\"noopener\">docs/benchmarks.md</a>. Benchmarks reproductibles localement via <code style=\"color:var(--emerald)\">cargo bench</code>.",
       "spec.title":       "Ensemble de fonctionnalit\u00e9s <em>de production.</em>",
       "spec.1.desc":      "Le pr\u00e9fixe <code>/s3/*</code> expose une API compatible avec les clients AWS SDK standards. Les en-t\u00eates Authorization sont enti\u00e8rement v\u00e9rifi\u00e9s : la requ\u00eate canonique est reconstruite \u00e0 partir des donn\u00e9es re\u00e7ues par le serveur et les HMAC sont compar\u00e9s en temps constant. Toute requ\u00eate alt\u00e9r\u00e9e en transit est rejet\u00e9e avec un code HTTP 403.",
       "spec.2.desc":      "Chiffrement AES-256-GCM au repos. Les cl\u00e9s par blob sont d\u00e9riv\u00e9es par HKDF \u00e0 partir d\u2019une cl\u00e9 ma\u00eetre et du SHA-256 du contenu en clair, ce qui pr\u00e9serve la d\u00e9duplication content-addressable : deux uploads identiques produisent un ciphertext identique.",
@@ -1444,9 +1444,9 @@ curl -X PUT http://localhost:8000/v1/objects/photos/beach.jpg \\
 curl <span class="str">"http://localhost:8000/v1/objects/photos/beach.jpg?w=400&amp;format=webp"</span> \\
   -H <span class="str">"Authorization: Bearer $VFS_KEY"</span> -o beach.webp`,
 
-      "code.ts": `<span class="key">import</span> { VaultFS } <span class="key">from</span> <span class="str">"@vaultfs/client"</span>;
+      "code.ts": `<span class="key">import</span> { VexObj } <span class="key">from</span> <span class="str">"@vexobj/client"</span>;
 
-<span class="key">const</span> vfs = <span class="key">new</span> VaultFS({
+<span class="key">const</span> vfs = <span class="key">new</span> VexObj({
   baseUrl: <span class="str">"http://localhost:8000"</span>,
   apiKey:  process.env.VFS_KEY!,
 });
@@ -1460,9 +1460,9 @@ curl <span class="str">"http://localhost:8000/v1/objects/photos/beach.jpg?w=400&
   legal_hold:   <span class="op">true</span>,
 });`,
 
-      "code.py": `<span class="key">from</span> vaultfs <span class="key">import</span> VaultFS
+      "code.py": `<span class="key">from</span> vexobj <span class="key">import</span> VexObj
 
-vfs = VaultFS(<span class="str">"http://localhost:8000"</span>, api_key=os.environ[<span class="str">"VFS_KEY"</span>])
+vfs = VexObj(<span class="str">"http://localhost:8000"</span>, api_key=os.environ[<span class="str">"VFS_KEY"</span>])
 
 vfs.enable_versioning(<span class="str">"photos"</span>)
 vfs.put_object(<span class="str">"photos"</span>, <span class="str">"beach.jpg"</span>,
@@ -1473,9 +1473,9 @@ versions = vfs.list_versions(<span class="str">"photos"</span>, <span class="str
 <span class="key">for</span> v <span class="key">in</span> versions:
     <span class="key">print</span>(v.version_id, v.size, v.is_latest)`,
 
-      "code.go": `<span class="key">import</span> <span class="str">"github.com/aniasse/vaultfs/sdks/go"</span>
+      "code.go": `<span class="key">import</span> <span class="str">"github.com/aniasse/vexobj/sdks/go"</span>
 
-c := vaultfs.<span class="op">New</span>(<span class="str">"http://localhost:8000"</span>, os.<span class="op">Getenv</span>(<span class="str">"VFS_KEY"</span>))
+c := vexobj.<span class="op">New</span>(<span class="str">"http://localhost:8000"</span>, os.<span class="op">Getenv</span>(<span class="str">"VFS_KEY"</span>))
 
 <span class="cmt">// R\u00e8gle d\u2019expiration \u00e0 7 jours sous le pr\u00e9fixe tmp/.</span>
 rule, _ := c.<span class="op">CreateLifecycleRule</span>(<span class="str">"photos"</span>, <span class="str">"tmp/"</span>, <span class="op">7</span>)
@@ -1486,38 +1486,38 @@ expired, freed, _ := c.<span class="op">RunLifecycle</span>()
 fmt.<span class="op">Printf</span>(<span class="str">"expired %d objects, freed %d bytes\\n"</span>, expired, freed)`,
 
       "code.ctl": `<span class="cmt"># R\u00e9plication continue depuis un n\u0153ud primary distant.</span>
-vaultfsctl replicate \\
+vexobjctl replicate \\
   --url          http://localhost:8000 \\
   --key          $REPLICA_KEY \\
   --primary      https://primary.example.com \\
   --primary-key  $PRIMARY_KEY \\
-  --cursor-file  /var/lib/vaultfs/replica.cursor \\
+  --cursor-file  /var/lib/vexobj/replica.cursor \\
   --interval     <span class="op">5</span>
 
 <span class="cmt"># Promotion de la r\u00e9plique en cas de d\u00e9faillance du primary.</span>
-vaultfsctl promote \\
+vexobjctl promote \\
   --url          http://localhost:8000 \\
   --key          $REPLICA_KEY \\
-  --cursor-file  /var/lib/vaultfs/replica.cursor`,
+  --cursor-file  /var/lib/vexobj/replica.cursor`,
 
       "install.dockerCmd": `docker run -d \\
-  --name vaultfs \\
+  --name vexobj \\
   -p <span class="op">8000</span>:<span class="op">8000</span> \\
-  -v vaultfs-data:/data \\
-  ghcr.io/aniasse/vaultfs:latest`,
+  -v vexobj-data:/data \\
+  ghcr.io/aniasse/vexobj:latest`,
 
       "install.binaryCmd": `<span class="cmt"># linux-amd64</span>
-curl -LO https://github.com/aniasse/vaultfs/\\
+curl -LO https://github.com/aniasse/vexobj/\\
 releases/download/v0.1.0/\\
-vaultfs-linux-amd64.tar.gz
-tar xzf vaultfs-linux-amd64.tar.gz
-./vaultfs`,
+vexobj-linux-amd64.tar.gz
+tar xzf vexobj-linux-amd64.tar.gz
+./vexobj`,
 
       "install.sourceCmd": `git clone \\
-  https://github.com/aniasse/vaultfs.git
-<span class="key">cd</span> vaultfs
+  https://github.com/aniasse/vexobj.git
+<span class="key">cd</span> vexobj
 cargo build --release
-./target/release/vaultfs`,
+./target/release/vexobj`,
 
       "arch.diagram": `  CLIENTS                            <span class="hl">PRIMARY</span>                         R\u00c9PLIQUE
   \u2501\u2501\u2501\u2501\u2501\u2501\u2501                            \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501                      \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
@@ -1535,24 +1535,24 @@ cargo build --release
                                               \u2502                       \u2502
                                               \u25bc                       \u2502
                                    <span class="dim">  ./data/</span>                        \u2502
-                                   <span class="dim">  \u251c\u2500\u2500 vaultfs.db         \u2500\u2500\u2500 append atomique \u2510</span>
+                                   <span class="dim">  \u251c\u2500\u2500 vexobj.db         \u2500\u2500\u2500 append atomique \u2510</span>
                                    <span class="dim">  \u251c\u2500\u2500 blobs/aa/bb/&lt;sha&gt;</span>                   \u2502
                                    <span class="dim">  \u251c\u2500\u2500 backups/\u2026</span>                            \u25bc
                                    <span class="dim">  \u2514\u2500\u2500 replication_events</span>         \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510
-                                                                      \u2502  vaultfsctl \u2502
+                                                                      \u2502  vexobjctl \u2502
                                                                       \u2502  replicate  \u2502
                                                                       \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518`,
     },
     en: {
       "hero.title":       "S3-compatible<br/><em>object storage.</em>",
-      "positioning.title": "Who <em>VaultFS</em> is for.",
+      "positioning.title": "Who <em>VexObj</em> is for.",
       "positioning.fit.items": "<li><strong>B2B / B2C SaaS up to a few million users</strong> \u2014 a single binary plus an S3 backend handles the load without custom sharding.</li><li><strong>Independent media platforms</strong> \u2014 podcasts, video, photo galleries. End-to-end ingestion, transformation, and transcoding in one process.</li><li><strong>Federated instances</strong> \u2014 Mastodon, Matrix, Peertube, Pixelfed: local media storage with S3 compat for clients and async replication between nodes.</li><li><strong>Enterprise document backend</strong> \u2014 WORM object lock + audit log + immutable retention. Healthcare, finance, legal archival.</li><li><strong>Dev / staging</strong> \u2014 mimics an S3 instance locally in seconds, same auth, same SDK compatibility.</li>",
       "positioning.nofit.items": "<li><strong>Consumer-social-network scale</strong> (Meta, TikTok, Snap) \u2014 SQLite single-writer metadata tops out around ~100 TB; past that you need a distributed metadata layer.</li><li><strong>Multi-region active-active</strong> with simultaneous writes on both sides \u2014 replication is one-way async, no Raft consensus.</li><li><strong>Automated moderation</strong> (NSFW / DMCA / copyright matching) \u2014 build those layers alongside, not inside.</li><li><strong>Drop-in AWS ecosystem replacement</strong> \u2014 auth is simpler, which is a strength for 95% of cases and a limit for the remaining 5%.</li>",
       "meta.statusVal":   "<span class=\"emerald\">\u2713 Available</span>",
       "bench.l1":         "<strong>AES-256-GCM throughput.</strong> Server-side encryption adds no measurable overhead on typical workloads.",
       "bench.l2":         "<strong>SigV4 verifications</strong> per core per second. Full signature verification, not just access-key lookup.",
       "bench.l3":         "<strong>Self-contained binary.</strong> No runtime, interpreter, or container orchestrator required at deploy time.",
-      "bench.foot":       "Methodology and per-payload-size results: <a href=\"https://github.com/aniasse/vaultfs/blob/main/docs/benchmarks.md\" target=\"_blank\" rel=\"noopener\">docs/benchmarks.md</a>. Benchmarks reproducible locally via <code style=\"color:var(--emerald)\">cargo bench</code>.",
+      "bench.foot":       "Methodology and per-payload-size results: <a href=\"https://github.com/aniasse/vexobj/blob/main/docs/benchmarks.md\" target=\"_blank\" rel=\"noopener\">docs/benchmarks.md</a>. Benchmarks reproducible locally via <code style=\"color:var(--emerald)\">cargo bench</code>.",
       "spec.title":       "Production-grade <em>feature set.</em>",
       "spec.1.desc":      "The <code>/s3/*</code> prefix exposes an API compatible with standard AWS SDK clients. Authorization headers are fully verified: the canonical request is rebuilt from what the server received, and HMACs are compared in constant time. Any request altered in transit is rejected with HTTP 403.",
       "spec.2.desc":      "AES-256-GCM encryption at rest. Per-blob keys are derived via HKDF from a master key and the plaintext SHA-256, preserving content-addressable deduplication: two identical uploads produce identical ciphertext.",
@@ -1582,9 +1582,9 @@ curl -X PUT http://localhost:8000/v1/objects/photos/beach.jpg \\
 curl <span class="str">"http://localhost:8000/v1/objects/photos/beach.jpg?w=400&amp;format=webp"</span> \\
   -H <span class="str">"Authorization: Bearer $VFS_KEY"</span> -o beach.webp`,
 
-      "code.ts": `<span class="key">import</span> { VaultFS } <span class="key">from</span> <span class="str">"@vaultfs/client"</span>;
+      "code.ts": `<span class="key">import</span> { VexObj } <span class="key">from</span> <span class="str">"@vexobj/client"</span>;
 
-<span class="key">const</span> vfs = <span class="key">new</span> VaultFS({
+<span class="key">const</span> vfs = <span class="key">new</span> VexObj({
   baseUrl: <span class="str">"http://localhost:8000"</span>,
   apiKey:  process.env.VFS_KEY!,
 });
@@ -1598,9 +1598,9 @@ curl <span class="str">"http://localhost:8000/v1/objects/photos/beach.jpg?w=400&
   legal_hold:   <span class="op">true</span>,
 });`,
 
-      "code.py": `<span class="key">from</span> vaultfs <span class="key">import</span> VaultFS
+      "code.py": `<span class="key">from</span> vexobj <span class="key">import</span> VexObj
 
-vfs = VaultFS(<span class="str">"http://localhost:8000"</span>, api_key=os.environ[<span class="str">"VFS_KEY"</span>])
+vfs = VexObj(<span class="str">"http://localhost:8000"</span>, api_key=os.environ[<span class="str">"VFS_KEY"</span>])
 
 vfs.enable_versioning(<span class="str">"photos"</span>)
 vfs.put_object(<span class="str">"photos"</span>, <span class="str">"beach.jpg"</span>,
@@ -1611,9 +1611,9 @@ versions = vfs.list_versions(<span class="str">"photos"</span>, <span class="str
 <span class="key">for</span> v <span class="key">in</span> versions:
     <span class="key">print</span>(v.version_id, v.size, v.is_latest)`,
 
-      "code.go": `<span class="key">import</span> <span class="str">"github.com/aniasse/vaultfs/sdks/go"</span>
+      "code.go": `<span class="key">import</span> <span class="str">"github.com/aniasse/vexobj/sdks/go"</span>
 
-c := vaultfs.<span class="op">New</span>(<span class="str">"http://localhost:8000"</span>, os.<span class="op">Getenv</span>(<span class="str">"VFS_KEY"</span>))
+c := vexobj.<span class="op">New</span>(<span class="str">"http://localhost:8000"</span>, os.<span class="op">Getenv</span>(<span class="str">"VFS_KEY"</span>))
 
 <span class="cmt">// Seven-day expiration rule under the tmp/ prefix.</span>
 rule, _ := c.<span class="op">CreateLifecycleRule</span>(<span class="str">"photos"</span>, <span class="str">"tmp/"</span>, <span class="op">7</span>)
@@ -1624,38 +1624,38 @@ expired, freed, _ := c.<span class="op">RunLifecycle</span>()
 fmt.<span class="op">Printf</span>(<span class="str">"expired %d objects, freed %d bytes\\n"</span>, expired, freed)`,
 
       "code.ctl": `<span class="cmt"># Continuous replication from a remote primary node.</span>
-vaultfsctl replicate \\
+vexobjctl replicate \\
   --url          http://localhost:8000 \\
   --key          $REPLICA_KEY \\
   --primary      https://primary.example.com \\
   --primary-key  $PRIMARY_KEY \\
-  --cursor-file  /var/lib/vaultfs/replica.cursor \\
+  --cursor-file  /var/lib/vexobj/replica.cursor \\
   --interval     <span class="op">5</span>
 
 <span class="cmt"># Promote the replica in the event of a primary failure.</span>
-vaultfsctl promote \\
+vexobjctl promote \\
   --url          http://localhost:8000 \\
   --key          $REPLICA_KEY \\
-  --cursor-file  /var/lib/vaultfs/replica.cursor`,
+  --cursor-file  /var/lib/vexobj/replica.cursor`,
 
       "install.dockerCmd": `docker run -d \\
-  --name vaultfs \\
+  --name vexobj \\
   -p <span class="op">8000</span>:<span class="op">8000</span> \\
-  -v vaultfs-data:/data \\
-  ghcr.io/aniasse/vaultfs:latest`,
+  -v vexobj-data:/data \\
+  ghcr.io/aniasse/vexobj:latest`,
 
       "install.binaryCmd": `<span class="cmt"># linux-amd64</span>
-curl -LO https://github.com/aniasse/vaultfs/\\
+curl -LO https://github.com/aniasse/vexobj/\\
 releases/download/v0.1.0/\\
-vaultfs-linux-amd64.tar.gz
-tar xzf vaultfs-linux-amd64.tar.gz
-./vaultfs`,
+vexobj-linux-amd64.tar.gz
+tar xzf vexobj-linux-amd64.tar.gz
+./vexobj`,
 
       "install.sourceCmd": `git clone \\
-  https://github.com/aniasse/vaultfs.git
-<span class="key">cd</span> vaultfs
+  https://github.com/aniasse/vexobj.git
+<span class="key">cd</span> vexobj
 cargo build --release
-./target/release/vaultfs`,
+./target/release/vexobj`,
 
       "arch.diagram": `  CLIENTS                            <span class="hl">PRIMARY</span>                         REPLICA
   \u2501\u2501\u2501\u2501\u2501\u2501\u2501                            \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501                      \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
@@ -1673,11 +1673,11 @@ cargo build --release
                                               \u2502                       \u2502
                                               \u25bc                       \u2502
                                    <span class="dim">  ./data/</span>                        \u2502
-                                   <span class="dim">  \u251c\u2500\u2500 vaultfs.db         \u2500\u2500\u2500 atomic append \u2500\u2500\u2510</span>
+                                   <span class="dim">  \u251c\u2500\u2500 vexobj.db         \u2500\u2500\u2500 atomic append \u2500\u2500\u2510</span>
                                    <span class="dim">  \u251c\u2500\u2500 blobs/aa/bb/&lt;sha&gt;</span>                   \u2502
                                    <span class="dim">  \u251c\u2500\u2500 backups/\u2026</span>                            \u25bc
                                    <span class="dim">  \u2514\u2500\u2500 replication_events</span>         \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510
-                                                                      \u2502  vaultfsctl \u2502
+                                                                      \u2502  vexobjctl \u2502
                                                                       \u2502  replicate  \u2502
                                                                       \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518`,
     },
@@ -1703,8 +1703,8 @@ cargo build --release
       btn.setAttribute("aria-pressed", btn.dataset.lang === lang ? "true" : "false");
     }
     document.title = (lang === "en")
-      ? "VaultFS — self-hosted S3-compatible object storage."
-      : "VaultFS — stockage objet auto-hébergé compatible S3.";
+      ? "VexObj — self-hosted S3-compatible object storage."
+      : "VexObj — stockage objet auto-hébergé compatible S3.";
   }
 
   (function init() {

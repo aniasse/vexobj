@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: VaultFS API
+  title: VexObj API
   description: High-performance self-hosted object storage with built-in image processing
   version: 0.1.0
   license:
@@ -19,14 +19,14 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
-      description: "API key (vex_...) — used for the VaultFS native API."
+      description: "API key (vex_...) — used for the VexObj native API."
     awsV4:
       type: apiKey
       in: header
       name: Authorization
       description: >
         `AWS4-HMAC-SHA256` signature for the S3-compat layer at `/s3/*`.
-        The full VaultFS API key acts as both access_key_id and secret.
+        The full VexObj API key acts as both access_key_id and secret.
         Full signature verification is performed — tampered requests are
         rejected with 403.
 
@@ -439,7 +439,7 @@ paths:
             ETag:
               schema:
                 type: string
-            X-VaultFS-Cache:
+            X-VexObj-Cache:
               description: "hit or miss (for image transforms)"
               schema:
                 type: string
@@ -960,7 +960,7 @@ paths:
       summary: S3 migration stub — redirects to CLI
       description: >
         Server-side S3 migration is not implemented; response includes the
-        equivalent `vaultfsctl migrate s3` command to run locally.
+        equivalent `vexobjctl migrate s3` command to run locally.
       tags: [Admin]
       responses:
         "501":

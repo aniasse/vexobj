@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# VaultFS Load Test Suite
+# VexObj Load Test Suite
 # Usage: ./bench.sh <base_url> <api_key> [concurrency] [requests]
 #
 # Prerequisites: curl, bash
@@ -13,9 +13,9 @@ CONCURRENCY="${3:-10}"
 REQUESTS="${4:-100}"
 
 BUCKET="bench-$(date +%s)"
-REPORT_FILE="/tmp/vaultfs-bench-$(date +%Y%m%d-%H%M%S).json"
+REPORT_FILE="/tmp/vexobj-bench-$(date +%Y%m%d-%H%M%S).json"
 
-echo "=== VaultFS Benchmark Suite ==="
+echo "=== VexObj Benchmark Suite ==="
 echo "Target:      $BASE"
 echo "Concurrency: $CONCURRENCY"
 echo "Requests:    $REQUESTS"

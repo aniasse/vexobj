@@ -1,6 +1,6 @@
 # Video support
 
-VaultFS ships three tiers of video support, layered so you get something
+VexObj ships three tiers of video support, layered so you get something
 useful even without external tools and get more when you install them.
 
 ## Feature matrix
@@ -34,7 +34,7 @@ Clients should inspect this before asking for features that require
 
 ## Installing ffmpeg
 
-VaultFS looks for `ffmpeg` and `ffprobe` on the host's `PATH` **at
+VexObj looks for `ffmpeg` and `ffprobe` on the host's `PATH` **at
 startup**. No config flag, no binding. Restart the server after
 installing.
 
@@ -49,16 +49,16 @@ brew install ffmpeg
 apk add --no-cache ffmpeg
 ```
 
-The official `ghcr.io/aniasse/vaultfs:latest` image ships **without**
+The official `ghcr.io/aniasse/vexobj:latest` image ships **without**
 ffmpeg to keep the image small (~40 MB). To enable video features in
 Docker, extend the image:
 
 ```dockerfile
-FROM ghcr.io/aniasse/vaultfs:latest
+FROM ghcr.io/aniasse/vexobj:latest
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
   && rm -rf /var/lib/apt/lists/*
-USER vaultfs
+USER vexobj
 ```
 
 ## Thumbnails
@@ -121,12 +121,12 @@ The result is merged into `object.metadata.video`:
 }
 ```
 
-Same fields are exposed on `HEAD` as `x-vaultfs-video-*` headers.
+Same fields are exposed on `HEAD` as `x-vexobj-video-*` headers.
 
 ## Transcoding
 
 Submissions go into a SQLite-backed queue that a background tokio
-worker drains. Variants are stored as first-class vaultfs objects, so
+worker drains. Variants are stored as first-class vexobj objects, so
 they get versioning, lifecycle, ACLs, and replication for free — the
 same way every other object does.
 
@@ -144,7 +144,7 @@ curl http://localhost:8000/v1/transcode/profiles
 
 Custom ffmpeg args aren't exposed in 0.1.x — arbitrary argument
 passthrough is a CVE waiting to happen without sandboxing. Add a new
-preset in `vaultfs-processing/src/transcode.rs` and rebuild instead.
+preset in `vexobj-processing/src/transcode.rs` and rebuild instead.
 
 ### Submit a job
 
@@ -215,9 +215,9 @@ gc_after_days = 30     # GC terminal rows older than this; 0 disables
 
 Environment-variable overrides:
 
-- `VAULTFS_TRANSCODE_WORKERS`
-- `VAULTFS_TRANSCODE_MAX_PENDING`
-- `VAULTFS_TRANSCODE_GC_DAYS`
+- `VEXOBJ_TRANSCODE_WORKERS`
+- `VEXOBJ_TRANSCODE_MAX_PENDING`
+- `VEXOBJ_TRANSCODE_GC_DAYS`
 
 ### Backpressure
 
@@ -236,9 +236,9 @@ Set it to `0` to disable. Running jobs are never touched.
 For on-demand inspection:
 
 ```bash
-vaultfsctl transcode jobs --status=running --limit=20
-vaultfsctl transcode get <job-id>
-vaultfsctl transcode profiles
+vexobjctl transcode jobs --status=running --limit=20
+vexobjctl transcode get <job-id>
+vexobjctl transcode profiles
 ```
 
 ### What's still on the roadmap

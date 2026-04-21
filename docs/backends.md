@@ -9,7 +9,7 @@ else that implements the four basic operations.
 ### `local` — default
 
 Blobs live on disk under `<data_dir>/blobs/<aa>/<bb>/<sha256>`. This
-is what VaultFS has always done and remains the default — nothing in
+is what VexObj has always done and remains the default — nothing in
 existing deployments has to change.
 
 - **Speed**: sub-millisecond per op on a warm page cache.
@@ -26,7 +26,7 @@ backend = "s3"
 
 [storage.s3]
 endpoint   = "https://s3.us-east-1.amazonaws.com"  # or R2 / B2 / MinIO / Wasabi / DO Spaces
-bucket     = "vaultfs-blobs"
+bucket     = "vexobj-blobs"
 access_key = "AKID..."
 secret_key = "..."
 region     = "us-east-1"
@@ -37,7 +37,7 @@ path_style = true   # false for AWS-native virtual-hosted style
   a VPC-peered endpoint / S3 Transfer Acceleration / regional R2
   endpoint to minimize.
 - **Scale**: effectively unlimited. The blob layer becomes petabyte-
-  scalable and durable (99.999999999%) for free. VaultFS metadata
+  scalable and durable (99.999999999%) for free. VexObj metadata
   still lives in SQLite — see `Limitations` below.
 - **Dependencies**: none on the server side; any service that speaks
   the AWS Signature V4 S3 protocol works.
@@ -47,7 +47,7 @@ path_style = true   # false for AWS-native virtual-hosted style
 These features need direct filesystem access to the blob data and
 aren't compatible with the S3 backend in 0.1.x:
 
-- **SSE-at-rest** — VaultFS encrypts blobs before they hit the local
+- **SSE-at-rest** — VexObj encrypts blobs before they hit the local
   disk; with S3 the ciphertext would go to S3 too, which is usually
   not what you want. If your object store offers SSE-S3 / SSE-KMS,
   use that instead.
@@ -72,7 +72,7 @@ backend = "s3"
 
 [storage.s3]
 endpoint   = "https://<account-id>.r2.cloudflarestorage.com"
-bucket     = "vaultfs-prod"
+bucket     = "vexobj-prod"
 access_key = "…"
 secret_key = "…"
 region     = "auto"          # R2 accepts any region, use "auto"
@@ -82,13 +82,13 @@ path_style = true
 Or via environment variables (handier for secrets):
 
 ```bash
-VAULTFS_STORAGE_BACKEND=s3 \
-VAULTFS_S3_ENDPOINT=https://s3.us-east-1.amazonaws.com \
-VAULTFS_S3_BUCKET=vaultfs-prod \
-VAULTFS_S3_ACCESS_KEY=AKID... \
-VAULTFS_S3_SECRET_KEY=... \
-VAULTFS_S3_REGION=us-east-1 \
-./vaultfs
+VEXOBJ_STORAGE_BACKEND=s3 \
+VEXOBJ_S3_ENDPOINT=https://s3.us-east-1.amazonaws.com \
+VEXOBJ_S3_BUCKET=vexobj-prod \
+VEXOBJ_S3_ACCESS_KEY=AKID... \
+VEXOBJ_S3_SECRET_KEY=... \
+VEXOBJ_S3_REGION=us-east-1 \
+./vexobj
 ```
 
 Switching is a config-only change. Existing SQLite metadata stays
@@ -125,6 +125,6 @@ The canonical SDK is 40+ transitive crates and ~10 s extra build
 time. `S3BlobStore` implements only what the blob layer needs — PUT,
 GET, HEAD, DELETE, path-style and virtual-hosted addressing, SigV4
 — in ~300 lines. If you need bucket management, lifecycle policies,
-or multipart orchestration, point VaultFS at a bucket you created
+or multipart orchestration, point VexObj at a bucket you created
 externally with the SDK (or `aws` CLI / `mc`) and let it own blob
 storage only.

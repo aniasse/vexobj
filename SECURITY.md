@@ -2,7 +2,7 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in VaultFS, please report it responsibly.
+If you discover a security vulnerability in VexObj, please report it responsibly.
 
 **Do NOT open a public GitHub issue for security vulnerabilities.**
 
@@ -28,7 +28,7 @@ Include:
 
 ## Security Measures
 
-VaultFS implements:
+VexObj implements:
 - API key authentication with SHA256 hashing (keys are never stored in plaintext)
 - Path traversal protection
 - Input validation on bucket names and object keys

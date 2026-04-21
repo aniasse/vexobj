@@ -1,6 +1,6 @@
 # Replication
 
-VaultFS ships an **async primary-replica** replication model. One node
+VexObj ships an **async primary-replica** replication model. One node
 holds the writable copy; any number of replicas poll it and pull new
 data. This document explains the design, what it guarantees, and what
 it deliberately leaves out.
@@ -30,7 +30,7 @@ it deliberately leaves out.
 ```
 ┌──────────────┐   GET /v1/replication/events?since=<id>
 │   Replica    │ ◄──────────────────────────────────────┐
-│  vaultfsctl  │   GET /v1/replication/blob/<sha256>    │
+│  vexobjctl  │   GET /v1/replication/blob/<sha256>    │
 │  replicate   │ ◄──────────────────────────────────────┤
 └──────┬───────┘                                        │
        │ applies locally                     ┌──────────▼──────────┐
@@ -39,7 +39,7 @@ it deliberately leaves out.
        │  cursor)                            │  replication_events │
        ▼                                     │  on every write     │
 ┌──────────────┐                             └─────────────────────┘
-│ local vaultfs│
+│ local vexobj│
 └──────────────┘
 ```
 
@@ -107,20 +107,20 @@ cleanly.
       in non-SSE mode)
 - ✅ `POST /v1/replication/apply` (write to DB directly so replicas
       don't re-append to their own log)
-- ✅ `vaultfsctl replicate` — one-shot or polling loop, persisted cursor
+- ✅ `vexobjctl replicate` — one-shot or polling loop, persisted cursor
 - ✅ End-to-end two-server test
 
 ## Usage
 
 ```bash
 # On each replica, run this either as a one-shot cron or a long-lived loop:
-vaultfsctl \
+vexobjctl \
   --url http://replica-local:8000 \
   --key "$REPLICA_ADMIN_KEY" \
   replicate \
   --primary https://primary.example.com \
   --primary-key "$PRIMARY_ADMIN_KEY" \
-  --cursor-file /var/lib/vaultfs/replica.cursor \
+  --cursor-file /var/lib/vexobj/replica.cursor \
   --interval 5   # 0 to exit after one sweep
 ```
 

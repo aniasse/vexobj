@@ -1,22 +1,22 @@
 # Monitoring
 
-VaultFS exposes Prometheus metrics at `/metrics` (no auth required — it
+VexObj exposes Prometheus metrics at `/metrics` (no auth required — it
 only publishes aggregate counters, not object content or keys). This
 page walks through what's emitted, how to scrape it, and how to import
 the ready-to-use Grafana dashboard shipped at
-`deploy/grafana/vaultfs-dashboard.json`.
+`deploy/grafana/vexobj-dashboard.json`.
 
 ## Metrics reference
 
 | Metric                                  | Type      | Labels        | Meaning                             |
 |-----------------------------------------|-----------|---------------|-------------------------------------|
-| `vaultfs_requests_total`                | counter   | —             | Every HTTP request the server saw   |
-| `vaultfs_requests_by_method_total`      | counter   | `method`      | Request count by HTTP method        |
-| `vaultfs_requests_by_status_total`      | counter   | `status`      | Request count by `2xx`/`3xx`/`4xx`/`5xx` |
-| `vaultfs_request_duration_seconds`      | histogram | `le`          | Latency histogram (8 buckets)       |
-| `vaultfs_objects_uploaded_total`        | counter   | —             | Number of successful PUTs           |
-| `vaultfs_bytes_uploaded_total`          | counter   | —             | Bytes written across PUTs           |
-| `vaultfs_bytes_downloaded_total`        | counter   | —             | Bytes served across GETs            |
+| `vexobj_requests_total`                | counter   | —             | Every HTTP request the server saw   |
+| `vexobj_requests_by_method_total`      | counter   | `method`      | Request count by HTTP method        |
+| `vexobj_requests_by_status_total`      | counter   | `status`      | Request count by `2xx`/`3xx`/`4xx`/`5xx` |
+| `vexobj_request_duration_seconds`      | histogram | `le`          | Latency histogram (8 buckets)       |
+| `vexobj_objects_uploaded_total`        | counter   | —             | Number of successful PUTs           |
+| `vexobj_bytes_uploaded_total`          | counter   | —             | Bytes written across PUTs           |
+| `vexobj_bytes_downloaded_total`        | counter   | —             | Bytes served across GETs            |
 
 Histogram buckets are `1ms, 10ms, 50ms, 100ms, 500ms, 1s, 5s, +Inf`.
 That's intentionally wide — if you see most requests slipping past
@@ -26,17 +26,17 @@ That's intentionally wide — if you see most requests slipping past
 
 ```yaml
 scrape_configs:
-  - job_name: vaultfs
+  - job_name: vexobj
     metrics_path: /metrics
     static_configs:
-      - targets: ['vaultfs-1.internal:8000']
+      - targets: ['vexobj-1.internal:8000']
 ```
 
 Scraping every 15 s is plenty for the counters we emit.
 
 ## Grafana dashboard
 
-The shipped dashboard (`deploy/grafana/vaultfs-dashboard.json`) gives
+The shipped dashboard (`deploy/grafana/vexobj-dashboard.json`) gives
 a single-pane-of-glass view:
 
 - Request rate by method
@@ -58,29 +58,29 @@ failures:
 
 ```yaml
 groups:
-  - name: vaultfs
+  - name: vexobj
     rules:
-      - alert: VaultfsDown
-        expr: up{job="vaultfs"} == 0
+      - alert: VexObjDown
+        expr: up{job="vexobj"} == 0
         for: 2m
         labels: { severity: page }
         annotations:
-          summary: "VaultFS {{ $labels.instance }} is down"
+          summary: "VexObj {{ $labels.instance }} is down"
 
-      - alert: VaultfsHighErrorRate
+      - alert: VexObjHighErrorRate
         expr: |
-          sum(rate(vaultfs_requests_by_status_total{status="5xx"}[5m]))
-            / clamp_min(sum(rate(vaultfs_requests_total[5m])), 1)
+          sum(rate(vexobj_requests_by_status_total{status="5xx"}[5m]))
+            / clamp_min(sum(rate(vexobj_requests_total[5m])), 1)
             > 0.02
         for: 10m
         labels: { severity: warn }
         annotations:
-          summary: "VaultFS 5xx ratio > 2% for 10 min"
+          summary: "VexObj 5xx ratio > 2% for 10 min"
 
-      - alert: VaultfsLatencyRegression
+      - alert: VexObjLatencyRegression
         expr: |
           histogram_quantile(0.99,
-            sum(rate(vaultfs_request_duration_seconds_bucket[5m])) by (le)
+            sum(rate(vexobj_request_duration_seconds_bucket[5m])) by (le)
           ) > 1
         for: 10m
         labels: { severity: warn }

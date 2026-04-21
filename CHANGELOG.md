@@ -1,8 +1,24 @@
 # Changelog
 
-All notable changes to VaultFS are documented here. The project stays
+All notable changes to VexObj are documented here. The project stays
 on 0.1.x until it has real users — additive features land here rather
 than cutting new minor versions.
+
+## Unreleased
+
+### Renamed
+- **Project renamed from VaultFS to VexObj** (2026-04-21). Canonical
+  lowercase form `vexobj` for identifiers (binaries, CLI, crates, env
+  vars, module paths, Docker image, Helm chart). CamelCase `VexObj` is
+  used for branding and types.
+- Binaries: `vaultfs` → `vexobj`, `vaultfsctl` → `vexobjctl`.
+- Env vars: `VAULTFS_*` → `VEXOBJ_*`.
+- Prometheus metrics: `vaultfs_*` → `vexobj_*` (update dashboards).
+- HTTP response headers: `x-vaultfs-*` → `x-vexobj-*`.
+- API key prefix: `vfs_*` → `vex_*`. Pre-1.0, no dual-prefix migration;
+  regenerate keys on next run.
+- Docker image path: `ghcr.io/aniasse/vaultfs` → `ghcr.io/aniasse/vexobj`.
+- Helm chart: `deploy/helm/vaultfs` → `deploy/helm/vexobj`.
 
 ## [0.1.0] - 2026-04-16
 
@@ -59,7 +75,7 @@ than cutting new minor versions.
 - Applies transparently to put/get, streaming upload/download, and
   versioned reads
 - Enabled via `[sse] enabled = true` + `master_key` (64 hex chars) in
-  config, or `VAULTFS_SSE_ENABLED` / `VAULTFS_SSE_MASTER_KEY`
+  config, or `VEXOBJ_SSE_ENABLED` / `VEXOBJ_SSE_MASTER_KEY`
 
 ### Admin & operations
 - Embedded dashboard at `/dashboard`
@@ -72,7 +88,7 @@ than cutting new minor versions.
 - `POST /v1/admin/lifecycle/run` — manual sweep
 - `GET|PUT|DELETE /v1/admin/lock/{bucket}/{key}` — object lock
 - `POST /v1/admin/migrate/s3` — stub that redirects callers to
-  `vaultfsctl migrate s3`
+  `vexobjctl migrate s3`
 - SQLite-backed audit log: every write operation logged with actor,
   action, target, and IP; query via `GET /v1/admin/audit`
 
@@ -100,8 +116,8 @@ than cutting new minor versions.
 - Cross-platform release builds (Linux amd64, macOS arm64)
 
 ### Configuration
-- TOML config file with `VAULTFS_CONFIG=` override
-- Environment variable overrides (`VAULTFS_*` prefix)
+- TOML config file with `VEXOBJ_CONFIG=` override
+- Environment variable overrides (`VEXOBJ_*` prefix)
 - Multitenancy quotas (max storage and max objects per bucket)
 - Webhook notifications with HMAC signatures
 
@@ -118,13 +134,13 @@ than cutting new minor versions.
 - `PUT /v1/replication/blob/:sha256` + `POST /v1/replication/apply` —
   replica-side import with hash verification (non-SSE) and direct-to-DB
   apply that skips the local log to avoid cascade loops
-- `vaultfsctl replicate` — one-shot or polling loop with persisted cursor
-- `vaultfsctl promote` — replica-to-primary checkpoint + cursor cleanup
+- `vexobjctl replicate` — one-shot or polling loop with persisted cursor
+- `vexobjctl promote` — replica-to-primary checkpoint + cursor cleanup
 - Full runbook at [docs/failover.md](docs/failover.md)
 
 ### Monitoring
 - Ready-to-import Grafana dashboard at
-  `deploy/grafana/vaultfs-dashboard.json` (request rate, 5xx ratio,
+  `deploy/grafana/vexobj-dashboard.json` (request rate, 5xx ratio,
   p50/p95/p99, throughput)
 - Reference alert rules and scrape config in [docs/monitoring.md](docs/monitoring.md)
 
@@ -133,12 +149,12 @@ than cutting new minor versions.
   SigV4)
 - Published numbers in [docs/benchmarks.md](docs/benchmarks.md)
 
-### CLI (`vaultfsctl`)
+### CLI (`vexobjctl`)
 - Full admin CLI: bucket / object / key / stats / GC / backup / export
-- `vaultfsctl migrate s3` — streams objects from any S3-compatible
-  source (AWS S3, MinIO, etc.) into VaultFS with AWS Sigv4 signing
-- `vaultfsctl replicate` + `vaultfsctl promote` for multi-node ops
-- `VAULTFS_URL` / `VAULTFS_KEY` env-var support
+- `vexobjctl migrate s3` — streams objects from any S3-compatible
+  source (AWS S3, MinIO, etc.) into VexObj with AWS Sigv4 signing
+- `vexobjctl replicate` + `vexobjctl promote` for multi-node ops
+- `VEXOBJ_URL` / `VEXOBJ_KEY` env-var support
 
 ### Documentation
 - OpenAPI 3.1 spec served at `/openapi.yaml` — covers every documented

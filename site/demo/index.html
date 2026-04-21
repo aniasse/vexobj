@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Démo VaultFS — galerie photo auto-hébergée</title>
-<meta name="description" content="Démo interactive de VaultFS. Connectez-vous à votre instance, uploadez des images, et visualisez les transformations à la volée.">
+<title>Démo VexObj — galerie photo auto-hébergée</title>
+<meta name="description" content="Démo interactive de VexObj. Connectez-vous à votre instance, uploadez des images, et visualisez les transformations à la volée.">
 <meta name="robots" content="noindex">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -626,13 +626,13 @@ a:hover { opacity: 0.85; }
 <header class="masthead">
   <a href="../" class="brand" style="color: inherit;">
     <span class="logo">A</span>
-    <span>vaultfs</span>
+    <span>vexobj</span>
     <span class="tag">Démo</span>
   </a>
 
   <div class="masthead-right">
     <a href="../" class="btn btn-small">← Landing</a>
-    <a href="https://github.com/aniasse/vaultfs" target="_blank" rel="noopener" class="btn btn-small">GitHub</a>
+    <a href="https://github.com/aniasse/vexobj" target="_blank" rel="noopener" class="btn btn-small">GitHub</a>
     <span id="status" class="status-pill">
       <span class="dot"></span>
       <span id="status-text">Non connecté</span>
@@ -650,7 +650,7 @@ a:hover { opacity: 0.85; }
       <div class="field">
         <label for="vfs-url">Instance</label>
         <input id="vfs-url" type="url" placeholder="http://localhost:8000" autocomplete="off">
-        <span class="hint">URL complète du serveur VaultFS</span>
+        <span class="hint">URL complète du serveur VexObj</span>
       </div>
       <div class="field">
         <label for="vfs-key">Clé API</label>
@@ -680,10 +680,10 @@ a:hover { opacity: 0.85; }
     <div class="card">
       <h3><span class="index">03</span> À propos</h3>
       <p style="font-size: 12px; color: var(--ink-soft); line-height: 1.6;">
-        Cette démo effectue toutes les opérations directement dans votre navigateur contre votre instance VaultFS. La clé API reste en local (<code class="mono" style="color:var(--emerald); font-size:11px;">localStorage</code>) et n'est jamais envoyée à un tiers.
+        Cette démo effectue toutes les opérations directement dans votre navigateur contre votre instance VexObj. La clé API reste en local (<code class="mono" style="color:var(--emerald); font-size:11px;">localStorage</code>) et n'est jamais envoyée à un tiers.
       </p>
       <p style="font-size: 12px; color: var(--ink-soft); line-height: 1.6; margin-top: 8px;">
-        Sources : <a href="https://github.com/aniasse/vaultfs/tree/main/site/demo" target="_blank" rel="noopener">site/demo/index.html</a>.
+        Sources : <a href="https://github.com/aniasse/vexobj/tree/main/site/demo" target="_blank" rel="noopener">site/demo/index.html</a>.
       </p>
     </div>
   </aside>
@@ -692,11 +692,11 @@ a:hover { opacity: 0.85; }
   <main class="main">
 
     <div class="notice warn" id="mixed-content-notice" hidden>
-      <strong>Contenu mixte bloqué.</strong> Cette page est servie en HTTPS, mais votre instance est en HTTP. Pour tester en local, clonez le dépôt et servez <code>site/demo/</code> localement, ou déployez votre instance VaultFS derrière TLS.
+      <strong>Contenu mixte bloqué.</strong> Cette page est servie en HTTPS, mais votre instance est en HTTP. Pour tester en local, clonez le dépôt et servez <code>site/demo/</code> localement, ou déployez votre instance VexObj derrière TLS.
     </div>
 
     <div class="notice" id="welcome-notice">
-      <strong>Bienvenue.</strong> Démarrez VaultFS localement avec <code>docker run -p 8000:8000 ghcr.io/aniasse/vaultfs:latest</code>, récupérez la clé admin dans les logs, et saisissez vos informations de connexion dans le panneau de gauche.
+      <strong>Bienvenue.</strong> Démarrez VexObj localement avec <code>docker run -p 8000:8000 ghcr.io/aniasse/vexobj:latest</code>, récupérez la clé admin dans les logs, et saisissez vos informations de connexion dans le panneau de gauche.
     </div>
 
     <section id="uploader-section" hidden>
@@ -790,13 +790,13 @@ a:hover { opacity: 0.85; }
 
 <script>
 /*
-  VaultFS demo — connects to a VaultFS instance from the browser,
+  VexObj demo — connects to a VexObj instance from the browser,
   uploads images, renders the gallery via on-the-fly image transforms,
   and shows each HTTP call in an activity log. Connection settings are
   persisted to localStorage; the API key never leaves the browser.
 */
 
-const LS_KEY = "vaultfs-demo-cfg";
+const LS_KEY = "vexobj-demo-cfg";
 
 const el = (id) => document.getElementById(id);
 

@@ -1,6 +1,6 @@
-# Contributing to VaultFS
+# Contributing to VexObj
 
-Thank you for your interest in contributing to VaultFS! This guide will help you get started.
+Thank you for your interest in contributing to VexObj! This guide will help you get started.
 
 ## Code of Conduct
 
@@ -18,8 +18,8 @@ This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.
 
 ```bash
 # Clone the repository
-git clone https://github.com/aniasse/vaultfs.git
-cd vaultfs
+git clone https://github.com/aniasse/vexobj.git
+cd vexobj
 
 # Build in debug mode
 cargo build
@@ -27,7 +27,7 @@ cargo build
 # Build release binary
 cargo build --release
 
-# The binary is at ./target/release/vaultfs
+# The binary is at ./target/release/vexobj
 ```
 
 ### Running Locally
@@ -37,7 +37,7 @@ cargo build --release
 cargo run
 
 # Run with a custom config
-VAULTFS_CONFIG=config/default.toml cargo run
+VEXOBJ_CONFIG=config/default.toml cargo run
 
 # Run with debug logging
 RUST_LOG=debug cargo run
@@ -50,28 +50,28 @@ RUST_LOG=debug cargo run
 cargo test --workspace
 
 # Run tests for a specific crate
-cargo test -p vaultfs-storage
-cargo test -p vaultfs-auth
-cargo test -p vaultfs-processing
+cargo test -p vexobj-storage
+cargo test -p vexobj-auth
+cargo test -p vexobj-processing
 
 # Run integration tests
-cargo test -p vaultfs-tests
+cargo test -p vexobj-tests
 ```
 
 ## Architecture Overview
 
-VaultFS is organized as a Cargo workspace with the following crates:
+VexObj is organized as a Cargo workspace with the following crates:
 
 | Crate | Description |
 |---|---|
-| `vaultfs-server` | HTTP server built on Axum, routes, middleware, and the CLI entry point |
-| `vaultfs-storage` | Storage engine with SQLite metadata and content-addressable file storage |
-| `vaultfs-processing` | Image transformation pipeline (resize, crop, format conversion) |
-| `vaultfs-cache` | Multi-level cache (in-memory LRU + disk) for processed images |
-| `vaultfs-auth` | API key management, permission model, and presigned URL generation |
-| `vaultfs-s3-compat` | S3-compatible API layer (ListBuckets, GetObject, PutObject, etc.) |
-| `vaultfs-cli` | CLI argument parsing and configuration loading |
-| `vaultfs-tests` | Integration and end-to-end tests |
+| `vexobj-server` | HTTP server built on Axum, routes, middleware, and the CLI entry point |
+| `vexobj-storage` | Storage engine with SQLite metadata and content-addressable file storage |
+| `vexobj-processing` | Image transformation pipeline (resize, crop, format conversion) |
+| `vexobj-cache` | Multi-level cache (in-memory LRU + disk) for processed images |
+| `vexobj-auth` | API key management, permission model, and presigned URL generation |
+| `vexobj-s3-compat` | S3-compatible API layer (ListBuckets, GetObject, PutObject, etc.) |
+| `vexobj-cli` | CLI argument parsing and configuration loading |
+| `vexobj-tests` | Integration and end-to-end tests |
 
 ### Request Flow
 
@@ -79,17 +79,17 @@ VaultFS is organized as a Cargo workspace with the following crates:
 Client Request
     |
     v
-vaultfs-server (Axum router + auth middleware)
+vexobj-server (Axum router + auth middleware)
     |
-    +---> vaultfs-auth (validate API key / presigned URL)
+    +---> vexobj-auth (validate API key / presigned URL)
     |
-    +---> vaultfs-storage (read/write objects, SQLite metadata)
+    +---> vexobj-storage (read/write objects, SQLite metadata)
     |
-    +---> vaultfs-processing (transform images on the fly)
+    +---> vexobj-processing (transform images on the fly)
     |
-    +---> vaultfs-cache (check/store processed results)
+    +---> vexobj-cache (check/store processed results)
     |
-    +---> vaultfs-s3-compat (handle S3 protocol requests)
+    +---> vexobj-s3-compat (handle S3 protocol requests)
 ```
 
 ## Code Style
@@ -141,11 +141,11 @@ Write clear, concise commit messages. Use the imperative mood:
 
 ## Reporting Bugs
 
-Use the [Bug Report](https://github.com/aniasse/vaultfs/issues/new?template=bug_report.md) issue template. Include reproduction steps, your environment, and any relevant logs.
+Use the [Bug Report](https://github.com/aniasse/vexobj/issues/new?template=bug_report.md) issue template. Include reproduction steps, your environment, and any relevant logs.
 
 ## Requesting Features
 
-Use the [Feature Request](https://github.com/aniasse/vaultfs/issues/new?template=feature_request.md) issue template. Explain the use case and proposed solution.
+Use the [Feature Request](https://github.com/aniasse/vexobj/issues/new?template=feature_request.md) issue template. Explain the use case and proposed solution.
 
 ## Security Vulnerabilities
 

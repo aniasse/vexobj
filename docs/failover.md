@@ -1,6 +1,6 @@
 # Primary failure runbook
 
-VaultFS replication is single-writer and async (see
+VexObj replication is single-writer and async (see
 [docs/replication.md](replication.md)). When the primary dies, an
 operator must promote a replica; there is no automatic failover.
 This document walks through the promotion, recovery, and return-to-
@@ -20,7 +20,7 @@ service steps.
 You should have:
 
 - SSH / shell access to the chosen replica.
-- The replica's admin API key (the one `vaultfsctl replicate` was
+- The replica's admin API key (the one `vexobjctl replicate` was
   using as `--local-key`).
 - Ability to update DNS or the load balancer that points clients at
   the current primary.
@@ -31,23 +31,23 @@ You should have:
 
 ```bash
 # On the replica:
-vaultfsctl --url http://localhost:8000 --key "$REPLICA_KEY" health
-vaultfsctl --url http://localhost:8000 --key "$REPLICA_KEY" stats
+vexobjctl --url http://localhost:8000 --key "$REPLICA_KEY" health
+vexobjctl --url http://localhost:8000 --key "$REPLICA_KEY" stats
 ```
 
 Optional: if the primary is reachable enough for one last poll, run
-`vaultfsctl replicate --interval 0` one more time to pull any
+`vexobjctl replicate --interval 0` one more time to pull any
 pending events before promotion. Skip this if the primary is fully
 gone.
 
 ## Step 2 — promote
 
 ```bash
-vaultfsctl \
+vexobjctl \
   --url http://localhost:8000 \
   --key "$REPLICA_KEY" \
   promote \
-  --cursor-file /var/lib/vaultfs/replica.cursor
+  --cursor-file /var/lib/vexobj/replica.cursor
 ```
 
 This:
@@ -71,9 +71,9 @@ Do this in roughly this order to minimise split-brain risk:
 
 1. **Revoke the old primary's admin key.** If the primary comes back
    online while you're still cutting over, you don't want
-   `vaultfsctl replicate` on remaining replicas to keep pulling from
+   `vexobjctl replicate` on remaining replicas to keep pulling from
    it.
-2. **Update DNS / load balancer** to point `vaultfs.example.com` at
+2. **Update DNS / load balancer** to point `vexobj.example.com` at
    the new primary.
 3. **Update SDK / client config** for any caller that doesn't go
    through the load balancer (CI jobs, cron, etc.).
@@ -85,14 +85,14 @@ fresh cursor:
 
 ```bash
 # On each remaining replica:
-rm -f /var/lib/vaultfs/replica.cursor
-vaultfsctl \
+rm -f /var/lib/vexobj/replica.cursor
+vexobjctl \
   --url http://localhost:8000 \
   --key "$REPLICA_KEY" \
   replicate \
   --primary https://new-primary.example.com \
   --primary-key "$NEW_PRIMARY_ADMIN_KEY" \
-  --cursor-file /var/lib/vaultfs/replica.cursor \
+  --cursor-file /var/lib/vexobj/replica.cursor \
   --interval 5 &
 ```
 
@@ -107,7 +107,7 @@ If the disk is intact, pull a backup:
 
 ```bash
 # From the dead primary (or its disk mounted elsewhere)
-tar czf vaultfs-primary-corpse.tgz /var/lib/vaultfs/
+tar czf vexobj-primary-corpse.tgz /var/lib/vexobj/
 ```
 
 Then wipe the node and re-provision it as a new replica pointing at
@@ -117,12 +117,12 @@ the promoted primary.
 
 - **No zero-RPO failover.** A write that reached the primary but
   hadn't been pulled by any replica is lost. If that's unacceptable,
-  run `vaultfsctl replicate --interval 1` on at least one replica and
+  run `vexobjctl replicate --interval 1` on at least one replica and
   monitor its cursor.
 - **No automatic election.** If the operator isn't around, clients
   just hit a dead primary. Adding Raft is not on the 0.1.x roadmap —
   the tradeoff is keeping the server small enough to operate
   yourself.
-- **Post-promotion renames are manual.** VaultFS doesn't care which
+- **Post-promotion renames are manual.** VexObj doesn't care which
   node is "the primary"; clients do. The load balancer / DNS layer
   is the source of truth for that.

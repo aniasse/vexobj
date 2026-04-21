@@ -1,9 +1,9 @@
-# VaultFS
+# VexObj
 
 High-performance, self-hosted object storage with built-in image processing. A single binary alternative to S3 + Cloudinary that runs on a simple VPS.
 
-→ **Landing page**: https://aniasse.github.io/vaultfs/
-→ **Release**: [v0.1.0](https://github.com/aniasse/vaultfs/releases/tag/v0.1.0) (Linux amd64, macOS arm64, Docker `ghcr.io/aniasse/vaultfs:latest`)
+→ **Landing page**: https://aniasse.github.io/vexobj/
+→ **Release**: [v0.1.0](https://github.com/aniasse/vexobj/releases/tag/v0.1.0) (Linux amd64, macOS arm64, Docker `ghcr.io/aniasse/vexobj:latest`)
 
 ## Features
 
@@ -26,7 +26,7 @@ High-performance, self-hosted object storage with built-in image processing. A s
 
 ## What it does
 
-VaultFS is a self-hosted object storage platform shipped as a single ~14 MB Rust binary. It exposes both a native REST API (`/v1/*`) and an S3-compatible API (`/s3/*`) with real AWS Signature V4 verification, so any standard S3 client — `aws-sdk`, `boto3`, `mc`, `rclone` — talks to it unmodified.
+VexObj is a self-hosted object storage platform shipped as a single ~14 MB Rust binary. It exposes both a native REST API (`/v1/*`) and an S3-compatible API (`/s3/*`) with real AWS Signature V4 verification, so any standard S3 client — `aws-sdk`, `boto3`, `mc`, `rclone` — talks to it unmodified.
 
 Three things the server does that no single competitor covers in one process:
 
@@ -37,9 +37,9 @@ Three things the server does that no single competitor covers in one process:
 ## Why use it
 
 - **vs. managed (S3 + Cloudinary + Mux)** — you own the keys, the data, and the logs. No per-gigabyte, per-transformation, per-second-of-transcoding billing.
-- **vs. MinIO / Garage / SeaweedFS** — those are excellent for pure storage but lack media processing. Pairing them with Cloudinary or ImgProxy adds a second service, a second invoice, a second failure point. VaultFS keeps it all in one process.
-- **vs. Ceph / MinIO cluster** — those target distributed multi-node scale and demand serious ops expertise. VaultFS takes the opposite bet: one binary, 4-line config, scale vertically on one machine and then delegate to a cloud blob layer. The operational effort is orders of magnitude lower.
-- **vs. rolling your own** — SigV4, WORM, `is_latest` promotion on versioning, content-addressable dedup, replication with atomic cursors — each of those is weeks of work. VaultFS ships them tested.
+- **vs. MinIO / Garage / SeaweedFS** — those are excellent for pure storage but lack media processing. Pairing them with Cloudinary or ImgProxy adds a second service, a second invoice, a second failure point. VexObj keeps it all in one process.
+- **vs. Ceph / MinIO cluster** — those target distributed multi-node scale and demand serious ops expertise. VexObj takes the opposite bet: one binary, 4-line config, scale vertically on one machine and then delegate to a cloud blob layer. The operational effort is orders of magnitude lower.
+- **vs. rolling your own** — SigV4, WORM, `is_latest` promotion on versioning, content-addressable dedup, replication with atomic cursors — each of those is weeks of work. VexObj ships them tested.
 
 ## When to use it
 
@@ -65,13 +65,13 @@ Not a fit for:
 cargo build --release
 
 # Run with defaults (listens on :8000, stores in ./data)
-./target/release/vaultfs
+./target/release/vexobj
 
 # Or with a config file
-VAULTFS_CONFIG=config.toml ./target/release/vaultfs
+VEXOBJ_CONFIG=config.toml ./target/release/vexobj
 ```
 
-On first launch with auth enabled, VaultFS generates an admin API key and prints it to the logs. Save this key.
+On first launch with auth enabled, VexObj generates an admin API key and prints it to the logs. Save this key.
 
 ## API
 
@@ -172,7 +172,7 @@ curl -X DELETE http://localhost:8000/v1/admin/keys/{key-id} \
 
 ### S3-Compatible API
 
-VaultFS exposes an S3-compatible API under `/s3/`. Use it with any S3 SDK by pointing to your VaultFS instance.
+VexObj exposes an S3-compatible API under `/s3/`. Use it with any S3 SDK by pointing to your VexObj instance.
 
 ```bash
 # List buckets
@@ -285,7 +285,7 @@ curl -X POST http://localhost:8000/v1/admin/lifecycle/run \
 
 ```bash
 # Stream an entire bucket from any S3-compatible source (uses AWS SigV4)
-vaultfsctl migrate s3 \
+vexobjctl migrate s3 \
   --source-endpoint https://s3.amazonaws.com \
   --source-bucket old-photos \
   --source-access-key AKID... \
@@ -295,7 +295,7 @@ vaultfsctl migrate s3 \
 
 ### S3-compatible API with SigV4
 
-The `/s3/*` routes verify `AWS4-HMAC-SHA256` signatures (not just the access key) — tampered URLs and mutated signatures are rejected. Point any S3 SDK at the VaultFS endpoint and use a VaultFS API key as both `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. A `Bearer` header is also accepted as a convenience shortcut.
+The `/s3/*` routes verify `AWS4-HMAC-SHA256` signatures (not just the access key) — tampered URLs and mutated signatures are rejected. Point any S3 SDK at the VexObj endpoint and use a VexObj API key as both `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. A `Bearer` header is also accepted as a convenience shortcut.
 
 ## Configuration
 
@@ -320,7 +320,7 @@ max_transform_size = "50MB"
 enabled = true
 
 # Optional: encrypt blobs at rest. master_key is 64 hex chars (32 bytes).
-# Prefer VAULTFS_SSE_MASTER_KEY env var in production so it stays out of
+# Prefer VEXOBJ_SSE_MASTER_KEY env var in production so it stays out of
 # the config file.
 [sse]
 enabled = false
@@ -334,23 +334,23 @@ master_key = ""
 docker compose up -d
 
 # Or standalone
-docker build -t vaultfs .
-docker run -p 8000:8000 -v vaultfs-data:/data vaultfs
+docker build -t vexobj .
+docker run -p 8000:8000 -v vexobj-data:/data vexobj
 ```
 
 ## Architecture
 
 ```
-vaultfs/
+vexobj/
 ├── crates/
-│   ├── vaultfs-server/       # HTTP server (axum) + middleware + routes
-│   ├── vaultfs-storage/      # Storage engine, SQLite metadata, SSE
-│   ├── vaultfs-processing/   # Image transformation
-│   ├── vaultfs-cache/        # Multi-level LRU cache (memory + disk)
-│   ├── vaultfs-auth/         # API keys, permissions, presigned URLs
-│   ├── vaultfs-s3-compat/    # S3-compatible API with SigV4
-│   ├── vaultfs-cli/          # vaultfsctl admin CLI
-│   └── vaultfs-tests/        # End-to-end integration tests
+│   ├── vexobj-server/       # HTTP server (axum) + middleware + routes
+│   ├── vexobj-storage/      # Storage engine, SQLite metadata, SSE
+│   ├── vexobj-processing/   # Image transformation
+│   ├── vexobj-cache/        # Multi-level LRU cache (memory + disk)
+│   ├── vexobj-auth/         # API keys, permissions, presigned URLs
+│   ├── vexobj-s3-compat/    # S3-compatible API with SigV4
+│   ├── vexobj-cli/          # vexobjctl admin CLI
+│   └── vexobj-tests/        # End-to-end integration tests
 ├── sdks/
 │   ├── js/                   # TypeScript / JavaScript SDK
 │   ├── python/               # Python SDK (httpx)
@@ -369,8 +369,8 @@ Current single-core numbers on an Intel i5-10300H (no SHA-NI):
 - SigV4 verification: **~100k req/s per core**
 
 Full methodology and per-size numbers in [docs/benchmarks.md](docs/benchmarks.md).
-Reproducible with `cargo bench -p vaultfs-storage` and
-`cargo bench -p vaultfs-s3-compat`.
+Reproducible with `cargo bench -p vexobj-storage` and
+`cargo bench -p vexobj-s3-compat`.
 
 ## License
 
