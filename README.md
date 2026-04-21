@@ -2,8 +2,8 @@
 
 High-performance, self-hosted object storage with built-in image processing. A single binary alternative to S3 + Cloudinary that runs on a simple VPS.
 
-→ **Landing page**: https://aniasse.github.io/vexobj/
-→ **Release**: [v0.1.0](https://github.com/aniasse/vexobj/releases/tag/v0.1.0) (Linux amd64, macOS arm64, Docker `ghcr.io/aniasse/vexobj:latest`)
+→ **Landing page**: https://vortex-soft.github.io/vexobj/
+→ **Release**: [v0.1.0](https://github.com/vortex-soft/vexobj/releases/tag/v0.1.0) (Linux amd64, macOS arm64, Docker `ghcr.io/vortex-soft/vexobj:latest`)
 
 ## Features
 

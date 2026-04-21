@@ -18,7 +18,7 @@ This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.
 
 ```bash
 # Clone the repository
-git clone https://github.com/aniasse/vexobj.git
+git clone https://github.com/vortex-soft/vexobj.git
 cd vexobj
 
 # Build in debug mode
@@ -141,11 +141,11 @@ Write clear, concise commit messages. Use the imperative mood:
 
 ## Reporting Bugs
 
-Use the [Bug Report](https://github.com/aniasse/vexobj/issues/new?template=bug_report.md) issue template. Include reproduction steps, your environment, and any relevant logs.
+Use the [Bug Report](https://github.com/vortex-soft/vexobj/issues/new?template=bug_report.md) issue template. Include reproduction steps, your environment, and any relevant logs.
 
 ## Requesting Features
 
-Use the [Feature Request](https://github.com/aniasse/vexobj/issues/new?template=feature_request.md) issue template. Explain the use case and proposed solution.
+Use the [Feature Request](https://github.com/vortex-soft/vexobj/issues/new?template=feature_request.md) issue template. Explain the use case and proposed solution.
 
 ## Security Vulnerabilities
 

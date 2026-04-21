@@ -4,9 +4,9 @@ description: High-performance self-hosted object storage with built-in image pro
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
-home: https://github.com/aniasse/vexobj
+home: https://github.com/vortex-soft/vexobj
 sources:
-  - https://github.com/aniasse/vexobj
+  - https://github.com/vortex-soft/vexobj
 maintainers:
   - name: Adama Niasse
     url: https://github.com/aniasse

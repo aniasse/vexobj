@@ -17,7 +17,7 @@ than cutting new minor versions.
 - HTTP response headers: `x-vaultfs-*` → `x-vexobj-*`.
 - API key prefix: `vfs_*` → `vex_*`. Pre-1.0, no dual-prefix migration;
   regenerate keys on next run.
-- Docker image path: `ghcr.io/aniasse/vaultfs` → `ghcr.io/aniasse/vexobj`.
+- Docker image path: `ghcr.io/aniasse/vaultfs` → `ghcr.io/vortex-soft/vexobj`.
 - Helm chart: `deploy/helm/vaultfs` → `deploy/helm/vexobj`.
 
 ## [0.1.0] - 2026-04-16

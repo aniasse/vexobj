@@ -49,12 +49,12 @@ brew install ffmpeg
 apk add --no-cache ffmpeg
 ```
 
-The official `ghcr.io/aniasse/vexobj:latest` image ships **without**
+The official `ghcr.io/vortex-soft/vexobj:latest` image ships **without**
 ffmpeg to keep the image small (~40 MB). To enable video features in
 Docker, extend the image:
 
 ```dockerfile
-FROM ghcr.io/aniasse/vexobj:latest
+FROM ghcr.io/vortex-soft/vexobj:latest
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
   && rm -rf /var/lib/apt/lists/*

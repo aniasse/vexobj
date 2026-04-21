@@ -13,7 +13,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/aniasse/vexobj"
+    "url": "https://github.com/vortex-soft/vexobj"
   },
   "devDependencies": {
     "typescript": "^5.0.0"
