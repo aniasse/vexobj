@@ -11,7 +11,9 @@ use futures::TryStreamExt;
 use serde::Deserialize;
 
 use crate::error::S3Error;
-use crate::signature::{parse_auth_header, verify_sigv4};
+use crate::signature::{
+    parse_auth_header, parse_presign_query, verify_sigv4, verify_sigv4_presigned,
+};
 use crate::xml;
 use vexobj_auth::AuthManager;
 use vexobj_storage::StorageEngine;
@@ -64,6 +66,32 @@ fn authenticate(
     query: &str,
     headers: &HeaderMap,
 ) -> Result<(), S3Error> {
+    // Query-string presigned URL: the client has no Authorization header and
+    // the request carries X-Amz-Signature in the URL. Verify that branch
+    // before we'd otherwise error on the missing header.
+    if query.to_ascii_lowercase().contains("x-amz-signature=") {
+        let parsed = parse_presign_query(query).ok_or_else(S3Error::access_denied)?;
+        let (_api_key, secret) = state
+            .auth
+            .find_by_access_key(&parsed.access_key)
+            .map_err(|_| S3Error::access_denied())?;
+        if secret.is_empty() {
+            return Err(S3Error::access_denied());
+        }
+        let header_pairs: Vec<(String, String)> = headers
+            .iter()
+            .filter_map(|(n, v)| {
+                v.to_str()
+                    .ok()
+                    .map(|s| (n.as_str().to_string(), s.to_string()))
+            })
+            .collect();
+        if !verify_sigv4_presigned(method, uri_path, query, &header_pairs, &secret, &parsed) {
+            return Err(S3Error::access_denied());
+        }
+        return Ok(());
+    }
+
     let auth_header = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
