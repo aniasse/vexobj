@@ -140,6 +140,28 @@ impl AppState {
             None
         };
 
+        // Wire the storage quota-alert callback to the webhook sender so
+        // a cross of the 80% or 95% threshold fires
+        // `quota.threshold_crossed`. No-op when webhooks are disabled.
+        let storage = if let Some(ref wh) = webhooks {
+            let wh_for_cb = wh.clone();
+            storage.with_quota_alert(Some(std::sync::Arc::new(move |alert| {
+                wh_for_cb.send(
+                    "quota.threshold_crossed",
+                    serde_json::json!({
+                        "bucket": alert.bucket,
+                        "threshold_percent": alert.threshold_percent,
+                        "used_bytes": alert.used_bytes,
+                        "max_bytes": alert.max_bytes,
+                        "used_objects": alert.used_objects,
+                        "max_objects": alert.max_objects,
+                    }),
+                );
+            })))
+        } else {
+            storage
+        };
+
         let metrics = Metrics::new();
         let audit = AuditLogger::open(&data_dir)?;
 

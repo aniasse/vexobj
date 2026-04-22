@@ -24,6 +24,23 @@ pub struct QuotaLimits {
     pub max_bucket_objects: u64,
 }
 
+/// Snapshot of one bucket's usage relative to the configured quota.
+/// Emitted to the `on_quota_alert` callback when a write crosses a new
+/// threshold (80% or 95% by default). The callback decides what to do
+/// with it — the server translates it into a webhook fire.
+#[derive(Debug, Clone)]
+pub struct BucketUsageAlert {
+    pub bucket: String,
+    /// 80 or 95. The highest threshold the current usage has crossed.
+    pub threshold_percent: u8,
+    pub used_bytes: u64,
+    pub max_bytes: u64,
+    pub used_objects: u64,
+    pub max_objects: u64,
+}
+
+pub type OnQuotaAlert = std::sync::Arc<dyn Fn(BucketUsageAlert) + Send + Sync>;
+
 pub struct StorageEngine {
     db: Database,
     data_dir: PathBuf,
@@ -40,6 +57,12 @@ pub struct StorageEngine {
     /// these limits and rejects with `StorageError::QuotaExceeded` → HTTP
     /// 507. `None` disables enforcement entirely.
     quotas: Option<QuotaLimits>,
+    /// Fired when a successful put pushes a bucket across an 80% or 95%
+    /// quota threshold. `None` is the no-op default. Dedup state lives
+    /// in `quota_last_level` so repeated writes above a threshold don't
+    /// spam the callback.
+    on_quota_alert: Option<OnQuotaAlert>,
+    quota_last_level: std::sync::Mutex<std::collections::HashMap<String, u8>>,
 }
 
 impl StorageEngine {
@@ -98,7 +121,69 @@ impl StorageEngine {
             blob_store,
             video_features: vexobj_processing::VideoFeatures::detect(),
             quotas: None,
+            on_quota_alert: None,
+            quota_last_level: std::sync::Mutex::new(std::collections::HashMap::new()),
         })
+    }
+
+    /// Register a callback to fire whenever a successful put pushes a
+    /// bucket across a new usage threshold (80% → 95% → 100%). Uses a
+    /// consuming builder because the engine is wrapped in Arc at startup
+    /// and doesn't want interior mutability of this field.
+    pub fn with_quota_alert(mut self, cb: Option<OnQuotaAlert>) -> Self {
+        self.on_quota_alert = cb;
+        self
+    }
+
+    /// Compute current usage relative to the configured quota and, if the
+    /// post-write level is higher than the last fired level, fire the
+    /// configured alert callback. No-op when quotas or the callback are
+    /// disabled. Called at the tail of every successful put path.
+    fn maybe_fire_quota_alert(&self, bucket: &str) {
+        let (Some(q), Some(cb)) = (self.quotas, self.on_quota_alert.as_ref()) else {
+            return;
+        };
+        let Ok((used_bytes, used_objects)) = self.db.bucket_storage_stats(bucket) else {
+            return;
+        };
+        // Highest threshold the current usage has crossed.
+        let byte_pct = if q.max_bucket_bytes == 0 {
+            0
+        } else {
+            (used_bytes.saturating_mul(100) / q.max_bucket_bytes) as u8
+        };
+        let obj_pct = if q.max_bucket_objects == 0 {
+            0
+        } else {
+            (used_objects.saturating_mul(100) / q.max_bucket_objects) as u8
+        };
+        let current_pct = byte_pct.max(obj_pct);
+        let current_level: u8 = if current_pct >= 95 {
+            95
+        } else if current_pct >= 80 {
+            80
+        } else {
+            0
+        };
+
+        let mut last = self.quota_last_level.lock().unwrap();
+        let last_level = last.get(bucket).copied().unwrap_or(0);
+        if current_level > last_level {
+            last.insert(bucket.to_string(), current_level);
+            drop(last);
+            cb(BucketUsageAlert {
+                bucket: bucket.to_string(),
+                threshold_percent: current_level,
+                used_bytes,
+                max_bytes: q.max_bucket_bytes,
+                used_objects,
+                max_objects: q.max_bucket_objects,
+            });
+        } else if current_level < last_level {
+            // Usage dropped (GC / lifecycle / delete) — reset the
+            // watermark so a future climb can re-trigger the alert.
+            last.insert(bucket.to_string(), current_level);
+        }
     }
 
     /// Consuming builder that attaches per-bucket quota limits. Pass `None`
@@ -298,6 +383,7 @@ impl StorageEngine {
                     )?;
 
                     info!(bucket, key, size, deduplicated = true, "object stored");
+                    self.maybe_fire_quota_alert(bucket);
                     return Ok(meta);
                 }
             }
@@ -372,6 +458,7 @@ impl StorageEngine {
             );
         }
 
+        self.maybe_fire_quota_alert(bucket);
         Ok(meta)
     }
 
@@ -557,6 +644,7 @@ impl StorageEngine {
                         deduplicated = true,
                         "object stored (stream)"
                     );
+                    self.maybe_fire_quota_alert(bucket);
                     return Ok(meta);
                 }
             }
@@ -630,6 +718,7 @@ impl StorageEngine {
             );
         }
 
+        self.maybe_fire_quota_alert(bucket);
         Ok(meta)
     }
 
@@ -874,6 +963,7 @@ impl StorageEngine {
         self.db.delete_multipart_upload(upload_id)?;
         let _ = tokio::fs::remove_dir_all(self.multipart_dir(upload_id)).await;
 
+        self.maybe_fire_quota_alert(&meta.bucket);
         Ok(meta)
     }
 

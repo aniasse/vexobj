@@ -391,6 +391,23 @@ impl Config {
             config.quotas.default_max_objects =
                 val.parse().unwrap_or(config.quotas.default_max_objects);
         }
+        // Single-webhook env shortcut, useful for tests and for minimal
+        // deployments. Multiple webhooks still need a config file. The
+        // events list defaults to `*` (all events) when no env is set.
+        if let Ok(url) = std::env::var("VEXOBJ_WEBHOOK_URL") {
+            if !url.is_empty() {
+                let events: Vec<String> = std::env::var("VEXOBJ_WEBHOOK_EVENTS")
+                    .ok()
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.split(',').map(|t| t.trim().to_string()).collect())
+                    .unwrap_or_else(default_webhook_events);
+                config.webhooks.push(WebhookConfigEntry {
+                    url,
+                    events,
+                    secret: std::env::var("VEXOBJ_WEBHOOK_SECRET").ok(),
+                });
+            }
+        }
         if let Ok(val) = std::env::var("VEXOBJ_SSE_ENABLED") {
             config.sse.enabled = val.parse().unwrap_or(config.sse.enabled);
         }

@@ -4903,3 +4903,189 @@ async fn e2e_s3_compat_delete_objects_quiet_mode() {
         "quiet mode must suppress <Deleted> entries: {xml}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Quota threshold webhooks
+// ---------------------------------------------------------------------------
+//
+// Admins want to hear about a bucket filling up BEFORE the next write
+// returns 507. The engine fires a callback at 80% and 95% of the
+// configured cap; the server turns each into a webhook event.
+
+/// Bare-minimum HTTP/1.1 sink that captures one request body per
+/// connection and replies 200 OK. Returns the port and a receiver the
+/// test drains to read captured bodies.
+async fn spawn_webhook_sink() -> (u16, tokio::sync::mpsc::Receiver<String>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (tx, rx) = tokio::sync::mpsc::channel(16);
+    tokio::spawn(async move {
+        while let Ok((mut sock, _)) = listener.accept().await {
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let mut buf = Vec::with_capacity(4096);
+                let mut tmp = [0u8; 4096];
+                // Read until we have the full body or the peer goes away.
+                let body = loop {
+                    match sock.read(&mut tmp).await {
+                        Ok(0) => break String::new(),
+                        Ok(n) => buf.extend_from_slice(&tmp[..n]),
+                        Err(_) => break String::new(),
+                    }
+                    if let Some(h_end) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let hdr = String::from_utf8_lossy(&buf[..h_end]);
+                        let cl: usize = hdr
+                            .lines()
+                            .find_map(|l| {
+                                let lc = l.to_ascii_lowercase();
+                                lc.strip_prefix("content-length:")
+                                    .map(|v| v.trim().parse::<usize>().ok())
+                                    .unwrap_or(None)
+                            })
+                            .unwrap_or(0);
+                        let body_start = h_end + 4;
+                        while buf.len() < body_start + cl {
+                            let n = sock.read(&mut tmp).await.unwrap_or(0);
+                            if n == 0 {
+                                break;
+                            }
+                            buf.extend_from_slice(&tmp[..n]);
+                        }
+                        break String::from_utf8_lossy(
+                            &buf[body_start..(body_start + cl).min(buf.len())],
+                        )
+                        .to_string();
+                    }
+                };
+                let _ = tx.send(body).await;
+                let _ = sock
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .await;
+                let _ = sock.shutdown().await;
+            });
+        }
+    });
+    (port, rx)
+}
+
+/// Drain up to `expected` webhook bodies from `rx`, with a timeout to
+/// avoid hanging the test if an event never fires.
+async fn collect_webhooks(
+    rx: &mut tokio::sync::mpsc::Receiver<String>,
+    expected: usize,
+    timeout_ms: u64,
+) -> Vec<Value> {
+    let mut out = Vec::new();
+    let deadline = std::time::Instant::now() + Duration::from_millis(timeout_ms);
+    while out.len() < expected {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        match tokio::time::timeout(remaining, rx.recv()).await {
+            Ok(Some(body)) => {
+                if let Ok(v) = serde_json::from_str::<Value>(&body) {
+                    out.push(v);
+                }
+            }
+            _ => break,
+        }
+    }
+    out
+}
+
+/// Give the async webhook worker a moment to deliver to the sink. Without
+/// this, collect_webhooks would race against the in-flight request.
+async fn wait_for_webhook(rx: &mut tokio::sync::mpsc::Receiver<String>) -> Value {
+    let body = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+        .await
+        .expect("webhook timed out")
+        .expect("sink channel closed");
+    serde_json::from_str(&body).expect("webhook body was not JSON")
+}
+
+#[tokio::test]
+async fn e2e_quota_webhook_fires_at_80_then_95() {
+    use serde_json::json;
+
+    // Sink first so we can give its URL to the server.
+    let (port, mut rx) = spawn_webhook_sink().await;
+    let sink_url = format!("http://127.0.0.1:{port}/");
+
+    // Quota = 100 bytes / bucket. Size the test payloads so we cleanly
+    // cross 80% and 95%: 70B puts us at 70% (no alert), +15B crosses 80%,
+    // +15B crosses 95%.
+    let srv = TestServer::start_with_env(&[
+        ("VEXOBJ_QUOTAS_ENABLED", "true"),
+        ("VEXOBJ_QUOTAS_MAX_STORAGE", "100"),
+        ("VEXOBJ_QUOTAS_MAX_OBJECTS", "100"),
+        ("VEXOBJ_WEBHOOK_URL", sink_url.as_str()),
+        ("VEXOBJ_WEBHOOK_EVENTS", "quota.threshold_crossed"),
+    ]);
+    let client = srv.client();
+    let auth = srv.auth_header();
+
+    client
+        .post(format!("{}/v1/buckets", srv.url))
+        .header("Authorization", &auth)
+        .json(&json!({ "name": "qwh", "public": false }))
+        .send()
+        .await
+        .unwrap();
+
+    // 1st write: 70 bytes → 70% → below 80%, no webhook.
+    client
+        .put(format!("{}/v1/objects/qwh/a.bin", srv.url))
+        .header("Authorization", &auth)
+        .body(vec![b'a'; 70])
+        .send()
+        .await
+        .unwrap();
+    // Give the worker a shot — but we expect nothing.
+    let early = collect_webhooks(&mut rx, 1, 500).await;
+    assert!(
+        early.is_empty(),
+        "no webhook expected at 70% usage, got {early:?}"
+    );
+
+    // 2nd write: +15 bytes → 85% total → crosses 80%.
+    client
+        .put(format!("{}/v1/objects/qwh/b.bin", srv.url))
+        .header("Authorization", &auth)
+        .body(vec![b'b'; 15])
+        .send()
+        .await
+        .unwrap();
+    let e80 = wait_for_webhook(&mut rx).await;
+    assert_eq!(e80["event"], "quota.threshold_crossed");
+    assert_eq!(e80["data"]["bucket"], "qwh");
+    assert_eq!(e80["data"]["threshold_percent"], 80);
+    assert_eq!(e80["data"]["max_bytes"], 100);
+
+    // 3rd write: +3 bytes → 88%. Still ≥80% but no NEW threshold crossed —
+    // dedup must suppress.
+    client
+        .put(format!("{}/v1/objects/qwh/c.bin", srv.url))
+        .header("Authorization", &auth)
+        .body(vec![b'c'; 3])
+        .send()
+        .await
+        .unwrap();
+    let dupes = collect_webhooks(&mut rx, 1, 500).await;
+    assert!(
+        dupes.is_empty(),
+        "same threshold must not re-fire, got {dupes:?}"
+    );
+
+    // 4th write: +8 bytes → 96% → crosses 95%.
+    client
+        .put(format!("{}/v1/objects/qwh/d.bin", srv.url))
+        .header("Authorization", &auth)
+        .body(vec![b'd'; 8])
+        .send()
+        .await
+        .unwrap();
+    let e95 = wait_for_webhook(&mut rx).await;
+    assert_eq!(e95["data"]["threshold_percent"], 95);
+}
