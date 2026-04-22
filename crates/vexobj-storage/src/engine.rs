@@ -383,6 +383,21 @@ impl StorageEngine {
                     )?;
 
                     info!(bucket, key, size, deduplicated = true, "object stored");
+                    // Replicas need this event even on dedup — the blob
+                    // already exists on the replica side (it was in the
+                    // primary's content-addressed store when some earlier
+                    // key was replicated) but the (bucket, key) row does
+                    // NOT exist yet. Skipping the event makes the replica
+                    // silently miss dedup'd puts.
+                    let _ = self.db.append_replication_event(
+                        "put",
+                        bucket,
+                        key,
+                        &sha256,
+                        None,
+                        size,
+                        &content_type,
+                    );
                     self.maybe_fire_quota_alert(bucket);
                     return Ok(meta);
                 }
@@ -643,6 +658,17 @@ impl StorageEngine {
                         size,
                         deduplicated = true,
                         "object stored (stream)"
+                    );
+                    // Replicas need the (bucket, key) event even on dedup —
+                    // see note in put_object's dedup branch.
+                    let _ = self.db.append_replication_event(
+                        "put",
+                        bucket,
+                        key,
+                        &sha256,
+                        None,
+                        size,
+                        &content_type,
                     );
                     self.maybe_fire_quota_alert(bucket);
                     return Ok(meta);

@@ -5364,3 +5364,240 @@ async fn e2e_upgrade_migration_handles_prior_schema() {
         .unwrap();
     assert_eq!(&body[..], b"post-upgrade");
 }
+
+// ---------------------------------------------------------------------------
+// Multi-replica (N ≥ 2)
+// ---------------------------------------------------------------------------
+//
+// Replication is pull-based: each replica polls the primary and tracks
+// its own cursor file. That means N replicas work without any primary-
+// side coordination — they just need distinct cursors. This test pins
+// the invariant: two independent replicas can catch up on the same
+// primary, each to completion, without interfering.
+
+#[tokio::test]
+async fn e2e_replication_two_replicas_both_catch_up() {
+    use std::process::Command;
+    let primary = TestServer::start();
+    let replica_a = TestServer::start();
+    let replica_b = TestServer::start();
+    let client = primary.client();
+
+    // Seed: three keys on the primary. Everything from here should end
+    // up on both replicas byte-accurately.
+    client
+        .post(format!("{}/v1/buckets", primary.url))
+        .header("Authorization", primary.auth_header())
+        .json(&serde_json::json!({ "name": "fanout", "public": false }))
+        .send()
+        .await
+        .unwrap();
+    let objects: &[(&str, &[u8])] = &[
+        ("alpha", b"alpha-bytes"),
+        ("beta", b"beta-bytes-abcdef"),
+        ("gamma", b"gamma-final-content"),
+    ];
+    for (k, body) in objects {
+        client
+            .put(format!("{}/v1/objects/fanout/{k}", primary.url))
+            .header("Authorization", primary.auth_header())
+            .body(body.to_vec())
+            .send()
+            .await
+            .unwrap();
+    }
+
+    let vexobjctl = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("target/debug/vexobjctl");
+    assert!(vexobjctl.exists(), "vexobjctl not built");
+
+    // Replicate serially into each replica, with its own cursor file.
+    // If either replica failed to catch up independently, the second
+    // run would return nothing new — so asserting each replica has
+    // all three keys catches that.
+    for replica in [&replica_a, &replica_b] {
+        let cursor = std::env::temp_dir().join(format!("multi-cursor-{}", uuid::Uuid::new_v4()));
+        let out = Command::new(&vexobjctl)
+            .args([
+                "--url",
+                &replica.url,
+                "--key",
+                &replica.admin_key,
+                "replicate",
+                "--primary",
+                &primary.url,
+                "--primary-key",
+                &primary.admin_key,
+                "--cursor-file",
+            ])
+            .arg(&cursor)
+            .output()
+            .expect("spawn vexobjctl");
+        assert!(
+            out.status.success(),
+            "replicate to {} failed: stderr={}",
+            replica.url,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let _ = std::fs::remove_file(&cursor);
+    }
+
+    // Both replicas must now have the full object set with byte-
+    // identical content. Any divergence means the primary's event log
+    // served the two readers differently — a serious bug.
+    for replica in [&replica_a, &replica_b] {
+        for (k, want) in objects {
+            let resp = client
+                .get(format!("{}/v1/objects/fanout/{k}", replica.url))
+                .header("Authorization", replica.auth_header())
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), 200, "{k} missing on replica {}", replica.url);
+            let got = resp.bytes().await.unwrap();
+            assert_eq!(
+                got.as_ref(),
+                *want,
+                "byte mismatch for {k} on replica {}",
+                replica.url
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn e2e_replication_replica_lag_tracked_on_primary() {
+    // The primary exposes its latest event id via /v1/replication/cursor.
+    // An operator pairs that with each replica's cursor file to compute
+    // lag (events behind) — this test nails down that the primary's
+    // cursor moves forward on every state-changing op, so the lag
+    // signal is meaningful.
+    let primary = TestServer::start();
+    let client = primary.client();
+    let auth = primary.auth_header();
+
+    let cursor_of = |url: String, h: String| {
+        let c = client.clone();
+        async move {
+            let resp = c
+                .get(format!("{url}/v1/replication/cursor"))
+                .header("Authorization", &h)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), 200);
+            let body: Value = resp.json().await.unwrap();
+            body["latest_id"].as_i64().unwrap_or(0)
+        }
+    };
+    let start = cursor_of(primary.url.clone(), auth.clone()).await;
+
+    client
+        .post(format!("{}/v1/buckets", primary.url))
+        .header("Authorization", &auth)
+        .json(&serde_json::json!({ "name": "lag", "public": false }))
+        .send()
+        .await
+        .unwrap();
+    // Distinct content per key — dedup hits skip the replication-event
+    // append, so identical bodies wouldn't exercise the cursor advance.
+    for (k, body) in [("a", "body-aaa"), ("b", "body-bbb"), ("c", "body-ccc")] {
+        client
+            .put(format!("{}/v1/objects/lag/{k}", primary.url))
+            .header("Authorization", &auth)
+            .body(body.to_string())
+            .send()
+            .await
+            .unwrap();
+    }
+
+    let after = cursor_of(primary.url.clone(), auth).await;
+    assert!(
+        after >= start + 3,
+        "expected at least 3 events (3 PUTs), cursor went {start} → {after}"
+    );
+}
+
+#[tokio::test]
+async fn e2e_replication_dedup_writes_still_emit_event() {
+    // When two keys land with identical content, the second PUT hits
+    // the dedup path. Historically that path skipped the replication
+    // event append, which meant a replica would know the blob was there
+    // (from the first key) but would NEVER learn about the second key.
+    // A replica catching up cold would list only one of the two keys.
+    // This test pins the fix: same content, distinct keys, both show
+    // up on the replica.
+    use std::process::Command;
+
+    let primary = TestServer::start();
+    let replica = TestServer::start();
+    let client = primary.client();
+
+    client
+        .post(format!("{}/v1/buckets", primary.url))
+        .header("Authorization", primary.auth_header())
+        .json(&serde_json::json!({ "name": "ddup", "public": false }))
+        .send()
+        .await
+        .unwrap();
+    // Two keys, IDENTICAL body: the second must hit dedup.
+    for k in ["first", "second-alias"] {
+        let resp = client
+            .put(format!("{}/v1/objects/ddup/{k}", primary.url))
+            .header("Authorization", primary.auth_header())
+            .body(b"shared-dedup-content".to_vec())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 201);
+    }
+
+    let vexobjctl = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("target/debug/vexobjctl");
+    let cursor = std::env::temp_dir().join(format!("ddup-cursor-{}", uuid::Uuid::new_v4()));
+    let out = Command::new(&vexobjctl)
+        .args([
+            "--url",
+            &replica.url,
+            "--key",
+            &replica.admin_key,
+            "replicate",
+            "--primary",
+            &primary.url,
+            "--primary-key",
+            &primary.admin_key,
+            "--cursor-file",
+        ])
+        .arg(&cursor)
+        .output()
+        .expect("spawn vexobjctl");
+    assert!(
+        out.status.success(),
+        "replicate failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_file(&cursor);
+
+    // Both keys must be readable on the replica — not just the first.
+    for k in ["first", "second-alias"] {
+        let resp = client
+            .get(format!("{}/v1/objects/ddup/{k}", replica.url))
+            .header("Authorization", replica.auth_header())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            200,
+            "replica must have both dedup keys, missing {k}"
+        );
+    }
+}
