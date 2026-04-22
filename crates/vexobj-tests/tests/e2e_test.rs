@@ -5089,3 +5089,85 @@ async fn e2e_quota_webhook_fires_at_80_then_95() {
     let e95 = wait_for_webhook(&mut rx).await;
     assert_eq!(e95["data"]["threshold_percent"], 95);
 }
+
+// ---------------------------------------------------------------------------
+// Per-API-key rate limiting
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn e2e_rate_limit_isolates_per_api_key() {
+    // A compromised key shouldn't starve every other key. Each API key
+    // gets its own rate-limit bucket. Spend key A's quota and verify
+    // key B still works on a fresh budget.
+    use serde_json::json;
+
+    // 5 req/60s is tight enough to hit the limit with a handful of calls
+    // but wide enough for the bootstrap admin (used to create key B) not
+    // to exhaust its own budget first.
+    let srv = TestServer::start_with_env(&[
+        ("VEXOBJ_RATE_LIMIT_ENABLED", "true"),
+        ("VEXOBJ_RATE_LIMIT_MAX", "5"),
+        ("VEXOBJ_RATE_LIMIT_WINDOW", "60"),
+    ]);
+    let client = srv.client();
+
+    // Use the bootstrap admin key to provision two independent keys.
+    let make_key = |name: &'static str| {
+        let url = format!("{}/v1/admin/keys", srv.url);
+        let auth = srv.auth_header();
+        let c = client.clone();
+        async move {
+            let resp = c
+                .post(&url)
+                .header("Authorization", &auth)
+                .json(&json!({
+                    "name": name,
+                    "permissions": { "read": true, "write": true, "delete": true, "admin": false }
+                }))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), 201, "create key {name}");
+            let body: Value = resp.json().await.unwrap();
+            body["secret"].as_str().unwrap().to_string()
+        }
+    };
+    let key_a = make_key("key-a").await;
+    let key_b = make_key("key-b").await;
+
+    // Burn key A's 5-request budget then overshoot.
+    let mut a_statuses = Vec::new();
+    for _ in 0..6 {
+        let resp = client
+            .get(format!("{}/v1/buckets", srv.url))
+            .header("Authorization", format!("Bearer {key_a}"))
+            .send()
+            .await
+            .unwrap();
+        a_statuses.push(resp.status().as_u16());
+    }
+    // First 5 must succeed, 6th must be rate-limited.
+    assert_eq!(
+        &a_statuses[..5],
+        &[200u16; 5],
+        "first 5 requests on key A should succeed, got {a_statuses:?}"
+    );
+    assert_eq!(
+        a_statuses[5], 429,
+        "6th request on key A must hit rate limit, got {a_statuses:?}"
+    );
+
+    // Key B has a fresh budget — isolation test. If this fails, the
+    // "per-key" claim is a lie.
+    let resp = client
+        .get(format!("{}/v1/buckets", srv.url))
+        .header("Authorization", format!("Bearer {key_b}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        200,
+        "key B must still work after key A was throttled"
+    );
+}
