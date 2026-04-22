@@ -210,6 +210,64 @@ fn extract_tag<'a>(block: &'a str, tag: &str) -> Option<&'a str> {
     Some(block[start..end].trim())
 }
 
+/// Parse the body of a `POST /<bucket>?delete` request. S3 sends:
+///   <Delete>
+///     <Object><Key>...</Key><VersionId>...</VersionId></Object>
+///     <Object><Key>...</Key></Object>
+///     <Quiet>true</Quiet>
+///   </Delete>
+/// We return the keys in order and the Quiet flag. VersionId is parsed
+/// but ignored — the delete path always targets the live object (matches
+/// what MinIO does when versioning isn't enabled).
+pub fn parse_delete_request(body: &str) -> (Vec<String>, bool) {
+    let mut keys = Vec::new();
+    let mut rest = body;
+    while let Some(idx) = rest.find("<Object>") {
+        rest = &rest[idx + "<Object>".len()..];
+        let Some(end) = rest.find("</Object>") else {
+            break;
+        };
+        let block = &rest[..end];
+        if let Some(key) = extract_tag(block, "Key") {
+            keys.push(key.to_string());
+        }
+        rest = &rest[end + "</Object>".len()..];
+    }
+    let quiet = extract_tag(body, "Quiet").is_some_and(|v| v.eq_ignore_ascii_case("true"));
+    (keys, quiet)
+}
+
+/// Emit the `<DeleteResult>` body. `quiet=true` suppresses successful
+/// `<Deleted>` entries — only errors come out, matching S3's Quiet mode.
+pub fn delete_result_xml(
+    deleted: &[String],
+    errors: &[(String, String, String)],
+    quiet: bool,
+) -> String {
+    let mut xml = String::from(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<DeleteResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">"#,
+    );
+    if !quiet {
+        for k in deleted {
+            xml.push_str(&format!(
+                "\n  <Deleted><Key>{}</Key></Deleted>",
+                xml_escape(k)
+            ));
+        }
+    }
+    for (k, code, msg) in errors {
+        xml.push_str(&format!(
+            "\n  <Error><Key>{}</Key><Code>{}</Code><Message>{}</Message></Error>",
+            xml_escape(k),
+            xml_escape(code),
+            xml_escape(msg),
+        ));
+    }
+    xml.push_str("\n</DeleteResult>");
+    xml
+}
+
 pub fn copy_object_xml(meta: &ObjectMeta) -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>

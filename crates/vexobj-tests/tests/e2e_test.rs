@@ -4525,3 +4525,167 @@ async fn e2e_upload_from_url_blocks_cloud_metadata_even_when_private_allowed() {
     let body: Value = resp.json().await.unwrap();
     assert!(body["error"].as_str().unwrap().contains("cloud-metadata"));
 }
+
+// ---------------------------------------------------------------------------
+// S3 compat matrix — operations Mastodon / PeerTube actually invoke
+// ---------------------------------------------------------------------------
+//
+// Each test below is named after the S3 API op it exercises and documents
+// the fediverse use case in the header comment. Together they form the
+// contract documented in docs/s3-compat.md.
+
+/// HeadBucket — Mastodon/PeerTube startup probe ("does the configured
+/// bucket exist?"). Must return 200 for a real bucket and 404 otherwise,
+/// NOT 403: clients use the status code to branch between "configure
+/// differently" and "create the bucket".
+#[tokio::test]
+async fn e2e_s3_compat_head_bucket() {
+    use serde_json::json;
+
+    let srv = TestServer::start();
+    let auth = srv.auth_header();
+
+    srv.client()
+        .post(format!("{}/v1/buckets", srv.url))
+        .header("Authorization", &auth)
+        .json(&json!({ "name": "bckt", "public": false }))
+        .send()
+        .await
+        .unwrap();
+
+    // Real bucket → 200.
+    let resp = srv
+        .client()
+        .head(format!("{}/s3/bckt", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // Missing bucket → 404 (NoSuchBucket).
+    let resp = srv
+        .client()
+        .head(format!("{}/s3/no-such-bucket", srv.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+}
+
+/// DeleteObjects (bulk delete) — PeerTube uses this to clean up video
+/// transcodes and thumbnails in batches. S3 guarantees the op is
+/// idempotent: a key that doesn't exist is still returned in <Deleted>.
+#[tokio::test]
+async fn e2e_s3_compat_delete_objects_batch() {
+    use serde_json::json;
+
+    let srv = TestServer::start();
+    let auth = srv.auth_header();
+    let client = srv.client();
+
+    client
+        .post(format!("{}/v1/buckets", srv.url))
+        .header("Authorization", &auth)
+        .json(&json!({ "name": "bulk", "public": false }))
+        .send()
+        .await
+        .unwrap();
+    for k in ["a", "b", "c"] {
+        client
+            .put(format!("{}/v1/objects/bulk/{k}", srv.url))
+            .header("Authorization", &auth)
+            .body(format!("body-{k}").into_bytes())
+            .send()
+            .await
+            .unwrap();
+    }
+
+    // Delete a, b, and a missing key "ghost". All three must come back in
+    // <Deleted> (idempotency), with no <Error> entries.
+    let body = r#"<?xml version="1.0"?>
+<Delete>
+  <Object><Key>a</Key></Object>
+  <Object><Key>b</Key></Object>
+  <Object><Key>ghost</Key></Object>
+</Delete>"#;
+    let resp = client
+        .post(format!("{}/s3/bulk?delete", srv.url))
+        .header("Authorization", &auth)
+        .header("content-type", "application/xml")
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let xml = resp.text().await.unwrap();
+    assert_eq!(
+        xml.matches("<Deleted>").count(),
+        3,
+        "all three keys must appear in <Deleted>: {xml}"
+    );
+    assert_eq!(xml.matches("<Error>").count(), 0, "no errors expected");
+
+    // `a` and `b` should be gone; `c` must survive.
+    for (k, want) in [("a", 404), ("b", 404), ("c", 200)] {
+        let resp = client
+            .get(format!("{}/s3/bulk/{k}", srv.url))
+            .header("Authorization", &auth)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            want,
+            "after DeleteObjects, /{k} should {want}"
+        );
+    }
+}
+
+/// DeleteObjects with <Quiet>true</Quiet> — response omits the <Deleted>
+/// block and only surfaces errors. PeerTube often runs in quiet mode to
+/// keep response bodies small for big cleanup batches.
+#[tokio::test]
+async fn e2e_s3_compat_delete_objects_quiet_mode() {
+    use serde_json::json;
+
+    let srv = TestServer::start();
+    let auth = srv.auth_header();
+    let client = srv.client();
+
+    client
+        .post(format!("{}/v1/buckets", srv.url))
+        .header("Authorization", &auth)
+        .json(&json!({ "name": "quiet", "public": false }))
+        .send()
+        .await
+        .unwrap();
+    client
+        .put(format!("{}/v1/objects/quiet/x", srv.url))
+        .header("Authorization", &auth)
+        .body(b"x".to_vec())
+        .send()
+        .await
+        .unwrap();
+
+    let body = r#"<?xml version="1.0"?>
+<Delete>
+  <Quiet>true</Quiet>
+  <Object><Key>x</Key></Object>
+</Delete>"#;
+    let resp = client
+        .post(format!("{}/s3/quiet?delete", srv.url))
+        .header("Authorization", &auth)
+        .header("content-type", "application/xml")
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let xml = resp.text().await.unwrap();
+    assert!(
+        !xml.contains("<Deleted>"),
+        "quiet mode must suppress <Deleted> entries: {xml}"
+    );
+}

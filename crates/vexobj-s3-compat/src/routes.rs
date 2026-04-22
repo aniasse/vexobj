@@ -221,6 +221,17 @@ async fn s3_bucket(
         return e.into_response();
     }
 
+    // POST /<bucket>?delete is the S3 DeleteObjects (bulk-delete) op.
+    // PeerTube leans on it heavily when cleaning up old videos and thumbs.
+    if method == Method::POST {
+        let q = uri.query().unwrap_or("");
+        if q.split('&')
+            .any(|p| p == "delete" || p.starts_with("delete="))
+        {
+            return delete_objects(&state, &bucket, body).await;
+        }
+    }
+
     match method {
         Method::PUT => create_bucket(&state, &bucket).await,
         Method::DELETE => delete_bucket(&state, &bucket).await,
@@ -260,6 +271,50 @@ async fn head_bucket(state: &S3State, bucket: &str) -> Response {
         Ok(_) => StatusCode::OK.into_response(),
         Err(_) => S3Error::no_such_bucket(bucket).into_response(),
     }
+}
+
+/// Handle `POST /<bucket>?delete`. Up to 1000 keys (S3 caps at 1000 too);
+/// request bodies are tiny XML so the 1 MiB cap on to_bytes is ample.
+/// Idempotent: deleting a missing key is a success (S3 returns it in
+/// <Deleted> even when the object never existed).
+async fn delete_objects(state: &S3State, bucket: &str, body: Body) -> Response {
+    const MAX_BODY: usize = 1024 * 1024;
+
+    let bytes = match to_bytes(body, MAX_BODY).await {
+        Ok(b) => b,
+        Err(_) => return S3Error::malformed_xml().into_response(),
+    };
+    let xml_str = match std::str::from_utf8(&bytes) {
+        Ok(s) => s,
+        Err(_) => return S3Error::malformed_xml().into_response(),
+    };
+    let (keys, quiet) = xml::parse_delete_request(xml_str);
+    if keys.is_empty() {
+        return S3Error::malformed_xml().into_response();
+    }
+    if keys.len() > 1000 {
+        return S3Error::invalid_request("DeleteObjects accepts at most 1000 keys").into_response();
+    }
+
+    let mut deleted: Vec<String> = Vec::with_capacity(keys.len());
+    let mut errors: Vec<(String, String, String)> = Vec::new();
+    for key in keys {
+        match state.storage.delete_object(bucket, &key).await {
+            Ok(()) => deleted.push(key),
+            Err(vexobj_storage::StorageError::ObjectNotFound { .. }) => {
+                // Treat as a success, matching the idempotency S3 itself
+                // documents. PeerTube relies on this to clean up lists
+                // that may contain already-deleted keys.
+                deleted.push(key);
+            }
+            Err(vexobj_storage::StorageError::BucketNotFound(_)) => {
+                return S3Error::no_such_bucket(bucket).into_response();
+            }
+            Err(e) => errors.push((key, "InternalError".to_string(), e.to_string())),
+        }
+    }
+    let body = xml::delete_result_xml(&deleted, &errors, quiet);
+    (StatusCode::OK, [("content-type", "application/xml")], body).into_response()
 }
 
 async fn list_objects_v2(state: &S3State, bucket: &str, query: BucketQuery) -> Response {
