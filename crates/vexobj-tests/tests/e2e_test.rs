@@ -4527,6 +4527,220 @@ async fn e2e_upload_from_url_blocks_cloud_metadata_even_when_private_allowed() {
 }
 
 // ---------------------------------------------------------------------------
+// Backup / restore round-trip
+// ---------------------------------------------------------------------------
+//
+// A backup you've never restored is a backup you don't have. This test
+// executes the full "my data volume died" drill: take a backup, destroy
+// the source instance, restore into a fresh data_dir, confirm every
+// object comes back byte-accurate and the original admin key still
+// authenticates.
+
+fn copy_dir_recursive(src: &std::path::Path, dest: &std::path::Path) {
+    std::fs::create_dir_all(dest).unwrap();
+    for entry in std::fs::read_dir(src).unwrap() {
+        let entry = entry.unwrap();
+        let target = dest.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_dir_recursive(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), &target).unwrap();
+        }
+    }
+}
+
+/// Spawn vexobj directly on `data_dir` and wait for /health. Unlike
+/// `TestServer::start` we do NOT parse an admin key from the logs —
+/// because the data_dir is pre-seeded, no bootstrap key is minted and
+/// the harness' usual assert would fire. The caller already knows the
+/// key (it was restored from the backup).
+///
+/// The caller owns the returned Child and MUST kill + wait on it — the
+/// restore test does both in its Drop-guard cleanup.
+#[allow(clippy::zombie_processes)]
+async fn spawn_server_on(data_dir: &std::path::Path, port: u16) -> (String, std::process::Child) {
+    let bind_addr = format!("127.0.0.1:{port}");
+    let config_path = data_dir.join("config.toml");
+    let data_dir_str = data_dir.to_string_lossy().replace('\\', "/");
+    std::fs::write(
+        &config_path,
+        format!(
+            "[server]\nbind = \"{bind_addr}\"\n\n\
+             [storage]\ndata_dir = \"{data_dir_str}\"\n\n\
+             [auth]\nenabled = true\n\n\
+             [rate_limit]\nenabled = false\n",
+        ),
+    )
+    .unwrap();
+
+    let binary = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("target/debug/vexobj");
+    assert!(binary.exists(), "vexobj not built");
+    let child = std::process::Command::new(&binary)
+        .env("VEXOBJ_CONFIG", config_path.to_str().unwrap())
+        .env("NO_COLOR", "1")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+
+    let url = format!("http://{bind_addr}");
+    let client = reqwest::Client::new();
+    for _ in 0..60 {
+        if let Ok(r) = client.get(format!("{url}/health")).send().await {
+            if r.status().is_success() {
+                return (url, child);
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    panic!("restored server never answered /health within 12 s");
+}
+
+#[tokio::test]
+async fn e2e_backup_restore_full_round_trip() {
+    use serde_json::json;
+
+    // Phase 1: seed + back up on instance A.
+    let source = TestServer::start();
+    let client = source.client();
+    let auth = source.auth_header();
+    let admin_key = source.admin_key.clone();
+
+    client
+        .post(format!("{}/v1/buckets", source.url))
+        .header("Authorization", &auth)
+        .json(&json!({ "name": "bkp", "public": false }))
+        .send()
+        .await
+        .unwrap();
+
+    // A mix of shapes the backup needs to handle: flat key, nested
+    // path, binary body, and something big enough that dedup points
+    // into /blobs rather than being tiny-inlined.
+    let objects: &[(&str, Vec<u8>)] = &[
+        ("flat.txt", b"alpha content".to_vec()),
+        ("nested/inner.bin", (0u8..=200).collect()),
+        (
+            "deep/nest/ed/large.bin",
+            (0..65_536).map(|i| i as u8).collect(),
+        ),
+    ];
+    for (k, body) in objects {
+        let resp = client
+            .put(format!("{}/v1/objects/bkp/{k}", source.url))
+            .header("Authorization", &auth)
+            .body(body.clone())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 201, "seed {k}");
+    }
+
+    let resp = client
+        .post(format!("{}/v1/admin/backup", source.url))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    let snapshot_path = body["path"].as_str().unwrap().to_string();
+
+    // Copy the snapshot OUT of the source data_dir so it survives the
+    // source's Drop (which rm -rf's the whole temp dir).
+    let stage = std::env::temp_dir().join(format!("vexobj-br-stage-{}", uuid::Uuid::new_v4()));
+    copy_dir_recursive(std::path::Path::new(&snapshot_path), &stage);
+
+    // Phase 2: burn down the source. Every source-side path must be
+    // unreachable after this — that's what proves the restore is
+    // real rather than a coincidence of shared state.
+    drop(source);
+
+    // Phase 3: fresh data_dir, restore the snapshot into it, spawn
+    // vexobj on it.
+    let restored_dir =
+        std::env::temp_dir().join(format!("vexobj-restored-{}", uuid::Uuid::new_v4()));
+    copy_dir_recursive(&stage, &restored_dir);
+
+    // Sanity: snapshot must contain the pieces we claim the backup saves.
+    for name in ["vexobj.db", "auth.db"] {
+        assert!(
+            restored_dir.join(name).exists(),
+            "restored dir missing {name}. Contents: {:?}",
+            std::fs::read_dir(&restored_dir)
+                .unwrap()
+                .map(|e| e.unwrap().file_name())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    let port = find_free_port();
+    let (url, mut child) = spawn_server_on(&restored_dir, port).await;
+
+    // Cleanup guard. On assertion failure we want the child killed so
+    // CI doesn't leak background vexobj processes.
+    struct Cleanup<'a> {
+        child: &'a mut std::process::Child,
+        dirs: Vec<std::path::PathBuf>,
+    }
+    impl Drop for Cleanup<'_> {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            for d in &self.dirs {
+                let _ = std::fs::remove_dir_all(d);
+            }
+        }
+    }
+    let _guard = Cleanup {
+        child: &mut child,
+        dirs: vec![stage.clone(), restored_dir.clone()],
+    };
+
+    // Phase 4: verify. The original admin key must still authenticate
+    // (auth.db restored); every object must be byte-accurate.
+    let client = reqwest::Client::new();
+    let auth = format!("Bearer {admin_key}");
+
+    // Bucket listing should show `br`.
+    let resp = client
+        .get(format!("{url}/v1/buckets"))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    let buckets = body["buckets"].as_array().unwrap();
+    assert!(
+        buckets.iter().any(|b| b["name"] == "bkp"),
+        "restored bucket missing: {buckets:?}"
+    );
+
+    // Each object must come back byte-identical.
+    for (k, want) in objects {
+        let resp = client
+            .get(format!("{url}/v1/objects/bkp/{k}"))
+            .header("Authorization", &auth)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200, "restored {k} not fetchable");
+        let got = resp.bytes().await.unwrap();
+        assert_eq!(
+            got.as_ref(),
+            want.as_slice(),
+            "byte mismatch on restored {k}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // S3 compat matrix — operations Mastodon / PeerTube actually invoke
 // ---------------------------------------------------------------------------
 //

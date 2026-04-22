@@ -53,11 +53,16 @@ impl BackupManager {
             total_size += dir_size(&blobs_dest)?;
         }
 
-        // Copy auth database
+        // Copy auth database. It's SQLite in WAL mode, so the `.db` file
+        // alone misses any writes that haven't been checkpointed into it
+        // yet — a plain file copy would lose recently-minted keys. Use
+        // VACUUM INTO on a fresh connection, same as the main DB.
         let auth_src = self.data_dir.join("auth.db");
         if auth_src.exists() {
             let auth_dest = dest_dir.join("auth.db");
-            std::fs::copy(&auth_src, &auth_dest)?;
+            let src_conn = rusqlite::Connection::open(&auth_src)?;
+            let dest_path = auth_dest.to_string_lossy().replace('\'', "''");
+            src_conn.execute_batch(&format!("VACUUM INTO '{dest_path}'"))?;
             total_size += std::fs::metadata(&auth_dest).map(|m| m.len()).unwrap_or(0);
         }
 
