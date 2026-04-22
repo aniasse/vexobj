@@ -51,42 +51,28 @@ the JSON → pick your Prometheus datasource. The dashboard uses a
 `$DS_PROMETHEUS` variable so it adapts to whatever you call your
 datasource.
 
-## Useful alerts
+## Alert rules
 
-Tune the thresholds to your SLOs, but these catch the common real
-failures:
+A ready-to-use rules file ships at
+[`deploy/prometheus/alerts.yml`](../deploy/prometheus/alerts.yml). It
+groups alerts into three buckets:
+
+- **availability** — `VexObjDown`, `VexObjReadinessUnhealthy`
+- **errors** — `VexObj5xxElevated`, `VexObj4xxSpike`
+- **latency** — `VexObjLatencyP99High`, `VexObjLatencyP50Degraded`
+- **disk** — `VexObjDiskLow`, `VexObjDiskGrowthUnusual`
+
+Point Prometheus at it via `rule_files:` in `prometheus.yml`:
 
 ```yaml
-groups:
-  - name: vexobj
-    rules:
-      - alert: VexObjDown
-        expr: up{job="vexobj"} == 0
-        for: 2m
-        labels: { severity: page }
-        annotations:
-          summary: "VexObj {{ $labels.instance }} is down"
-
-      - alert: VexObjHighErrorRate
-        expr: |
-          sum(rate(vexobj_requests_by_status_total{status="5xx"}[5m]))
-            / clamp_min(sum(rate(vexobj_requests_total[5m])), 1)
-            > 0.02
-        for: 10m
-        labels: { severity: warn }
-        annotations:
-          summary: "VexObj 5xx ratio > 2% for 10 min"
-
-      - alert: VexObjLatencyRegression
-        expr: |
-          histogram_quantile(0.99,
-            sum(rate(vexobj_request_duration_seconds_bucket[5m])) by (le)
-          ) > 1
-        for: 10m
-        labels: { severity: warn }
-        annotations:
-          summary: "p99 latency > 1s for 10 min"
+rule_files:
+  - /etc/prometheus/vexobj-alerts.yml
 ```
+
+Severities follow a two-tier convention: `page` (service effectively
+down, reach the on-call) and `warn` (investigate in work hours). Tune
+the thresholds to your SLOs — defaults target a single-node fediverse
+instance (~10-100 req/s).
 
 ## What's NOT instrumented (yet)
 

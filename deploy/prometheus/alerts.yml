@@ -1,0 +1,141 @@
+# Prometheus alert rules for VexObj.
+#
+# Drop this file alongside your prometheus.yml and reference it under
+# `rule_files:`. Thresholds are tuned for a single-node fediverse
+# instance (Mastodon + media, ~10-100 req/s) — bump them up on a
+# high-volume install.
+#
+# Severity convention:
+#   - `page`  — the service is effectively down; reach the on-call
+#   - `warn`  — something is off; look at it in work hours
+
+groups:
+  - name: vexobj.availability
+    rules:
+      - alert: VexObjDown
+        expr: up{job="vexobj"} == 0
+        for: 2m
+        labels:
+          severity: page
+          service: vexobj
+        annotations:
+          summary: "VexObj instance {{ $labels.instance }} is down"
+          description: >
+            /metrics has been unreachable for ≥ 2 min. Check the pod /
+            process first, then /readyz against a surviving replica.
+
+      - alert: VexObjReadinessUnhealthy
+        # readyz failures don't directly show up in the request metrics
+        # because the probe itself isn't scraped into the counter. We
+        # proxy it via 5xx — readyz-failing instances serve 503 on real
+        # requests too.
+        expr: |
+          sum(rate(vexobj_requests_by_status_total{status="5xx"}[3m]))
+            > 0.1 * sum(rate(vexobj_requests_total[3m]))
+        for: 5m
+        labels:
+          severity: page
+          service: vexobj
+        annotations:
+          summary: "VexObj serving > 10% 5xx for 5 min"
+          description: >
+            Either the metadata store is unreachable or a deploy broke
+            request handling. Pair this alert with a /readyz check.
+
+  - name: vexobj.errors
+    rules:
+      - alert: VexObj5xxElevated
+        expr: |
+          100 * sum(rate(vexobj_requests_by_status_total{status="5xx"}[5m]))
+            / clamp_min(sum(rate(vexobj_requests_total[5m])), 1)
+            > 2
+        for: 10m
+        labels:
+          severity: warn
+          service: vexobj
+        annotations:
+          summary: "VexObj 5xx ratio > 2% over 10 min"
+          description: >
+            Elevated 5xx ratio. Grep `request_id=...` from the recent
+            logs to see which op is failing.
+
+      - alert: VexObj4xxSpike
+        # A sudden 4xx surge usually means a misconfigured client (bad
+        # key, wrong region, dropped quota), not a server bug — worth
+        # investigating before it becomes a support ticket.
+        expr: |
+          sum(rate(vexobj_requests_by_status_total{status="4xx"}[5m]))
+            > 3 * sum(rate(vexobj_requests_by_status_total{status="4xx"}[1h] offset 1h))
+        for: 10m
+        labels:
+          severity: warn
+          service: vexobj
+        annotations:
+          summary: "VexObj 4xx rate > 3× the hour-ago baseline"
+          description: >
+            Usually a client-side regression. Check audit logs for the
+            API key that just started failing.
+
+  - name: vexobj.latency
+    rules:
+      - alert: VexObjLatencyP99High
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(vexobj_request_duration_seconds_bucket[5m])) by (le)
+          ) > 1
+        for: 10m
+        labels:
+          severity: warn
+          service: vexobj
+        annotations:
+          summary: "VexObj p99 request latency > 1s for 10 min"
+          description: >
+            Disk pressure or blob-backend latency. Verify the data volume
+            has free inodes and that the S3 backend (if configured) isn't
+            throttling.
+
+      - alert: VexObjLatencyP50Degraded
+        # p50 > 500ms on a local-disk backend points at a systemic issue
+        # — image resize workers saturated, SQLite lock, etc.
+        expr: |
+          histogram_quantile(0.50,
+            sum(rate(vexobj_request_duration_seconds_bucket[5m])) by (le)
+          ) > 0.5
+        for: 10m
+        labels:
+          severity: warn
+          service: vexobj
+        annotations:
+          summary: "VexObj p50 latency > 500ms for 10 min"
+
+  - name: vexobj.disk
+    rules:
+      # Requires the node_exporter scrape to tag filesystems with a
+      # mountpoint="/data" label — standard Helm/DaemonSet setup.
+      - alert: VexObjDiskLow
+        expr: |
+          100 * node_filesystem_avail_bytes{mountpoint="/data"}
+            / node_filesystem_size_bytes{mountpoint="/data"}
+            < 10
+        for: 5m
+        labels:
+          severity: page
+          service: vexobj
+        annotations:
+          summary: "VexObj data volume < 10% free on {{ $labels.instance }}"
+          description: >
+            Runs lifecycle trim, verify quotas actually reject new writes,
+            then plan a capacity bump.
+
+      - alert: VexObjDiskGrowthUnusual
+        # 5x the hour-ago upload rate is almost always a scraper or
+        # runaway writer. Worth a look before it fills the volume.
+        expr: |
+          rate(vexobj_bytes_uploaded_total[10m])
+            > 5 * rate(vexobj_bytes_uploaded_total[1h] offset 1h)
+        for: 15m
+        labels:
+          severity: warn
+          service: vexobj
+        annotations:
+          summary: "VexObj upload byte rate > 5× the hour-ago baseline"

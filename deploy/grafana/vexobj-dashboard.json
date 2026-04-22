@@ -1,188 +1,263 @@
 {
-  "annotations": {
+  "title": "VexObj",
+  "uid": "vexobj",
+  "tags": ["vexobj", "s3", "object-storage"],
+  "schemaVersion": 38,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "30s",
+  "timepicker": {},
+  "templating": {
     "list": [
       {
-        "builtIn": 1,
-        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
-        "enable": true,
-        "hide": true,
-        "iconColor": "rgba(0, 211, 255, 1)",
-        "name": "Annotations & Alerts",
-        "type": "dashboard"
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": { "text": "Prometheus", "value": "Prometheus" },
+        "hide": 0,
+        "refresh": 1
       }
     ]
   },
-  "description": "Overview of a vexobj instance: request rate, errors, latency, and data-plane throughput. Point `DS_PROMETHEUS` at your Prometheus scraping /metrics.",
-  "editable": true,
-  "graphTooltip": 0,
   "panels": [
     {
-      "title": "Request rate (by method)",
-      "type": "timeseries",
-      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "id": 1,
+      "type": "stat",
+      "title": "Request rate",
+      "description": "All HTTP requests, regardless of status. Sparkline shows the last hour.",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
-        {
-          "expr": "rate(vexobj_requests_by_method_total[1m])",
-          "legendFormat": "{{method}}",
-          "refId": "A"
-        }
+        { "expr": "sum(rate(vexobj_requests_total[5m]))", "refId": "A", "legendFormat": "req/s" }
       ],
       "fieldConfig": {
-        "defaults": { "unit": "reqps" }
+        "defaults": { "unit": "reqps", "decimals": 2 }
       },
       "options": {
-        "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "multi" }
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
       }
     },
     {
-      "title": "5xx error ratio",
+      "id": 2,
       "type": "stat",
-      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "title": "5xx rate",
+      "description": "Percent of requests returning a 5xx class status. Red above 1%.",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "sum(rate(vexobj_requests_by_status_total{status=\"5xx\"}[5m])) / clamp_min(sum(rate(vexobj_requests_total[5m])), 1)",
-          "refId": "A"
+          "expr": "100 * sum(rate(vexobj_requests_by_status_total{status=\"5xx\"}[5m])) / clamp_min(sum(rate(vexobj_requests_total[5m])), 1)",
+          "refId": "A",
+          "legendFormat": "5xx %"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "percentunit",
+          "unit": "percent",
+          "decimals": 2,
           "thresholds": {
             "mode": "absolute",
             "steps": [
               { "color": "green", "value": null },
-              { "color": "yellow", "value": 0.005 },
-              { "color": "red", "value": 0.02 }
+              { "color": "yellow", "value": 0.5 },
+              { "color": "red", "value": 1 }
             ]
           }
         }
       },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      }
     },
     {
-      "title": "Throughput (bytes/s)",
-      "type": "timeseries",
-      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "id": 3,
+      "type": "stat",
+      "title": "Objects uploaded / min",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
-        { "expr": "rate(vexobj_bytes_uploaded_total[1m])", "legendFormat": "upload", "refId": "A" },
-        { "expr": "rate(vexobj_bytes_downloaded_total[1m])", "legendFormat": "download", "refId": "B" }
+        {
+          "expr": "60 * sum(rate(vexobj_objects_uploaded_total[5m]))",
+          "refId": "A",
+          "legendFormat": "obj/min"
+        }
       ],
-      "fieldConfig": { "defaults": { "unit": "Bps" } }
+      "fieldConfig": {
+        "defaults": { "unit": "none", "decimals": 1 }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      }
     },
     {
-      "title": "Request latency (p50 / p95 / p99)",
+      "id": 4,
+      "type": "stat",
+      "title": "Request duration p99",
+      "description": "Histogram-derived 99th percentile over the last 5 minutes.",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(vexobj_request_duration_seconds_bucket[5m])) by (le))",
+          "refId": "A",
+          "legendFormat": "p99"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 3,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.5 },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      }
+    },
+    {
+      "id": 5,
       "type": "timeseries",
-      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "title": "Request duration percentiles",
+      "description": "p50 / p95 / p99 computed from histogram_quantile over vexobj_request_duration_seconds_bucket.",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
           "expr": "histogram_quantile(0.50, sum(rate(vexobj_request_duration_seconds_bucket[5m])) by (le))",
-          "legendFormat": "p50",
-          "refId": "A"
+          "refId": "A",
+          "legendFormat": "p50"
         },
         {
           "expr": "histogram_quantile(0.95, sum(rate(vexobj_request_duration_seconds_bucket[5m])) by (le))",
-          "legendFormat": "p95",
-          "refId": "B"
+          "refId": "B",
+          "legendFormat": "p95"
         },
         {
           "expr": "histogram_quantile(0.99, sum(rate(vexobj_request_duration_seconds_bucket[5m])) by (le))",
-          "legendFormat": "p99",
-          "refId": "C"
+          "refId": "C",
+          "legendFormat": "p99"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "s" } }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10 }
+        }
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
     },
     {
-      "title": "Requests by status class",
+      "id": 6,
       "type": "timeseries",
-      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "title": "Requests by method",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "rate(vexobj_requests_by_status_total[1m])",
-          "legendFormat": "{{status}}",
-          "refId": "A"
+          "expr": "sum by (method) (rate(vexobj_requests_by_method_total[5m]))",
+          "refId": "A",
+          "legendFormat": "{{method}}"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "reqps" } },
-      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
-    },
-    {
-      "title": "Objects uploaded (cumulative)",
-      "type": "stat",
-      "gridPos": { "x": 0, "y": 16, "w": 6, "h": 6 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "targets": [
-        { "expr": "vexobj_objects_uploaded_total", "refId": "A" }
-      ],
-      "fieldConfig": { "defaults": { "unit": "short" } },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" }
-    },
-    {
-      "title": "Bytes uploaded (total)",
-      "type": "stat",
-      "gridPos": { "x": 6, "y": 16, "w": 6, "h": 6 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "targets": [
-        { "expr": "vexobj_bytes_uploaded_total", "refId": "A" }
-      ],
-      "fieldConfig": { "defaults": { "unit": "bytes" } },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" }
-    },
-    {
-      "title": "Bytes downloaded (total)",
-      "type": "stat",
-      "gridPos": { "x": 12, "y": 16, "w": 6, "h": 6 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "targets": [
-        { "expr": "vexobj_bytes_downloaded_total", "refId": "A" }
-      ],
-      "fieldConfig": { "defaults": { "unit": "bytes" } },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" }
-    },
-    {
-      "title": "Total requests",
-      "type": "stat",
-      "gridPos": { "x": 18, "y": 16, "w": 6, "h": 6 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "targets": [
-        { "expr": "vexobj_requests_total", "refId": "A" }
-      ],
-      "fieldConfig": { "defaults": { "unit": "short" } },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" }
-    }
-  ],
-  "refresh": "10s",
-  "schemaVersion": 39,
-  "tags": ["vexobj", "storage"],
-  "templating": {
-    "list": [
-      {
-        "current": { "selected": false, "text": "Prometheus", "value": "prometheus" },
-        "hide": 0,
-        "includeAll": false,
-        "label": "Prometheus",
-        "multi": false,
-        "name": "DS_PROMETHEUS",
-        "options": [],
-        "query": "prometheus",
-        "refresh": 1,
-        "regex": "",
-        "skipUrlSync": false,
-        "type": "datasource"
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "drawStyle": "line", "stacking": { "mode": "normal" }, "fillOpacity": 20 }
+        }
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
       }
-    ]
-  },
-  "time": { "from": "now-1h", "to": "now" },
-  "timepicker": {},
-  "timezone": "",
-  "title": "vexobj",
-  "uid": "vexobj-overview",
-  "version": 1,
-  "weekStart": ""
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Requests by status class",
+      "description": "2xx / 3xx / 4xx / 5xx rates side-by-side — a sudden 4xx spike often points at a client misconfig before it becomes a 5xx.",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "sum by (status) (rate(vexobj_requests_by_status_total[5m]))",
+          "refId": "A",
+          "legendFormat": "{{status}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "drawStyle": "line", "stacking": { "mode": "normal" }, "fillOpacity": 20 }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "5xx" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "4xx" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "2xx" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Bytes in / out",
+      "description": "Upload and download throughput. Helps spot a bandwidth-saturated client or an unexpected scrape.",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "rate(vexobj_bytes_uploaded_total[5m])",
+          "refId": "A",
+          "legendFormat": "upload"
+        },
+        {
+          "expr": "rate(vexobj_bytes_downloaded_total[5m])",
+          "refId": "B",
+          "legendFormat": "download"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": { "drawStyle": "line", "fillOpacity": 10 }
+        }
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
+    }
+  ]
 }
