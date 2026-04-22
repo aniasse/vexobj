@@ -4559,6 +4559,15 @@ fn copy_dir_recursive(src: &std::path::Path, dest: &std::path::Path) {
 /// restore test does both in its Drop-guard cleanup.
 #[allow(clippy::zombie_processes)]
 async fn spawn_server_on(data_dir: &std::path::Path, port: u16) -> (String, std::process::Child) {
+    spawn_server_on_with_env(data_dir, port, &[]).await
+}
+
+#[allow(clippy::zombie_processes)]
+async fn spawn_server_on_with_env(
+    data_dir: &std::path::Path,
+    port: u16,
+    extra_env: &[(&str, &str)],
+) -> (String, std::process::Child) {
     let bind_addr = format!("127.0.0.1:{port}");
     let config_path = data_dir.join("config.toml");
     let data_dir_str = data_dir.to_string_lossy().replace('\\', "/");
@@ -4580,13 +4589,15 @@ async fn spawn_server_on(data_dir: &std::path::Path, port: u16) -> (String, std:
         .unwrap()
         .join("target/debug/vexobj");
     assert!(binary.exists(), "vexobj not built");
-    let child = std::process::Command::new(&binary)
-        .env("VEXOBJ_CONFIG", config_path.to_str().unwrap())
+    let mut cmd = std::process::Command::new(&binary);
+    cmd.env("VEXOBJ_CONFIG", config_path.to_str().unwrap())
         .env("NO_COLOR", "1")
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .unwrap();
+        .stderr(std::process::Stdio::null());
+    for (k, v) in extra_env {
+        cmd.env(*k, *v);
+    }
+    let child = cmd.spawn().unwrap();
 
     let url = format!("http://{bind_addr}");
     let client = reqwest::Client::new();
@@ -5170,4 +5181,186 @@ async fn e2e_rate_limit_isolates_per_api_key() {
         200,
         "key B must still work after key A was throttled"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Upgrade migration
+// ---------------------------------------------------------------------------
+//
+// `db.rs::migrate()` is written as a sequence of `CREATE TABLE IF NOT
+// EXISTS` + `ALTER TABLE ADD COLUMN` (errors swallowed on collision).
+// That makes upgrades from an older schema look trivially safe — until
+// it isn't. This test pins the contract: a data_dir produced by a past
+// build (missing the columns we've added in the last few releases) must
+// boot cleanly, the new columns must appear, and pre-existing rows must
+// still round-trip.
+
+#[tokio::test]
+async fn e2e_upgrade_migration_handles_prior_schema() {
+    use serde_json::json;
+    use vexobj_auth::{AuthManager, BucketAccess, Permissions};
+
+    let data_dir = std::env::temp_dir().join(format!("vexobj-upg-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&data_dir).unwrap();
+    std::fs::create_dir_all(data_dir.join("blobs")).unwrap();
+
+    // Pre-populate auth.db with a known admin key so the spawned server
+    // doesn't mint a new one (which we couldn't read — spawn helpers
+    // pipe stdout to null).
+    let admin_key = {
+        let auth = AuthManager::open(&data_dir.join("auth.db")).unwrap();
+        let (_key, raw) = auth
+            .create_key(
+                "upgrade-test-admin",
+                Permissions {
+                    read: true,
+                    write: true,
+                    delete: true,
+                    admin: true,
+                },
+                BucketAccess::All,
+            )
+            .unwrap();
+        raw
+    };
+
+    // Fabricate a vexobj.db that looks like a pre-versioning build —
+    // no cors_rules, no versioning_enabled on buckets, no retain_until /
+    // legal_hold on objects. Seed one bucket row so we can prove it
+    // survives the migration.
+    let db_path = data_dir.join("vexobj.db");
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE buckets (
+                id TEXT PRIMARY KEY,
+                name TEXT UNIQUE NOT NULL,
+                created_at TEXT NOT NULL,
+                public INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE objects (
+                id TEXT PRIMARY KEY,
+                bucket TEXT NOT NULL REFERENCES buckets(name),
+                key TEXT NOT NULL,
+                size INTEGER NOT NULL,
+                content_type TEXT NOT NULL,
+                sha256 TEXT NOT NULL,
+                storage_path TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                metadata TEXT NOT NULL DEFAULT '{}',
+                UNIQUE(bucket, key)
+            );
+            INSERT INTO buckets (id, name, created_at, public)
+                VALUES ('pre-row', 'prex', '2025-01-01T00:00:00Z', 0);",
+        )
+        .unwrap();
+    }
+
+    let port = find_free_port();
+    let (url, mut child) = spawn_server_on(&data_dir, port).await;
+
+    struct Cleanup<'a> {
+        child: &'a mut std::process::Child,
+        dir: std::path::PathBuf,
+    }
+    impl Drop for Cleanup<'_> {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+    let _g = Cleanup {
+        child: &mut child,
+        dir: data_dir.clone(),
+    };
+
+    let client = reqwest::Client::new();
+    let auth = format!("Bearer {admin_key}");
+
+    // 1. The pre-existing bucket row must be visible — nothing in the
+    //    migration should have dropped or renamed anything.
+    let resp = client
+        .get(format!("{url}/v1/buckets"))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    let names: Vec<String> = body["buckets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| b["name"].as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        names.contains(&"prex".to_string()),
+        "pre-existing row lost: {names:?}"
+    );
+
+    // 2. The new CORS endpoint (requires `cors_rules` column added in
+    //    the recent migration) must answer cleanly. If the ALTER TABLE
+    //    didn't run, this would 500 on the missing column.
+    let resp = client
+        .get(format!("{url}/v1/buckets/prex/cors"))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["rules"].as_array().unwrap().len(), 0);
+
+    // 3. Writing to the new column round-trips. If ALTER TABLE silently
+    //    failed we'd see the PUT succeed but GET still return empty.
+    let resp = client
+        .put(format!("{url}/v1/buckets/prex/cors"))
+        .header("Authorization", &auth)
+        .json(&json!({
+            "rules": [{
+                "allowed_origins": ["https://upgrade.example"],
+                "allowed_methods": ["GET"]
+            }]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = client
+        .get(format!("{url}/v1/buckets/prex/cors"))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        body["rules"][0]["allowed_origins"][0],
+        "https://upgrade.example"
+    );
+
+    // 4. A write-then-read on the objects table proves the object-lock
+    //    columns (retain_until, legal_hold) were added in — the insert
+    //    path touches them.
+    let resp = client
+        .put(format!("{url}/v1/objects/prex/hello.txt"))
+        .header("Authorization", &auth)
+        .body(b"post-upgrade".to_vec())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let body = client
+        .get(format!("{url}/v1/objects/prex/hello.txt"))
+        .header("Authorization", &auth)
+        .send()
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    assert_eq!(&body[..], b"post-upgrade");
 }

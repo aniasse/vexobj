@@ -3420,6 +3420,7 @@ dependencies = [
  "hex",
  "hmac",
  "reqwest",
+ "rusqlite",
  "serde_json",
  "sha2",
  "tokio",
