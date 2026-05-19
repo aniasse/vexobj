@@ -133,7 +133,6 @@ echo "\"health\": {\"elapsed_ms\": $elapsed, \"requests\": $REQUESTS}" >> "$REPO
 
 # ── Finalize Report ──────────────────────────────────────
 echo "}" >> "$REPORT_FILE.tmp"
-# Fix trailing commas (simplified)
 sed 's/},}/}}/' "$REPORT_FILE.tmp" > "$REPORT_FILE" 2>/dev/null || cp "$REPORT_FILE.tmp" "$REPORT_FILE"
 rm -f "$REPORT_FILE.tmp"
 
