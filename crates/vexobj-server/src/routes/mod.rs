@@ -24,14 +24,12 @@ use crate::security::security_middleware;
 use crate::state::AppState;
 
 pub fn create_router(state: AppState) -> Router {
-    // Public routes (no auth)
     let public = Router::new()
         .merge(health::routes())
-        .merge(dashboard::routes())
-        .merge(metrics::routes());
+        .merge(dashboard::routes());
 
-    // Protected routes (auth required)
     let protected = Router::new()
+        .merge(metrics::routes())
         .merge(buckets::routes())
         .merge(objects::routes())
         .merge(multipart::routes())

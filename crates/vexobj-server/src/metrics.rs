@@ -2,14 +2,16 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
-use axum::extract::{Request, State};
+use axum::extract::{Extension, Request, State};
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 
+use crate::middleware::require_permission;
 use crate::state::AppState;
+use vexobj_auth::ApiKey;
 
 #[derive(Debug, Clone)]
 pub struct Metrics {
@@ -257,13 +259,20 @@ pub fn routes() -> Router<AppState> {
     Router::new().route("/metrics", get(metrics_handler))
 }
 
-async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
+async fn metrics_handler(
+    State(state): State<AppState>,
+    Extension(caller): Extension<ApiKey>,
+) -> impl IntoResponse {
+    if let Err(resp) = require_permission(&caller, "admin").await {
+        return resp;
+    }
     let body = state.metrics.render_prometheus();
     (
         StatusCode::OK,
         [("content-type", "text/plain; version=0.0.4; charset=utf-8")],
         body,
     )
+        .into_response()
 }
 
 pub async fn metrics_middleware(
