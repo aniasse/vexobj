@@ -512,7 +512,6 @@ impl StorageEngine {
             }
         }
 
-        // If versioning is enabled, create a delete marker instead of hard-deleting
         if self.db.is_versioning_enabled(bucket) {
             let version_id = uuid::Uuid::new_v4().to_string();
             self.db.save_delete_marker(bucket, key, &version_id)?;
@@ -525,16 +524,15 @@ impl StorageEngine {
                 0,
                 "",
             );
+            info!(bucket, key, "delete marker created (versioned)");
+            return Ok(());
         }
 
         let storage_path = self.db.delete_object(bucket, key)?;
         let _ = self
             .db
             .append_replication_event("delete", bucket, key, "", None, 0, "");
-        // With dedup off, the blob is used by at most one object, so
-        // deletion is safe. With dedup on, another row may still
-        // reference the same content-addressed blob — leave it.
-        if !self.deduplication {
+        if !self.deduplication && !self.db.is_storage_path_referenced(&storage_path)? {
             let _ = self.blob_store.delete_blob(&storage_path).await;
         }
         info!(bucket, key, "object deleted");
