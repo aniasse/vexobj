@@ -416,14 +416,26 @@ impl Database {
         let max_keys = req.max_keys.unwrap_or(1000).min(1000) as usize;
         let prefix = req.prefix.as_deref().unwrap_or("");
 
-        let mut stmt = conn.prepare(
-            "SELECT id, bucket, key, size, content_type, sha256, created_at, updated_at, metadata
-             FROM objects WHERE bucket = ?1 AND key >= ?2 AND key LIKE ?3
-             ORDER BY key LIMIT ?4",
-        )?;
-
-        let like_pattern = format!("{prefix}%");
+        let has_token = req.continuation_token.is_some();
         let start = req.continuation_token.as_deref().unwrap_or(prefix);
+        let like_pattern = format!(
+            "{}%",
+            prefix.replace('%', "\\%").replace('_', "\\_")
+        );
+
+        let mut stmt = if has_token {
+            conn.prepare(
+                "SELECT id, bucket, key, size, content_type, sha256, created_at, updated_at, metadata
+                 FROM objects WHERE bucket = ?1 AND key > ?2 AND key LIKE ?3 ESCAPE '\\'
+                 ORDER BY key LIMIT ?4",
+            )?
+        } else {
+            conn.prepare(
+                "SELECT id, bucket, key, size, content_type, sha256, created_at, updated_at, metadata
+                 FROM objects WHERE bucket = ?1 AND key >= ?2 AND key LIKE ?3 ESCAPE '\\'
+                 ORDER BY key LIMIT ?4",
+            )?
+        };
 
         let objects: Vec<ObjectMeta> = stmt
             .query_map(
