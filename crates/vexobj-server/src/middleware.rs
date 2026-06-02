@@ -68,12 +68,45 @@ pub async fn auth_middleware(
         return next.run(req).await;
     }
 
-    // Check for presigned URL signature (skip auth for valid presigned requests)
     let uri = req.uri().clone();
-    if let Some(query) = uri.query() {
-        if query.contains("signature=") && query.contains("expires=") {
-            // Presigned URL — validated in the handler
-            return next.run(req).await;
+    if matches!(req.method().as_str(), "GET" | "HEAD") {
+        if let Some(query) = uri.query() {
+            if query.contains("signature=") && query.contains("expires=") {
+                if let Some(rest) = uri
+                    .path()
+                    .strip_prefix("/v1/objects/")
+                    .or_else(|| uri.path().strip_prefix("/v1/stream/"))
+                {
+                    if let Some((bucket, key)) = rest.split_once('/') {
+                        if !key.is_empty() {
+                            let params: std::collections::HashMap<String, String> =
+                                url::form_urlencoded::parse(query.as_bytes())
+                                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                                    .collect();
+                            let sig = params.get("signature").map(|s| s.as_str()).unwrap_or("");
+                            let expires = params
+                                .get("expires")
+                                .and_then(|s| s.parse::<i64>().ok())
+                                .unwrap_or(0);
+                            if state.presigner.verify(
+                                req.method().as_str(),
+                                bucket,
+                                key,
+                                expires,
+                                sig,
+                            ) {
+                                req.extensions_mut().insert(anonymous_key_for(bucket));
+                                return next.run(req).await;
+                            }
+                            return (
+                                StatusCode::FORBIDDEN,
+                                axum::Json(json!({"error": "invalid or expired presigned URL"})),
+                            )
+                                .into_response();
+                        }
+                    }
+                }
+            }
         }
     }
 
