@@ -64,12 +64,19 @@ impl AuditLogger {
     ) {
         let timestamp = chrono::Utc::now().to_rfc3339();
         let details_str = serde_json::to_string(details).unwrap_or_default();
-        if let Ok(conn) = self.conn.lock() {
-            let _ = conn.execute(
-                "INSERT INTO audit_log (timestamp, api_key_prefix, action, resource, details, ip_address)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![timestamp, api_key_prefix, action, resource, details_str, ip_address],
-            );
+        match self.conn.lock() {
+            Ok(conn) => {
+                if let Err(e) = conn.execute(
+                    "INSERT INTO audit_log (timestamp, api_key_prefix, action, resource, details, ip_address)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![timestamp, api_key_prefix, action, resource, details_str, ip_address],
+                ) {
+                    tracing::warn!(error = %e, action, "failed to write audit log entry");
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, action, "audit log mutex poisoned");
+            }
         }
     }
 
