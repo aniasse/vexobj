@@ -10,7 +10,7 @@ RUN cargo build --release --bin vexobj --bin vexobjctl
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
+    ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -r -s /bin/false vexobj
@@ -27,5 +27,8 @@ ENV VEXOBJ_CONFIG=""
 EXPOSE 8000
 
 VOLUME ["/data"]
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD curl -f http://localhost:8000/livez || exit 1
 
 ENTRYPOINT ["vexobj"]
