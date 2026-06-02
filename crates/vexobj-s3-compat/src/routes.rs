@@ -803,7 +803,7 @@ async fn complete_multipart(
         .await
     {
         Ok(meta) => {
-            let location = format!("{}/{}/{}", uri.path(), bucket, meta.key);
+            let location = format!("/s3/{}/{}", bucket, meta.key);
             let body =
                 xml::complete_multipart_xml(&meta.bucket, &meta.key, &meta.sha256, &location);
             (StatusCode::OK, [("content-type", "application/xml")], body).into_response()
