@@ -18,12 +18,14 @@ pub struct WebhookEvent {
 }
 
 pub struct WebhookSender {
-    tx: mpsc::UnboundedSender<WebhookEvent>,
+    tx: mpsc::Sender<WebhookEvent>,
 }
+
+const WEBHOOK_CHANNEL_CAP: usize = 4096;
 
 impl WebhookSender {
     pub fn new(configs: Vec<WebhookConfig>) -> Self {
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(WEBHOOK_CHANNEL_CAP);
 
         if !configs.is_empty() {
             tokio::spawn(webhook_worker(rx, configs));
@@ -38,12 +40,14 @@ impl WebhookSender {
             timestamp: chrono::Utc::now().to_rfc3339(),
             data,
         };
-        let _ = self.tx.send(evt);
+        if self.tx.try_send(evt).is_err() {
+            tracing::warn!(event, "webhook channel full, event dropped");
+        }
     }
 }
 
 async fn webhook_worker(
-    mut rx: mpsc::UnboundedReceiver<WebhookEvent>,
+    mut rx: mpsc::Receiver<WebhookEvent>,
     configs: Vec<WebhookConfig>,
 ) {
     let client = reqwest::Client::builder()
