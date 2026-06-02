@@ -1143,15 +1143,19 @@ impl StorageEngine {
         let expired = self.db.find_expired_objects()?;
         let mut objects_expired: u64 = 0;
         let mut bytes_freed: u64 = 0;
+        let now = chrono::Utc::now();
 
         for (bucket, key, storage_path) in &expired {
+            if let Ok(lock) = self.db.get_lock(bucket, key) {
+                if lock.is_active(now) {
+                    continue;
+                }
+            }
             if let Ok((meta, _)) = self.db.get_object(bucket, key) {
                 bytes_freed += meta.size;
             }
             let _ = self.db.delete_object(bucket, key);
-            if !self.deduplication {
-                // Blob cleanup goes through the backend so S3 /
-                // remote stores stay in sync.
+            if !self.deduplication && !self.db.is_storage_path_referenced(storage_path)? {
                 let _ = self.blob_store.delete_blob(storage_path).await;
             }
             objects_expired += 1;
