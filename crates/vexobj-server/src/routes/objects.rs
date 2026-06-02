@@ -535,6 +535,9 @@ async fn head_object(
     if let Err(resp) = require_permission(&caller, "read").await {
         return resp;
     }
+    if let Err(e) = state.auth.check_bucket_access(&caller, &bucket) {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()}))).into_response();
+    }
 
     match state.storage.get_object_meta(&bucket, &key) {
         Ok(meta) => {
@@ -665,6 +668,9 @@ async fn list_objects(
 ) -> impl IntoResponse {
     if let Err(resp) = require_permission(&caller, "read").await {
         return resp;
+    }
+    if let Err(e) = state.auth.check_bucket_access(&caller, &bucket) {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()}))).into_response();
     }
 
     match state.storage.list_objects(&ListObjectsRequest {

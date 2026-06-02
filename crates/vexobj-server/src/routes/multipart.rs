@@ -28,6 +28,9 @@ async fn multipart_upload(
     if let Err(resp) = require_permission(&caller, "write").await {
         return resp;
     }
+    if let Err(e) = state.auth.check_bucket_access(&caller, &bucket) {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()}))).into_response();
+    }
     handle_multipart(state, &bucket, "", multipart).await
 }
 
@@ -39,6 +42,9 @@ async fn multipart_upload_prefix(
 ) -> Response {
     if let Err(resp) = require_permission(&caller, "write").await {
         return resp;
+    }
+    if let Err(e) = state.auth.check_bucket_access(&caller, &bucket) {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()}))).into_response();
     }
     handle_multipart(state, &bucket, &prefix, multipart).await
 }
