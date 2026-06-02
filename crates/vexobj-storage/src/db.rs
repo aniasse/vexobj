@@ -81,145 +81,150 @@ impl Database {
         Ok(db)
     }
 
+    const SCHEMA_VERSION: i32 = 5;
+
     fn migrate(&self) -> Result<(), StorageError> {
         let conn = self.conn.lock().unwrap();
-        conn.execute_batch(
-            "
-            CREATE TABLE IF NOT EXISTS buckets (
-                id TEXT PRIMARY KEY,
-                name TEXT UNIQUE NOT NULL,
-                created_at TEXT NOT NULL,
-                public INTEGER NOT NULL DEFAULT 0
+        let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+
+        if version < 1 {
+            conn.execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS buckets (
+                    id TEXT PRIMARY KEY,
+                    name TEXT UNIQUE NOT NULL,
+                    created_at TEXT NOT NULL,
+                    public INTEGER NOT NULL DEFAULT 0
+                );
+
+                CREATE TABLE IF NOT EXISTS objects (
+                    id TEXT PRIMARY KEY,
+                    bucket TEXT NOT NULL REFERENCES buckets(name),
+                    key TEXT NOT NULL,
+                    size INTEGER NOT NULL,
+                    content_type TEXT NOT NULL,
+                    sha256 TEXT NOT NULL,
+                    storage_path TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    metadata TEXT NOT NULL DEFAULT '{}',
+                    UNIQUE(bucket, key)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_objects_bucket_key ON objects(bucket, key);
+                CREATE INDEX IF NOT EXISTS idx_objects_sha256 ON objects(sha256);
+
+                CREATE TABLE IF NOT EXISTS object_versions (
+                    id TEXT PRIMARY KEY,
+                    bucket TEXT NOT NULL,
+                    key TEXT NOT NULL,
+                    version_id TEXT NOT NULL,
+                    size INTEGER NOT NULL,
+                    content_type TEXT NOT NULL,
+                    sha256 TEXT NOT NULL,
+                    storage_path TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    is_latest INTEGER NOT NULL DEFAULT 1,
+                    is_delete_marker INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS idx_versions_bucket_key ON object_versions(bucket, key, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS lifecycle_rules (
+                    id TEXT PRIMARY KEY,
+                    bucket TEXT NOT NULL,
+                    prefix TEXT NOT NULL DEFAULT '',
+                    expire_days INTEGER NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS replication_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    op TEXT NOT NULL,
+                    bucket TEXT NOT NULL,
+                    key TEXT NOT NULL,
+                    sha256 TEXT NOT NULL DEFAULT '',
+                    version_id TEXT,
+                    timestamp TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS transcode_jobs (
+                    id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    bucket TEXT NOT NULL,
+                    key TEXT NOT NULL,
+                    source_sha256 TEXT NOT NULL,
+                    profile TEXT NOT NULL,
+                    output_bucket TEXT,
+                    output_key TEXT,
+                    output_size INTEGER,
+                    error TEXT,
+                    created_at TEXT NOT NULL,
+                    started_at TEXT,
+                    completed_at TEXT,
+                    duration_ms INTEGER,
+                    requested_by TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_transcode_jobs_status
+                    ON transcode_jobs(status, created_at);
+                CREATE INDEX IF NOT EXISTS idx_transcode_jobs_source
+                    ON transcode_jobs(bucket, key, profile);
+
+                CREATE TABLE IF NOT EXISTS multipart_uploads (
+                    upload_id TEXT PRIMARY KEY,
+                    bucket TEXT NOT NULL,
+                    key TEXT NOT NULL,
+                    content_type TEXT,
+                    initiated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_multipart_bucket_key
+                    ON multipart_uploads(bucket, key);
+
+                CREATE TABLE IF NOT EXISTS multipart_parts (
+                    upload_id TEXT NOT NULL REFERENCES multipart_uploads(upload_id) ON DELETE CASCADE,
+                    part_number INTEGER NOT NULL,
+                    size INTEGER NOT NULL,
+                    etag TEXT NOT NULL,
+                    uploaded_at TEXT NOT NULL,
+                    PRIMARY KEY (upload_id, part_number)
+                );
+                ",
+            )?;
+        }
+
+        if version < 2 {
+            let _ = conn.execute_batch(
+                "ALTER TABLE replication_events ADD COLUMN size INTEGER NOT NULL DEFAULT 0;
+                 ALTER TABLE replication_events ADD COLUMN content_type TEXT NOT NULL DEFAULT '';",
             );
+        }
 
-            CREATE TABLE IF NOT EXISTS objects (
-                id TEXT PRIMARY KEY,
-                bucket TEXT NOT NULL REFERENCES buckets(name),
-                key TEXT NOT NULL,
-                size INTEGER NOT NULL,
-                content_type TEXT NOT NULL,
-                sha256 TEXT NOT NULL,
-                storage_path TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                metadata TEXT NOT NULL DEFAULT '{}',
-                UNIQUE(bucket, key)
+        if version < 3 {
+            let _ = conn.execute_batch(
+                "ALTER TABLE buckets ADD COLUMN versioning_enabled INTEGER NOT NULL DEFAULT 0;",
             );
+        }
 
-            CREATE INDEX IF NOT EXISTS idx_objects_bucket_key ON objects(bucket, key);
-            CREATE INDEX IF NOT EXISTS idx_objects_sha256 ON objects(sha256);
-
-            CREATE TABLE IF NOT EXISTS object_versions (
-                id TEXT PRIMARY KEY,
-                bucket TEXT NOT NULL,
-                key TEXT NOT NULL,
-                version_id TEXT NOT NULL,
-                size INTEGER NOT NULL,
-                content_type TEXT NOT NULL,
-                sha256 TEXT NOT NULL,
-                storage_path TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                is_latest INTEGER NOT NULL DEFAULT 1,
-                is_delete_marker INTEGER NOT NULL DEFAULT 0
+        if version < 4 {
+            let _ = conn.execute_batch(
+                "ALTER TABLE objects ADD COLUMN retain_until TEXT;
+                 ALTER TABLE objects ADD COLUMN legal_hold INTEGER NOT NULL DEFAULT 0;",
             );
-            CREATE INDEX IF NOT EXISTS idx_versions_bucket_key ON object_versions(bucket, key, created_at DESC);
+        }
 
-            CREATE TABLE IF NOT EXISTS lifecycle_rules (
-                id TEXT PRIMARY KEY,
-                bucket TEXT NOT NULL,
-                prefix TEXT NOT NULL DEFAULT '',
-                expire_days INTEGER NOT NULL,
-                created_at TEXT NOT NULL
+        if version < 5 {
+            let _ = conn.execute_batch(
+                "ALTER TABLE buckets ADD COLUMN cors_rules TEXT NOT NULL DEFAULT '[]';",
             );
+            conn.execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_versions_version_id ON object_versions(version_id);
+                 CREATE INDEX IF NOT EXISTS idx_lifecycle_rules_bucket ON lifecycle_rules(bucket);",
+            )?;
+        }
 
-            CREATE TABLE IF NOT EXISTS replication_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                op TEXT NOT NULL,
-                bucket TEXT NOT NULL,
-                key TEXT NOT NULL,
-                sha256 TEXT NOT NULL DEFAULT '',
-                version_id TEXT,
-                timestamp TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_versions_version_id
-                ON object_versions(version_id);
-            CREATE INDEX IF NOT EXISTS idx_lifecycle_rules_bucket
-                ON lifecycle_rules(bucket);
-
-            CREATE TABLE IF NOT EXISTS transcode_jobs (
-                id TEXT PRIMARY KEY,
-                status TEXT NOT NULL,
-                bucket TEXT NOT NULL,
-                key TEXT NOT NULL,
-                source_sha256 TEXT NOT NULL,
-                profile TEXT NOT NULL,
-                output_bucket TEXT,
-                output_key TEXT,
-                output_size INTEGER,
-                error TEXT,
-                created_at TEXT NOT NULL,
-                started_at TEXT,
-                completed_at TEXT,
-                duration_ms INTEGER,
-                requested_by TEXT
-            );
-            CREATE INDEX IF NOT EXISTS idx_transcode_jobs_status
-                ON transcode_jobs(status, created_at);
-            CREATE INDEX IF NOT EXISTS idx_transcode_jobs_source
-                ON transcode_jobs(bucket, key, profile);
-
-            -- S3 multipart upload state. `multipart_uploads` is the parent
-            -- record created by InitiateMultipartUpload; `multipart_parts`
-            -- holds one row per UploadPart. On Complete or Abort both get
-            -- dropped (ON DELETE CASCADE) and the scratch files are wiped.
-            CREATE TABLE IF NOT EXISTS multipart_uploads (
-                upload_id TEXT PRIMARY KEY,
-                bucket TEXT NOT NULL,
-                key TEXT NOT NULL,
-                content_type TEXT,
-                initiated_at TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_multipart_bucket_key
-                ON multipart_uploads(bucket, key);
-
-            CREATE TABLE IF NOT EXISTS multipart_parts (
-                upload_id TEXT NOT NULL REFERENCES multipart_uploads(upload_id) ON DELETE CASCADE,
-                part_number INTEGER NOT NULL,
-                size INTEGER NOT NULL,
-                etag TEXT NOT NULL,
-                uploaded_at TEXT NOT NULL,
-                PRIMARY KEY (upload_id, part_number)
-            );
-            ",
-        )?;
-
-        // Replication needs enough info in the log to rebuild an objects
-        // row on the replica. Size + content_type are carried alongside
-        // sha256 so `apply` does not have to round-trip to the primary
-        // for every event.
-        let _ = conn.execute_batch(
-            "ALTER TABLE replication_events ADD COLUMN size INTEGER NOT NULL DEFAULT 0;
-             ALTER TABLE replication_events ADD COLUMN content_type TEXT NOT NULL DEFAULT '';",
-        );
-
-        // Add versioning_enabled column if it doesn't exist (ALTER TABLE will fail if it already exists)
-        let _ = conn.execute_batch(
-            "ALTER TABLE buckets ADD COLUMN versioning_enabled INTEGER NOT NULL DEFAULT 0;",
-        );
-
-        // Object-lock columns — retain_until is an ISO-8601 timestamp; NULL means no retention.
-        // legal_hold is 0/1. Lives on the `objects` row for the live object.
-        let _ = conn.execute_batch(
-            "ALTER TABLE objects ADD COLUMN retain_until TEXT;
-             ALTER TABLE objects ADD COLUMN legal_hold INTEGER NOT NULL DEFAULT 0;",
-        );
-
-        // Per-bucket CORS rules. Stored as a JSON array of CorsRule objects so
-        // we don't need a side table for a piece of config that's always
-        // read/written whole. Empty array = no rules = CORS is permissive for
-        // that bucket, matching pre-rules behavior.
-        let _ = conn
-            .execute_batch("ALTER TABLE buckets ADD COLUMN cors_rules TEXT NOT NULL DEFAULT '[]';");
+        if version < Self::SCHEMA_VERSION {
+            conn.execute_batch(&format!("PRAGMA user_version = {}", Self::SCHEMA_VERSION))?;
+            tracing::info!(from = version, to = Self::SCHEMA_VERSION, "schema migrated");
+        }
 
         Ok(())
     }
