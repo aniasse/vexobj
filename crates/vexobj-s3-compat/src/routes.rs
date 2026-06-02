@@ -774,7 +774,7 @@ async fn complete_multipart(
     bucket: &str,
     upload_id: &str,
     body: Body,
-    uri: &axum::http::Uri,
+    _uri: &axum::http::Uri,
 ) -> Response {
     match state.storage.get_multipart_upload(upload_id) {
         Ok(Some(u)) if u.bucket == bucket => {}

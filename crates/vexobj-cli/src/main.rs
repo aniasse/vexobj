@@ -1,8 +1,20 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC, AsciiSet};
 use reqwest::Client;
 use serde_json::Value;
 use std::path::PathBuf;
+
+const PATH_SEGMENT_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'_')
+    .remove(b'.')
+    .remove(b'~')
+    .remove(b'/');
+
+fn encode_path(s: &str) -> String {
+    utf8_percent_encode(s, PATH_SEGMENT_ENCODE_SET).to_string()
+}
 
 #[derive(Parser)]
 #[command(name = "vexobjctl", version, about = "vexobj admin CLI")]
@@ -566,7 +578,7 @@ async fn cmd_bucket_delete(api: &ApiClient, name: &str) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 async fn cmd_object_list(api: &ApiClient, bucket: &str, prefix: Option<&str>) -> Result<()> {
-    let mut url = format!("/v1/objects/{}", bucket);
+    let mut url = format!("/v1/objects/{}", encode_path(bucket));
     if let Some(p) = prefix {
         url.push_str(&format!("?prefix={}", p));
     }
@@ -615,7 +627,7 @@ async fn cmd_object_put(api: &ApiClient, bucket: &str, key: &str, file: &PathBuf
     let size = data.len();
 
     let resp = api
-        .put(&format!("/v1/objects/{}/{}", bucket, key))
+        .put(&format!("/v1/objects/{}/{}", encode_path(bucket), encode_path(key)))
         .header("Content-Type", &content_type)
         .body(data)
         .send()
@@ -641,7 +653,7 @@ async fn cmd_object_get(
     dest: Option<&std::path::Path>,
 ) -> Result<()> {
     let resp = api
-        .get(&format!("/v1/objects/{}/{}", bucket, key))
+        .get(&format!("/v1/objects/{}/{}", encode_path(bucket), encode_path(key)))
         .send()
         .await
         .context("request failed")?;
@@ -678,7 +690,7 @@ async fn cmd_object_get(
 
 async fn cmd_object_delete(api: &ApiClient, bucket: &str, key: &str) -> Result<()> {
     let resp = api
-        .delete(&format!("/v1/objects/{}/{}", bucket, key))
+        .delete(&format!("/v1/objects/{}/{}", encode_path(bucket), encode_path(key)))
         .send()
         .await
         .context("request failed")?;
@@ -694,7 +706,7 @@ async fn cmd_object_delete(api: &ApiClient, bucket: &str, key: &str) -> Result<(
 
 async fn cmd_object_head(api: &ApiClient, bucket: &str, key: &str) -> Result<()> {
     let resp = api
-        .head(&format!("/v1/objects/{}/{}", bucket, key))
+        .head(&format!("/v1/objects/{}/{}", encode_path(bucket), encode_path(key)))
         .send()
         .await
         .context("request failed")?;
@@ -1373,7 +1385,7 @@ async fn cmd_migrate_s3(
         // decide to skip. Any non-OK response (404 included) means we
         // should transfer normally.
         if skip_existing {
-            let head_path = format!("/v1/objects/{dest_bucket}/{}", obj.key);
+            let head_path = format!("/v1/objects/{}/{}", encode_path(&dest_bucket), encode_path(&obj.key));
             let head_resp = api.head(&head_path).send().await;
             if matches!(&head_resp, Ok(r) if r.status().is_success()) {
                 skipped += 1;
@@ -1473,7 +1485,7 @@ async fn cmd_migrate_s3(
             .first_or_octet_stream()
             .to_string();
 
-        let upload_path = format!("/v1/objects/{dest_bucket}/{}", obj.key);
+        let upload_path = format!("/v1/objects/{}/{}", encode_path(&dest_bucket), encode_path(&obj.key));
         let upload_resp = api
             .put(&upload_path)
             .header("Content-Type", &content_type)
@@ -1487,7 +1499,7 @@ async fn cmd_migrate_s3(
                 // sha256 inside the ETag header (quoted hex). A mismatch
                 // means silent corruption somewhere in the pipe, which is
                 // the exact failure mode bulk migrations need to catch.
-                let head_path = format!("/v1/objects/{dest_bucket}/{}", obj.key);
+                let head_path = format!("/v1/objects/{}/{}", encode_path(&dest_bucket), encode_path(&obj.key));
                 let dest_sha = match api.head(&head_path).send().await {
                     Ok(r) if r.status().is_success() => r
                         .headers()
