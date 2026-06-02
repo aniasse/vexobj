@@ -107,7 +107,6 @@ impl Database {
             );
 
             CREATE INDEX IF NOT EXISTS idx_objects_bucket_key ON objects(bucket, key);
-            CREATE INDEX IF NOT EXISTS idx_objects_bucket_prefix ON objects(bucket, key);
             CREATE INDEX IF NOT EXISTS idx_objects_sha256 ON objects(sha256);
 
             CREATE TABLE IF NOT EXISTS object_versions (
@@ -142,8 +141,10 @@ impl Database {
                 version_id TEXT,
                 timestamp TEXT NOT NULL
             );
-            CREATE INDEX IF NOT EXISTS idx_replication_events_id
-                ON replication_events(id);
+            CREATE INDEX IF NOT EXISTS idx_versions_version_id
+                ON object_versions(version_id);
+            CREATE INDEX IF NOT EXISTS idx_lifecycle_rules_bucket
+                ON lifecycle_rules(bucket);
 
             CREATE TABLE IF NOT EXISTS transcode_jobs (
                 id TEXT PRIMARY KEY,
