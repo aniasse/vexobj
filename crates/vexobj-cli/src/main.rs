@@ -148,10 +148,10 @@ enum MigrateSource {
         #[arg(long)]
         source_bucket: String,
         /// S3 access key ID
-        #[arg(long)]
+        #[arg(long, env = "VEXOBJ_S3_ACCESS_KEY")]
         source_access_key: String,
         /// S3 secret access key
-        #[arg(long)]
+        #[arg(long, env = "VEXOBJ_S3_SECRET_KEY")]
         source_secret_key: String,
         /// Destination vexobj bucket name
         #[arg(long)]
