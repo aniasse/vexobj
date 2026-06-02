@@ -1,6 +1,6 @@
 use bytes::Bytes;
+use indexmap::IndexMap;
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use tracing::debug;
@@ -24,8 +24,7 @@ pub struct Cache {
 }
 
 struct LruMap {
-    entries: HashMap<String, CacheEntry>,
-    order: Vec<String>,
+    entries: IndexMap<String, CacheEntry>,
     current_size: usize,
     max_size: usize,
 }
@@ -33,59 +32,48 @@ struct LruMap {
 impl LruMap {
     fn new(max_size: usize) -> Self {
         Self {
-            entries: HashMap::new(),
-            order: Vec::new(),
+            entries: IndexMap::new(),
             current_size: 0,
             max_size,
         }
     }
 
     fn get(&mut self, key: &str) -> Option<(Bytes, String)> {
-        if let Some(entry) = self.entries.get(key) {
-            // Move to end (most recently used)
-            self.order.retain(|k| k != key);
-            self.order.push(key.to_string());
-            Some((entry.data.clone(), entry.content_type.clone()))
-        } else {
-            None
-        }
+        let idx = self.entries.get_index_of(key)?;
+        self.entries.move_index(idx, self.entries.len() - 1);
+        let entry = &self.entries[idx];
+        Some((entry.data.clone(), entry.content_type.clone()))
     }
 
     fn insert(&mut self, key: String, data: Bytes, content_type: String) {
         let size = data.len();
 
-        // Evict until we have space
-        while self.current_size + size > self.max_size && !self.order.is_empty() {
-            let evict_key = self.order.remove(0);
-            if let Some(entry) = self.entries.remove(&evict_key) {
+        if let Some(old) = self.entries.shift_remove(&key) {
+            self.current_size -= old.size;
+        }
+
+        while self.current_size + size > self.max_size {
+            if let Some((_, entry)) = self.entries.shift_remove_index(0) {
                 self.current_size -= entry.size;
+            } else {
+                break;
             }
         }
 
         if size <= self.max_size {
             self.current_size += size;
-            self.order.push(key.clone());
-            self.entries.insert(
-                key,
-                CacheEntry {
-                    data,
-                    content_type,
-                    size,
-                },
-            );
+            self.entries.insert(key, CacheEntry { data, content_type, size });
         }
     }
 
     fn remove(&mut self, key: &str) {
-        if let Some(entry) = self.entries.remove(key) {
+        if let Some(entry) = self.entries.shift_remove(key) {
             self.current_size -= entry.size;
-            self.order.retain(|k| k != key);
         }
     }
 
     fn clear(&mut self) {
         self.entries.clear();
-        self.order.clear();
         self.current_size = 0;
     }
 }
