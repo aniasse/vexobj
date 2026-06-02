@@ -160,13 +160,18 @@ async fn post_object_from_url(
         )
             .into_response();
     }
-    if let Err(reason) = ssrf_check(&url, state.config.storage.allow_private_source_urls).await {
-        return (StatusCode::FORBIDDEN, Json(json!({"error": reason}))).into_response();
-    }
+    let resolved_addr =
+        match ssrf_check(&url, state.config.storage.allow_private_source_urls).await {
+            Ok(addr) => addr,
+            Err(reason) => {
+                return (StatusCode::FORBIDDEN, Json(json!({"error": reason}))).into_response();
+            }
+        };
 
-    // Bounded timeout so a slow source doesn't wedge a server thread.
+    let host = url.host_str().unwrap_or_default().to_string();
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(300))
+        .resolve(&host, resolved_addr)
         .build()
     {
         Ok(c) => c,
@@ -238,20 +243,27 @@ async fn post_object_from_url(
 /// Resolve the URL's host and reject addresses that would expose the
 /// VexObj process as an SSRF relay. 169.254.169.254 (AWS instance
 /// metadata) is always refused regardless of the allow-private flag.
-async fn ssrf_check(url: &url::Url, allow_private: bool) -> Result<(), String> {
+/// Resolve the URL, validate every returned IP, and return the first
+/// safe address. The caller pins this address into the reqwest client
+/// via `resolve()` so the actual connection uses the validated IP
+/// instead of re-resolving (which would be vulnerable to DNS rebinding).
+async fn ssrf_check(
+    url: &url::Url,
+    allow_private: bool,
+) -> Result<std::net::SocketAddr, String> {
     use std::net::{IpAddr, Ipv4Addr};
 
     let host = url.host_str().ok_or("source URL has no host")?;
     let port = url.port_or_known_default().unwrap_or(80);
-    let addrs = tokio::net::lookup_host(format!("{host}:{port}"))
+    let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host(format!("{host}:{port}"))
         .await
-        .map_err(|e| format!("dns lookup: {e}"))?;
-    let mut seen = false;
-    for addr in addrs {
-        seen = true;
+        .map_err(|e| format!("dns lookup: {e}"))?
+        .collect();
+    if addrs.is_empty() {
+        return Err("source URL did not resolve".into());
+    }
+    for addr in &addrs {
         let ip = addr.ip();
-        // Always refuse the cloud-metadata address — it's never a
-        // legitimate source for a media upload.
         if ip == IpAddr::V4(Ipv4Addr::new(169, 254, 169, 254)) {
             return Err("source URL resolves to cloud-metadata address".into());
         }
@@ -259,10 +271,7 @@ async fn ssrf_check(url: &url::Url, allow_private: bool) -> Result<(), String> {
             return Err("source URL resolves to a private-network address".into());
         }
     }
-    if !seen {
-        return Err("source URL did not resolve".into());
-    }
-    Ok(())
+    Ok(addrs[0])
 }
 
 /// True for any IP the VexObj process shouldn't follow outbound requests
