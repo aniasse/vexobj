@@ -443,6 +443,12 @@ pub fn parse_size(s: &str) -> u64 {
     } else if let Some(n) = s.strip_suffix("KB") {
         n.trim().parse::<u64>().unwrap_or(1) * 1024
     } else {
-        s.parse::<u64>().unwrap_or(1024 * 1024 * 1024)
+        match s.parse::<u64>() {
+            Ok(v) => v,
+            Err(_) => {
+                tracing::warn!(input = %s, "invalid size string, defaulting to 1 GB");
+                1024 * 1024 * 1024
+            }
+        }
     }
 }
