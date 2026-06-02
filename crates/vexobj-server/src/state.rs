@@ -110,6 +110,11 @@ impl AppState {
             use rand::Rng;
             let secret: Vec<u8> = (0..64).map(|_| rand::thread_rng().gen()).collect();
             std::fs::write(&secret_path, &secret)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&secret_path, std::fs::Permissions::from_mode(0o600))?;
+            }
             secret
         };
         let presigner = PresignedUrlGenerator::new(&secret);
