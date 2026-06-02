@@ -4,9 +4,11 @@ pub fn error_xml(code: &str, message: &str) -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <Error>
-  <Code>{code}</Code>
-  <Message>{message}</Message>
-</Error>"#
+  <Code>{}</Code>
+  <Message>{}</Message>
+</Error>"#,
+        xml_escape(code),
+        xml_escape(message),
     )
 }
 
@@ -18,7 +20,7 @@ pub fn list_buckets_xml(buckets: &[Bucket], owner: &str) -> String {
     <ID>vexobj</ID>
     <DisplayName>"#,
     );
-    xml.push_str(owner);
+    xml.push_str(&xml_escape(owner));
     xml.push_str(
         r#"</DisplayName>
   </Owner>
@@ -32,7 +34,7 @@ pub fn list_buckets_xml(buckets: &[Bucket], owner: &str) -> String {
       <Name>{}</Name>
       <CreationDate>{}</CreationDate>
     </Bucket>"#,
-            b.name,
+            xml_escape(&b.name),
             b.created_at.to_rfc3339()
         ));
     }
@@ -55,22 +57,28 @@ pub fn list_objects_v2_xml(
     let mut xml = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
-  <Name>{bucket}</Name>
-  <Prefix>{prefix}</Prefix>
+  <Name>{}</Name>
+  <Prefix>{}</Prefix>
   <MaxKeys>{max_keys}</MaxKeys>
   <IsTruncated>{}</IsTruncated>
   <KeyCount>{}</KeyCount>"#,
+        xml_escape(bucket),
+        xml_escape(prefix),
         resp.is_truncated,
         resp.objects.len()
     );
 
     if !delimiter.is_empty() {
-        xml.push_str(&format!("\n  <Delimiter>{delimiter}</Delimiter>"));
+        xml.push_str(&format!(
+            "\n  <Delimiter>{}</Delimiter>",
+            xml_escape(delimiter)
+        ));
     }
 
     if let Some(ref token) = resp.next_continuation_token {
         xml.push_str(&format!(
-            "\n  <NextContinuationToken>{token}</NextContinuationToken>"
+            "\n  <NextContinuationToken>{}</NextContinuationToken>",
+            xml_escape(token)
         ));
     }
 
@@ -166,7 +174,7 @@ pub fn list_parts_xml(
   </Part>"#,
             p.part_number,
             p.uploaded_at.to_rfc3339(),
-            p.etag,
+            xml_escape(&p.etag),
             p.size,
         ));
     }
