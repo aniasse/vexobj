@@ -327,7 +327,7 @@ impl Database {
         let id = uuid::Uuid::new_v4().to_string();
         let now = Utc::now();
 
-        conn.execute(
+        let actual_id: String = conn.query_row(
             "INSERT INTO objects (id, bucket, key, size, content_type, sha256, storage_path, created_at, updated_at, metadata)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
              ON CONFLICT(bucket, key) DO UPDATE SET
@@ -336,7 +336,8 @@ impl Database {
                 sha256 = excluded.sha256,
                 storage_path = excluded.storage_path,
                 updated_at = excluded.updated_at,
-                metadata = excluded.metadata",
+                metadata = excluded.metadata
+             RETURNING id",
             params![
                 id,
                 bucket,
@@ -349,10 +350,11 @@ impl Database {
                 now.to_rfc3339(),
                 serde_json::to_string(metadata).unwrap(),
             ],
+            |row| row.get(0),
         )?;
 
         Ok(ObjectMeta {
-            id,
+            id: actual_id,
             bucket: bucket.to_string(),
             key: key.to_string(),
             size,
