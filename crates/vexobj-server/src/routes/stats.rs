@@ -28,16 +28,7 @@ async fn get_stats(
     let mut bucket_stats = Vec::new();
 
     for bucket in &buckets {
-        let req = vexobj_storage::ListObjectsRequest {
-            bucket: bucket.name.clone(),
-            prefix: None,
-            delimiter: None,
-            max_keys: Some(1000),
-            continuation_token: None,
-        };
-        if let Ok(resp) = state.storage.list_objects(&req) {
-            let count = resp.objects.len() as u64;
-            let size: u64 = resp.objects.iter().map(|o| o.size).sum();
+        if let Ok((size, count)) = state.storage.db().bucket_storage_stats(&bucket.name) {
             total_objects += count;
             total_size += size;
             bucket_stats.push(json!({
@@ -49,9 +40,12 @@ async fn get_stats(
         }
     }
 
-    // Disk usage
-    let data_dir = &state.config.storage.data_dir;
-    let disk_usage = dir_size(Path::new(data_dir)).unwrap_or(0);
+    let data_dir = state.config.storage.data_dir.clone();
+    let disk_usage = tokio::task::spawn_blocking(move || {
+        dir_size(Path::new(&data_dir)).unwrap_or(0)
+    })
+    .await
+    .unwrap_or(0);
 
     (
         StatusCode::OK,
