@@ -618,14 +618,14 @@ impl Database {
         storage_path: &str,
     ) -> Result<(), StorageError> {
         let conn = self.conn.lock().unwrap();
-        // Mark all previous versions of this bucket+key as not latest
-        conn.execute(
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
             "UPDATE object_versions SET is_latest = 0 WHERE bucket = ?1 AND key = ?2",
             params![bucket, key],
         )?;
         let id = uuid::Uuid::new_v4().to_string();
         let now = Utc::now();
-        conn.execute(
+        tx.execute(
             "INSERT INTO object_versions (id, bucket, key, version_id, size, content_type, sha256, storage_path, created_at, is_latest, is_delete_marker)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, 0)",
             params![
@@ -640,6 +640,7 @@ impl Database {
                 now.to_rfc3339(),
             ],
         )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -650,18 +651,19 @@ impl Database {
         version_id: &str,
     ) -> Result<(), StorageError> {
         let conn = self.conn.lock().unwrap();
-        // Mark all previous versions as not latest
-        conn.execute(
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
             "UPDATE object_versions SET is_latest = 0 WHERE bucket = ?1 AND key = ?2",
             params![bucket, key],
         )?;
         let id = uuid::Uuid::new_v4().to_string();
         let now = Utc::now();
-        conn.execute(
+        tx.execute(
             "INSERT INTO object_versions (id, bucket, key, version_id, size, content_type, sha256, storage_path, created_at, is_latest, is_delete_marker)
              VALUES (?1, ?2, ?3, ?4, 0, '', '', '', ?5, 1, 1)",
             params![id, bucket, key, version_id, now.to_rfc3339()],
         )?;
+        tx.commit()?;
         Ok(())
     }
 
