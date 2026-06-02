@@ -450,10 +450,9 @@ impl StorageEngine {
             &content_type,
         );
 
-        // If versioning is enabled, save a version record
         if self.db.is_versioning_enabled(bucket) {
             let version_id = uuid::Uuid::new_v4().to_string();
-            let _ = self.db.save_version(
+            self.db.save_version(
                 bucket,
                 key,
                 &version_id,
@@ -461,7 +460,7 @@ impl StorageEngine {
                 &content_type,
                 &sha256,
                 &storage_path,
-            );
+            )?;
             let _ = self.db.append_replication_event(
                 "version_put",
                 bucket,
@@ -719,10 +718,9 @@ impl StorageEngine {
             &content_type,
         );
 
-        // If versioning is enabled, save a version record
         if self.db.is_versioning_enabled(bucket) {
             let version_id = uuid::Uuid::new_v4().to_string();
-            let _ = self.db.save_version(
+            self.db.save_version(
                 bucket,
                 key,
                 &version_id,
@@ -730,7 +728,7 @@ impl StorageEngine {
                 &content_type,
                 &sha256,
                 &storage_path,
-            );
+            )?;
             let _ = self.db.append_replication_event(
                 "version_put",
                 bucket,
