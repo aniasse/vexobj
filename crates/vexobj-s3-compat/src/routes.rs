@@ -65,13 +65,10 @@ fn authenticate(
     uri_path: &str,
     query: &str,
     headers: &HeaderMap,
-) -> Result<(), S3Error> {
-    // Query-string presigned URL: the client has no Authorization header and
-    // the request carries X-Amz-Signature in the URL. Verify that branch
-    // before we'd otherwise error on the missing header.
+) -> Result<vexobj_auth::ApiKey, S3Error> {
     if query.to_ascii_lowercase().contains("x-amz-signature=") {
         let parsed = parse_presign_query(query).ok_or_else(S3Error::access_denied)?;
-        let (_api_key, secret) = state
+        let (api_key, secret) = state
             .auth
             .find_by_access_key(&parsed.access_key)
             .map_err(|_| S3Error::access_denied())?;
@@ -89,7 +86,7 @@ fn authenticate(
         if !verify_sigv4_presigned(method, uri_path, query, &header_pairs, &secret, &parsed) {
             return Err(S3Error::access_denied());
         }
-        return Ok(());
+        return Ok(api_key);
     }
 
     let auth_header = headers
@@ -99,13 +96,11 @@ fn authenticate(
 
     if auth_header.starts_with("AWS4-HMAC-SHA256") {
         let parsed = parse_auth_header(auth_header).ok_or_else(S3Error::access_denied)?;
-        let (_api_key, secret) = state
+        let (api_key, secret) = state
             .auth
             .find_by_access_key(&parsed.access_key)
             .map_err(|_| S3Error::access_denied())?;
         if secret.is_empty() {
-            // Legacy row with no stored plaintext — can't verify SigV4. The
-            // caller must rotate to a freshly-issued key to use SigV4.
             return Err(S3Error::access_denied());
         }
 
@@ -137,16 +132,38 @@ fn authenticate(
         ) {
             return Err(S3Error::access_denied());
         }
-        Ok(())
+        Ok(api_key)
     } else if let Some(key) = auth_header.strip_prefix("Bearer ") {
-        state
+        let api_key = state
             .auth
             .verify_key(key)
             .map_err(|_| S3Error::access_denied())?;
-        Ok(())
+        Ok(api_key)
     } else {
         Err(S3Error::access_denied())
     }
+}
+
+fn require_s3_permission(key: &vexobj_auth::ApiKey, perm: &str) -> Result<(), S3Error> {
+    let allowed = match perm {
+        "read" => key.permissions.read,
+        "write" => key.permissions.write,
+        "delete" => key.permissions.delete,
+        "admin" => key.permissions.admin,
+        _ => false,
+    };
+    if allowed { Ok(()) } else { Err(S3Error::access_denied()) }
+}
+
+fn check_s3_bucket_access(
+    state: &S3State,
+    key: &vexobj_auth::ApiKey,
+    bucket: &str,
+) -> Result<(), S3Error> {
+    state
+        .auth
+        .check_bucket_access(key, bucket)
+        .map_err(|_| S3Error::access_denied())
 }
 
 // ─── Service Level ───────────────────────────────────────────
@@ -156,13 +173,11 @@ async fn s3_service(
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
 ) -> Response {
-    if let Err(e) = authenticate(
-        &state,
-        "GET",
-        uri.path(),
-        uri.query().unwrap_or(""),
-        &headers,
-    ) {
+    let caller = match authenticate(&state, "GET", uri.path(), uri.query().unwrap_or(""), &headers) {
+        Ok(k) => k,
+        Err(e) => return e.into_response(),
+    };
+    if let Err(e) = require_s3_permission(&caller, "read") {
         return e.into_response();
     }
 
@@ -211,32 +226,58 @@ async fn s3_bucket(
         }
     }
 
-    if let Err(e) = authenticate(
+    let caller = match authenticate(
         &state,
         method.as_str(),
         uri.path(),
         uri.query().unwrap_or(""),
         &headers,
     ) {
+        Ok(k) => k,
+        Err(e) => return e.into_response(),
+    };
+
+    if let Err(e) = check_s3_bucket_access(&state, &caller, &bucket) {
         return e.into_response();
     }
 
-    // POST /<bucket>?delete is the S3 DeleteObjects (bulk-delete) op.
-    // PeerTube leans on it heavily when cleaning up old videos and thumbs.
     if method == Method::POST {
         let q = uri.query().unwrap_or("");
         if q.split('&')
             .any(|p| p == "delete" || p.starts_with("delete="))
         {
+            if let Err(e) = require_s3_permission(&caller, "delete") {
+                return e.into_response();
+            }
             return delete_objects(&state, &bucket, body).await;
         }
     }
 
     match method {
-        Method::PUT => create_bucket(&state, &bucket).await,
-        Method::DELETE => delete_bucket(&state, &bucket).await,
-        Method::HEAD => head_bucket(&state, &bucket).await,
-        Method::GET => list_objects_v2(&state, &bucket, query).await,
+        Method::PUT => {
+            if let Err(e) = require_s3_permission(&caller, "admin") {
+                return e.into_response();
+            }
+            create_bucket(&state, &bucket).await
+        }
+        Method::DELETE => {
+            if let Err(e) = require_s3_permission(&caller, "admin") {
+                return e.into_response();
+            }
+            delete_bucket(&state, &bucket).await
+        }
+        Method::HEAD => {
+            if let Err(e) = require_s3_permission(&caller, "read") {
+                return e.into_response();
+            }
+            head_bucket(&state, &bucket).await
+        }
+        Method::GET => {
+            if let Err(e) = require_s3_permission(&caller, "read") {
+                return e.into_response();
+            }
+            list_objects_v2(&state, &bucket, query).await
+        }
         _ => S3Error::invalid_request("Method not allowed").into_response(),
     }
 }
@@ -364,31 +405,52 @@ async fn s3_object(
             .map(|b| b.public)
             .unwrap_or(false);
 
-    if !is_public_read {
-        if let Err(e) = authenticate(
+    let caller = if is_public_read {
+        None
+    } else {
+        match authenticate(
             &state,
             method.as_str(),
             uri.path(),
             uri.query().unwrap_or(""),
             &headers,
         ) {
+            Ok(k) => Some(k),
+            Err(e) => return e.into_response(),
+        }
+    };
+
+    if let Some(ref k) = caller {
+        if let Err(e) = check_s3_bucket_access(&state, k, &bucket) {
             return e.into_response();
         }
     }
 
-    // ── Multipart sub-resources ────────────────────────────────────────
-    //
-    // S3 overloads `/bucket/key` with query-string verbs. We check them up
-    // front so the standard verb handlers never see a multipart request.
     let qs = uri.query().unwrap_or("");
     let has_uploads = qs == "uploads" || qs.starts_with("uploads&") || qs.contains("&uploads");
     let upload_id = extract_query_param(qs, "uploadId");
     let part_number = extract_query_param(qs, "partNumber").and_then(|v| v.parse::<u32>().ok());
 
     if method == Method::POST && has_uploads {
+        if let Some(ref k) = caller {
+            if let Err(e) = require_s3_permission(k, "write") {
+                return e.into_response();
+            }
+        }
         return initiate_multipart(&state, &bucket, &key, &headers).await;
     }
     if let Some(id) = &upload_id {
+        if let Some(ref k) = caller {
+            let perm = match method {
+                Method::PUT => "write",
+                Method::POST => "write",
+                Method::DELETE => "delete",
+                _ => "read",
+            };
+            if let Err(e) = require_s3_permission(k, perm) {
+                return e.into_response();
+            }
+        }
         return match (method.clone(), part_number) {
             (Method::PUT, Some(pn)) => upload_part(&state, &bucket, id, pn, body).await,
             (Method::POST, None) => complete_multipart(&state, &bucket, id, body, &uri).await,
@@ -401,20 +463,42 @@ async fn s3_object(
         };
     }
 
-    // ── Standard verbs ──────────────────────────────────────────────────
     match method {
         Method::PUT => {
-            // Buffer non-multipart PUTs into memory up to the cap, then
-            // hand to the existing put_object path. Clients needing more
-            // than 16 MiB should use the multipart protocol.
+            if let Some(ref k) = caller {
+                if let Err(e) = require_s3_permission(k, "write") {
+                    return e.into_response();
+                }
+            }
             match to_bytes(body, S3_SINGLEPUT_MAX).await {
                 Ok(b) => put_object(&state, &bucket, &key, headers, b).await,
                 Err(_) => S3Error::entity_too_large().into_response(),
             }
         }
-        Method::GET => get_object(&state, &bucket, &key, &headers).await,
-        Method::HEAD => head_object(&state, &bucket, &key).await,
-        Method::DELETE => delete_object(&state, &bucket, &key).await,
+        Method::GET => {
+            if let Some(ref k) = caller {
+                if let Err(e) = require_s3_permission(k, "read") {
+                    return e.into_response();
+                }
+            }
+            get_object(&state, &bucket, &key, &headers).await
+        }
+        Method::HEAD => {
+            if let Some(ref k) = caller {
+                if let Err(e) = require_s3_permission(k, "read") {
+                    return e.into_response();
+                }
+            }
+            head_object(&state, &bucket, &key).await
+        }
+        Method::DELETE => {
+            if let Some(ref k) = caller {
+                if let Err(e) = require_s3_permission(k, "delete") {
+                    return e.into_response();
+                }
+            }
+            delete_object(&state, &bucket, &key).await
+        }
         _ => S3Error::invalid_request("Method not allowed").into_response(),
     }
 }
