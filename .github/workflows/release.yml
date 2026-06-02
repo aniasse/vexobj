@@ -38,7 +38,11 @@ jobs:
           cd target/${{ matrix.target }}/release
           tar czf ../../../${{ matrix.archive }} vexobj vexobjctl
           cd ../../../
-          sha256sum ${{ matrix.archive }} > ${{ matrix.archive }}.sha256
+          if command -v sha256sum &>/dev/null; then
+            sha256sum ${{ matrix.archive }} > ${{ matrix.archive }}.sha256
+          else
+            shasum -a 256 ${{ matrix.archive }} > ${{ matrix.archive }}.sha256
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
@@ -80,9 +84,15 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Compute Docker tags
+        id: tags
+        run: |
+          TAGS="ghcr.io/${{ github.repository }}:${{ github.ref_name }}"
+          if [[ "${{ github.ref_name }}" != *-* ]]; then
+            TAGS="${TAGS},ghcr.io/${{ github.repository }}:latest"
+          fi
+          echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v6
         with:
           push: true
-          tags: |
-            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
-            ghcr.io/${{ github.repository }}:latest
+          tags: ${{ steps.tags.outputs.tags }}
