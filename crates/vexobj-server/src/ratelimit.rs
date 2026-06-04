@@ -30,7 +30,7 @@ impl RateLimiter {
     }
 
     pub fn check(&self, key: &str) -> RateLimitResult {
-        let mut windows = self.windows.lock().unwrap();
+        let mut windows = self.windows.lock().unwrap_or_else(|e| e.into_inner());
         let now = Instant::now();
 
         let window = windows.entry(key.to_string()).or_insert(Window {
@@ -61,7 +61,7 @@ impl RateLimiter {
     }
 
     pub fn cleanup(&self) {
-        let mut windows = self.windows.lock().unwrap();
+        let mut windows = self.windows.lock().unwrap_or_else(|e| e.into_inner());
         let now = Instant::now();
         windows.retain(|_, w| now.duration_since(w.started).as_secs() < self.window_secs * 2);
     }
