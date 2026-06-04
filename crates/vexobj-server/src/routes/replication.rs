@@ -166,8 +166,10 @@ async fn import_blob(
     State(state): State<AppState>,
     Extension(caller): Extension<ApiKey>,
     Path(sha256): Path<String>,
-    body: Bytes,
+    body: Body,
 ) -> impl IntoResponse {
+    use futures::StreamExt;
+
     if let Err(resp) = require_permission(&caller, "admin").await {
         return resp;
     }
@@ -177,23 +179,6 @@ async fn import_blob(
             Json(json!({"error": "invalid sha256"})),
         )
             .into_response();
-    }
-
-    if !state.storage.encryption_enabled() {
-        let mut h = Sha256::new();
-        h.update(&body);
-        let actual = hex::encode(h.finalize());
-        if actual != sha256 {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({
-                    "error": "body sha256 does not match path",
-                    "expected": sha256,
-                    "actual": actual,
-                })),
-            )
-                .into_response();
-        }
     }
 
     let rel = blob_path_for(&sha256);
@@ -208,9 +193,6 @@ async fn import_blob(
         }
     }
 
-    // Atomic-ish write via temp + rename. A concurrent importer could
-    // race on the rename, but both writers would produce identical
-    // content-addressed bytes, so the loser just wastes I/O.
     let tmp = state
         .storage
         .data_dir()
@@ -225,15 +207,53 @@ async fn import_blob(
                 .into_response();
         }
     };
-    if let Err(e) = file.write_all(&body).await {
-        let _ = tokio::fs::remove_file(&tmp).await;
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("write tmp: {e}")})),
-        )
-            .into_response();
+
+    let verify_hash = !state.storage.encryption_enabled();
+    let mut hasher = Sha256::new();
+    let mut stream = body.into_data_stream();
+
+    while let Some(chunk) = stream.next().await {
+        let data = match chunk {
+            Ok(d) => d,
+            Err(e) => {
+                let _ = tokio::fs::remove_file(&tmp).await;
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"error": format!("body read: {e}")})),
+                )
+                    .into_response();
+            }
+        };
+        if verify_hash {
+            hasher.update(&data);
+        }
+        if let Err(e) = file.write_all(&data).await {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("write tmp: {e}")})),
+            )
+                .into_response();
+        }
     }
     drop(file);
+
+    if verify_hash {
+        let actual = hex::encode(hasher.finalize());
+        if actual != sha256 {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": "body sha256 does not match path",
+                    "expected": sha256,
+                    "actual": actual,
+                })),
+            )
+                .into_response();
+        }
+    }
+
     if let Err(e) = tokio::fs::rename(&tmp, &full_path).await {
         let _ = tokio::fs::remove_file(&tmp).await;
         return (
