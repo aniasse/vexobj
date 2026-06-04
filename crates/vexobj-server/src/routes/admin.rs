@@ -173,7 +173,15 @@ async fn create_presigned_url(
         return (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()}))).into_response();
     }
 
-    let base_url = format!("http://{}", state.config.server.bind);
+    let base_url = state
+        .config
+        .server
+        .public_url
+        .clone()
+        .unwrap_or_else(|| {
+            let scheme = if state.config.tls.enabled { "https" } else { "http" };
+            format!("{scheme}://{}", state.config.server.bind)
+        });
     let presigned = state.presigner.generate(&base_url, &body);
 
     (StatusCode::OK, Json(json!(presigned))).into_response()
