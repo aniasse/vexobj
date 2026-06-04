@@ -721,9 +721,10 @@ async fn e2e_metrics_endpoint() {
         .await
         .unwrap();
 
-    // Fetch metrics
+    // Fetch metrics (requires admin auth)
     let resp = client
         .get(format!("{}/metrics", srv.url))
+        .header("Authorization", &auth)
         .send()
         .await
         .unwrap();
