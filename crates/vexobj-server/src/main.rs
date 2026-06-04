@@ -73,8 +73,8 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Lifecycle expiration background task (runs every hour)
     let storage_for_lifecycle = state.storage.clone();
+    let audit_for_gc = state.audit.clone();
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
@@ -85,6 +85,11 @@ async fn main() -> Result<()> {
                         bytes = result.bytes_freed,
                         "lifecycle cleanup"
                     );
+                }
+            }
+            if let Ok(n) = audit_for_gc.gc(90) {
+                if n > 0 {
+                    tracing::info!(removed = n, "audit log cleanup (>90 days)");
                 }
             }
         }

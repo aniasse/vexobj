@@ -80,6 +80,18 @@ impl AuditLogger {
         }
     }
 
+    pub fn gc(&self, retain_days: u32) -> anyhow::Result<u64> {
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("{}", e))?;
+        let cutoff = (chrono::Utc::now()
+            - chrono::Duration::days(retain_days as i64))
+            .to_rfc3339();
+        let n = conn.execute(
+            "DELETE FROM audit_log WHERE timestamp < ?1",
+            params![cutoff],
+        )?;
+        Ok(n as u64)
+    }
+
     pub fn query(&self, limit: i64, offset: i64) -> anyhow::Result<Vec<AuditEntry>> {
         let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("{}", e))?;
         let mut stmt = conn.prepare(
