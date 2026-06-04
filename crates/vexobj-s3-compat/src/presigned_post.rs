@@ -220,13 +220,20 @@ fn parse_and_verify_policy(
     let service = parts[3];
 
     // Look up the API key's plaintext secret.
-    let (_api_key, secret) = state
+    let (api_key, secret) = state
         .auth
         .find_by_access_key(access_key)
         .map_err(|_| S3Error::access_denied())?;
     if secret.is_empty() {
         return Err(S3Error::access_denied());
     }
+    if !api_key.permissions.write {
+        return Err(S3Error::access_denied());
+    }
+    state
+        .auth
+        .check_bucket_access(&api_key, bucket)
+        .map_err(|_| S3Error::access_denied())?;
 
     // Recompute the HMAC the same way the client did: signing-key(secret,
     // date, region, service) then HMAC-SHA256 over the base64 policy.
