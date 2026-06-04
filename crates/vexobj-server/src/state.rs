@@ -178,6 +178,7 @@ impl AppState {
             config: Arc::new(Config {
                 server: config::ServerConfig {
                     bind: config.server.bind.clone(),
+                    public_url: config.server.public_url.clone(),
                 },
                 storage: config::StorageConfig {
                     data_dir: config.storage.data_dir.clone(),

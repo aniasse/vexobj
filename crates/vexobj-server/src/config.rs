@@ -31,12 +31,15 @@ pub struct Config {
 pub struct ServerConfig {
     #[serde(default = "default_bind")]
     pub bind: String,
+    #[serde(default)]
+    pub public_url: Option<String>,
 }
 
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             bind: default_bind(),
+            public_url: None,
         }
     }
 }
