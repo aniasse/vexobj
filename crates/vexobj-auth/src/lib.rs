@@ -1,3 +1,4 @@
+pub mod crypto;
 mod error;
 mod keys;
 mod presigned;
