@@ -3,7 +3,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
-use bytes::BytesMut;
+use futures::TryStreamExt;
 use serde_json::json;
 
 use crate::middleware::require_permission;
@@ -69,12 +69,6 @@ async fn handle_multipart(
 
         let content_type = field.content_type().map(|s| s.to_string());
 
-        let mut data = BytesMut::new();
-        let mut field = field;
-        while let Ok(Some(chunk)) = field.chunk().await {
-            data.extend_from_slice(&chunk);
-        }
-
         let key = if prefix.is_empty() {
             file_name.clone()
         } else {
@@ -82,9 +76,11 @@ async fn handle_multipart(
             format!("{}/{}", p, file_name)
         };
 
+        let stream = field.map_err(std::io::Error::other);
+
         match state
             .storage
-            .put_object(bucket, &key, data.freeze(), content_type.as_deref(), None)
+            .put_object_stream(bucket, &key, stream, content_type.as_deref(), None)
             .await
         {
             Ok(meta) => uploaded.push(json!(meta)),
