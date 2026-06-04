@@ -1,5 +1,11 @@
 # VexObj
 
+[![CI](https://github.com/Vortex-Soft/vexobj/actions/workflows/ci.yml/badge.svg)](https://github.com/Vortex-Soft/vexobj/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/Vortex-Soft/vexobj)](https://github.com/Vortex-Soft/vexobj/releases)
+[![Docker](https://img.shields.io/badge/docker-ghcr.io%2Fvortex--soft%2Fvexobj-blue)](https://ghcr.io/vortex-soft/vexobj)
+[![GitHub Discussions](https://img.shields.io/github/discussions/Vortex-Soft/vexobj)](https://github.com/Vortex-Soft/vexobj/discussions)
+
 Self-hosted S3-compatible object storage with media processing, server-side encryption, async replication, and a SQLite metadata store — all in a single ~14 MB Rust binary.
 
 → **Release**: [v0.1.0](https://github.com/vortex-soft/vexobj/releases/tag/v0.1.0) (Linux amd64, macOS arm64, Docker `ghcr.io/vortex-soft/vexobj:latest`)
@@ -382,6 +388,14 @@ Current single-core numbers on an Intel i5-10300H (no SHA-NI):
 Full methodology and per-size numbers in [docs/benchmarks.md](docs/benchmarks.md).
 Reproducible with `cargo bench -p vexobj-storage` and
 `cargo bench -p vexobj-s3-compat`.
+
+## Community
+
+- [GitHub Discussions](https://github.com/Vortex-Soft/vexobj/discussions) — questions, ideas, show & tell
+- [Issues](https://github.com/Vortex-Soft/vexobj/issues) — bug reports and feature requests
+- [Contributing](CONTRIBUTING.md) — how to build, test, and submit PRs
+
+If VexObj is useful to you, a star helps others discover the project.
 
 ## License
 
