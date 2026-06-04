@@ -11,6 +11,17 @@ use serde_json::json;
 /// - Security response headers
 pub async fn security_middleware(req: Request, next: Next) -> Response {
     let path = req.uri().path().to_string();
+    let req_scheme_is_https = req
+        .headers()
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.eq_ignore_ascii_case("https"))
+        .unwrap_or_else(|| {
+            req.uri()
+                .scheme_str()
+                .map(|s| s.eq_ignore_ascii_case("https"))
+                .unwrap_or(false)
+        });
 
     // Path traversal protection. We also percent-decode to catch encoded
     // variants like `%2E%2E` and `%00` — a classic WAF/middleware bypass.
@@ -44,14 +55,16 @@ pub async fn security_middleware(req: Request, next: Next) -> Response {
 
     let mut response = next.run(req).await;
 
-    // Security headers
+    let is_https = req_scheme_is_https;
     let headers = response.headers_mut();
     headers.insert("x-content-type-options", "nosniff".parse().unwrap());
     headers.insert("x-frame-options", "DENY".parse().unwrap());
-    headers.insert(
-        "strict-transport-security",
-        "max-age=31536000; includeSubDomains".parse().unwrap(),
-    );
+    if is_https {
+        headers.insert(
+            "strict-transport-security",
+            "max-age=31536000; includeSubDomains".parse().unwrap(),
+        );
+    }
     headers.insert("x-xss-protection", "1; mode=block".parse().unwrap());
     headers.insert(
         "content-security-policy",
