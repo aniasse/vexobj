@@ -593,22 +593,19 @@ async fn copy_object(state: &S3State, dest_bucket: &str, dest_key: &str, source:
 }
 
 async fn get_object(state: &S3State, bucket: &str, key: &str, headers: &HeaderMap) -> Response {
-    let (meta, data) = match state.storage.get_object(bucket, key).await {
-        Ok(r) => r,
-        Err(_) => return S3Error::no_such_key(key).into_response(),
-    };
+    let has_range = headers.get("range").is_some();
 
-    // Honor `Range: bytes=start-end` so clients like `aws s3 cp` that
-    // download in parallel ranges don't overwrite each chunk with a
-    // full-body response. Syntactically we support a single range spec
-    // (`bytes=N-`, `bytes=N-M`, `bytes=-N`) — multi-range 206 responses
-    // are not used by any S3 SDK in the wild.
-    if let Some(range_header) = headers.get("range").and_then(|v| v.to_str().ok()) {
+    if has_range {
+        let (meta, data) = match state.storage.get_object(bucket, key).await {
+            Ok(r) => r,
+            Err(_) => return S3Error::no_such_key(key).into_response(),
+        };
+        let range_header = headers.get("range").and_then(|v| v.to_str().ok()).unwrap_or("");
         match parse_single_byte_range(range_header, meta.size) {
             Some((start, end)) => {
                 let slice = data.slice(start as usize..(end + 1) as usize);
                 let len = slice.len();
-                return (
+                (
                     StatusCode::PARTIAL_CONTENT,
                     [
                         ("content-type", meta.content_type),
@@ -623,31 +620,34 @@ async fn get_object(state: &S3State, bucket: &str, key: &str, headers: &HeaderMa
                     ],
                     slice,
                 )
-                    .into_response();
+                    .into_response()
             }
-            None => {
-                // S3 returns 416 for ranges outside the object size.
-                return (
-                    StatusCode::RANGE_NOT_SATISFIABLE,
-                    [("content-range", format!("bytes */{}", meta.size))],
+            None => (
+                StatusCode::RANGE_NOT_SATISFIABLE,
+                [("content-range", format!("bytes */{}", meta.size))],
+            )
+                .into_response(),
+        }
+    } else {
+        match state.storage.get_object_stream(bucket, key).await {
+            Ok((meta, stream)) => {
+                let body = axum::body::Body::from_stream(stream);
+                (
+                    StatusCode::OK,
+                    [
+                        ("content-type", meta.content_type),
+                        ("content-length", meta.size.to_string()),
+                        ("etag", format!("\"{}\"", meta.sha256)),
+                        ("last-modified", meta.updated_at.to_rfc2822()),
+                        ("accept-ranges", "bytes".to_string()),
+                    ],
+                    body,
                 )
-                    .into_response();
+                    .into_response()
             }
+            Err(_) => S3Error::no_such_key(key).into_response(),
         }
     }
-
-    (
-        StatusCode::OK,
-        [
-            ("content-type", meta.content_type),
-            ("content-length", meta.size.to_string()),
-            ("etag", format!("\"{}\"", meta.sha256)),
-            ("last-modified", meta.updated_at.to_rfc2822()),
-            ("accept-ranges", "bytes".to_string()),
-        ],
-        data,
-    )
-        .into_response()
 }
 
 /// Parse an HTTP `Range: bytes=…` header against a known object size.
@@ -678,10 +678,10 @@ fn parse_single_byte_range(header: &str, size: u64) -> Option<(u64, u64)> {
         } else {
             end_s.parse().ok()?
         };
-        if end >= size || start > end {
+        if start >= size {
             return None;
         }
-        (start, end)
+        (start, end.min(size - 1))
     };
     Some((start, end))
 }
