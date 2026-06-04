@@ -571,14 +571,20 @@ async fn copy_object(state: &S3State, dest_bucket: &str, dest_key: &str, source:
         None => return S3Error::invalid_request("Invalid x-amz-copy-source").into_response(),
     };
 
-    let (_, data) = match state.storage.get_object(src_bucket, src_key).await {
+    let (src_meta, stream) = match state.storage.get_object_stream(src_bucket, src_key).await {
         Ok(result) => result,
         Err(_) => return S3Error::no_such_key(src_key).into_response(),
     };
 
     match state
         .storage
-        .put_object(dest_bucket, dest_key, data, None, None)
+        .put_object_stream(
+            dest_bucket,
+            dest_key,
+            stream,
+            Some(src_meta.content_type.as_str()),
+            None,
+        )
         .await
     {
         Ok(meta) => {
