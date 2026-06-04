@@ -25,6 +25,10 @@ impl LocalBlobStore {
     }
 
     fn full_path(&self, key: &str) -> PathBuf {
+        assert!(
+            !key.contains("..") && !key.starts_with('/') && !key.contains('\0'),
+            "path traversal blocked: {key}"
+        );
         self.data_dir.join(key)
     }
 
