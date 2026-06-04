@@ -36,13 +36,13 @@ use axum::http::{HeaderMap, Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use base64::Engine;
 use futures::TryStreamExt;
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
+use vexobj_auth::crypto::{constant_time_eq, hmac_sha256 as hmac};
+
 
 use crate::error::S3Error;
 use crate::routes::S3State;
 
-type HmacSha256 = Hmac<Sha256>;
+
 
 const MAX_POLICY_SIZE: usize = 64 * 1024;
 
@@ -379,22 +379,6 @@ fn resolve_key(
     Ok(key)
 }
 
-fn hmac(key: &[u8], data: &[u8]) -> Vec<u8> {
-    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key");
-    mac.update(data);
-    mac.finalize().into_bytes().to_vec()
-}
-
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff: u8 = 0;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
-}
 
 // The extractor on axum::extract::Multipart needs `FromRequest`, which is
 // in scope via this re-import.

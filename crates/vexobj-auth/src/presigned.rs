@@ -1,9 +1,7 @@
 use chrono::{DateTime, Duration, Utc};
-use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
 
-type HmacSha256 = Hmac<Sha256>;
+use crate::crypto::{constant_time_eq, hmac_sha256};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PresignedUrl {
@@ -47,9 +45,7 @@ impl PresignedUrlGenerator {
             expires_ts,
         );
 
-        let mut mac = HmacSha256::new_from_slice(&self.secret).expect("HMAC key");
-        mac.update(string_to_sign.as_bytes());
-        let signature = hex::encode(mac.finalize().into_bytes());
+        let signature = hex::encode(hmac_sha256(&self.secret, string_to_sign.as_bytes()));
 
         let url = format!(
             "{}/v1/objects/{}/{}?expires={}&signature={}",
@@ -91,20 +87,8 @@ impl PresignedUrlGenerator {
             expires_ts,
         );
 
-        let mut mac = HmacSha256::new_from_slice(&self.secret).expect("HMAC key");
-        mac.update(string_to_sign.as_bytes());
-        let expected = hex::encode(mac.finalize().into_bytes());
+        let expected = hex::encode(hmac_sha256(&self.secret, string_to_sign.as_bytes()));
 
         constant_time_eq(signature.as_bytes(), expected.as_bytes())
     }
-}
-
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    a.iter()
-        .zip(b.iter())
-        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
-        == 0
 }

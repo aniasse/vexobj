@@ -19,10 +19,10 @@
 //! to be either the full `vex_...` key or its 12-char prefix.
 
 use chrono::{DateTime, Duration, Utc};
-use hmac::{Hmac, Mac};
+use vexobj_auth::crypto::{constant_time_eq, hmac_sha256 as hmac};
 use sha2::{Digest, Sha256};
 
-type HmacSha256 = Hmac<Sha256>;
+
 
 /// Parsed components of an `Authorization: AWS4-HMAC-SHA256 ...` header.
 pub struct ParsedAuth {
@@ -431,23 +431,6 @@ fn collapse_whitespace(s: &str) -> String {
         }
     }
     out
-}
-
-fn hmac(key: &[u8], data: &[u8]) -> Vec<u8> {
-    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key");
-    mac.update(data);
-    mac.finalize().into_bytes().to_vec()
-}
-
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff: u8 = 0;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
 }
 
 #[cfg(test)]
